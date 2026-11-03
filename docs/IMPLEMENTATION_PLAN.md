@@ -67,7 +67,7 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | ID | When | What you do | Time needed |
 |---|---|---|---|
 | H-01 | Setup | Approve UAC prompts for the Rust/VS Build Tools, WinFsp Developer and Docker/WSL installs; reboot if asked | ~30 min (mostly waiting) |
-| H-02 | Setup | Create the GitHub repository; sign in `gh` (or give the AI another way to push) | ~10 min |
+| H-02 | Later | Create the repository on the LAN Gitea instance, register Gitea Actions runners (Linux + Windows), give the AI a way to push | ~30 min |
 | H-03 | Before M1 | ✅ **OD-1 decided 2026-11-03: GPLv3 open source** ([ADR-0003](adr/0003-licence-gplv3.md)) | done |
 | H-04 | M0-1 | Explorer checklist on the spike drive (drag-drop, Office save, Network locations…) | ~20 min |
 | H-05 | M0-3 | Check the tray, close-to-tray, toast click and sleep/resume on the UI spike | ~15 min |
@@ -86,7 +86,7 @@ Work does not pass a gate until its conditions hold.
 
 | Gate | Before | Conditions |
 |---|---|---|
-| **G0** | M0 | Setup tasks S-01 to S-05 done |
+| **G0** | M0 | Setup tasks S-01 to S-04 done (S-05 deferred until the Gitea remote exists) |
 | **G1** | M1 | All three spikes are "go" (or a fallback is chosen); OD-1 licence decided ✅ (ADR-0003); OD-4 (write-behind) decided |
 | **G2** | M2 | M1 exit checklist passes |
 | **G3** | v1.0.0 release | v1 release checklist passes |
@@ -141,11 +141,11 @@ These are rough ranges, not commitments:
 
 | ID | Task | Done when | You | ☐ |
 |---|---|---|---|---|
-| S-01 | **Rust toolchain:** install `rustup` with the stable `x86_64-pc-windows-msvc` target, then Visual Studio Build Tools with the "Desktop development with C++" workload (MSVC linker + Windows 10/11 SDK), both via `winget`. Then `cargo install cargo-deny cargo-audit cargo-about cargo-wix`. | `cargo new hello && cargo run` works; `link.exe` found | H-01: approve UAC | ☐ |
-| S-02 | **WinFsp for development:** re-run the WinFsp installer with the **Developer** feature (headers, import libraries, `fsext`). Download the matching `winfsp-tests` zip. Keep the latest stable 2.1.x installer, so tests also run on the minimum supported version (PLAT-02). | `winfsp-tests-x64.exe --help` runs; Developer files present under `C:\Program Files (x86)\WinFsp\inc` and `lib` | H-01: approve UAC | ☐ |
-| S-03 | **Test servers:**<br>• **Option A (recommended):** Docker Desktop with the WSL2 back-end, so the same `docker-compose.yml` runs locally and in CI.<br>• **Option B:** WSL2 Ubuntu with `openssh-server`, set up by script (`tests/wsl/setup-sshd.sh`).<br>• Either way, add users for password, key, certificate and keyboard-interactive (TOTP) logins. | `sftp -P 2222 tester@localhost` works from Windows for each auth method | H-01: approve installs, reboot | ☐ |
-| S-04 | `git init`; `.gitignore` (target/, *.msi); first commit of `docs/`. | Repository with `docs/` committed | Approve commit | ☐ |
-| S-05 | **CI skeleton:** GitHub repository + Actions workflow with `windows-latest` and `ubuntu-latest` jobs running `cargo --version`. | Both jobs green | H-02 | ☐ |
+| S-01 | **Rust toolchain:** install `rustup` with the stable `x86_64-pc-windows-msvc` target, then Visual Studio Build Tools with the "Desktop development with C++" workload (MSVC linker + Windows 10/11 SDK), both via `winget`. Then `cargo install cargo-deny cargo-audit cargo-about cargo-wix`. | `cargo new hello && cargo run` works; `link.exe` found | H-01: approve UAC | ☑ |
+| S-02 | **WinFsp for development:** re-run the WinFsp installer with the **Developer** feature (headers, import libraries, `fsext`). Download the matching `winfsp-tests` zip. Keep the latest stable 2.1.x installer, so tests also run on the minimum supported version (PLAT-02). | `winfsp-tests-x64.exe --list` runs (needs `C:\Program Files (x86)\WinFsp\bin` on PATH; installers and tests kept in `C:\marcin\tools\winfsp`); Developer files present under `C:\Program Files (x86)\WinFsp\inc` and `lib` | H-01: approve UAC | ☑ |
+| S-03 | **Test servers:**<br>• **Option A (recommended):** Docker Engine (`docker-ce` + compose plugin) inside the WSL2 Ubuntu distro, driven from Windows with `wsl docker compose …`, so the same `docker-compose.yml` runs locally and in CI. **No Docker Desktop** (owner's decision, 2026-11-03).<br>• **Option B:** WSL2 Ubuntu with `openssh-server`, set up by script (`tests/wsl/setup-sshd.sh`).<br>• Either way, add users for password, key, certificate and keyboard-interactive (TOTP) logins. | `sftp -P 2222 tester@localhost` works from Windows for each auth method | H-01: approve installs, reboot | ☐ |
+| S-04 | `git init`; `.gitignore` (target/, *.msi); first commit of `docs/`. | Repository with `docs/` committed | Approve commit | ☑ |
+| S-05 | **CI skeleton (deferred):** the repository stays local for now; it will later be pushed to the owner's LAN Gitea instance, not GitHub. Write a GitHub-Actions-compatible workflow (Gitea Actions runs it) with Windows and Linux jobs running `cargo --version`. Running it needs self-hosted `act_runner`s, including one on Windows. | Both jobs green on Gitea | H-02: set up the Gitea repo and runners | ☐ |
 
 ---
 
