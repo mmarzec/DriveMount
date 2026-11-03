@@ -6,7 +6,7 @@
 | Code | `spikes/m0-1-winfsp/` (throw-away): `src/main.rs` (in-memory file system), `checks.ps1` (scripted checks) |
 | Machine | Windows 10 Home 22H2, WinFsp 2.2.26286 (2026 Beta5), Rust 1.99.1, `winfsp` crate 0.13.2+winfsp-2.1 |
 | Date | 2026-11-03 |
-| Result | __RESULT__ |
+| Result | Scripted checks: **32 / 32 pass** unelevated, network and disk mode. Go/no-go waits for the H-04 manual checks. |
 
 ## 1. What was tried
 
@@ -39,19 +39,81 @@ Consequences:
 
 ## 3. Scripted checks (AI)
 
-__CHECKS__
+`checks.ps1` was run unelevated (`Elevated: False`) against the `system` build, in network mode (`--prefix \fsm\spike`) and disk mode (no prefix). Result: **32 / 32 passed.**
+
+| Check | Network | Disk |
+|---|---|---|
+| Drive type | `Network` | `Fixed` |
+| Create/write/read; nested mkdir and listing | ✅ | ✅ |
+| Rename; case-only rename (`b.txt` → `B.TXT`, case kept, case-insensitive open) | ✅ | ✅ |
+| Move a directory with contents | ✅ | ✅ |
+| Rename onto an existing file: refused without replace, works with replace | ✅ | ✅ |
+| Delete a non-empty directory refused; recursive delete works | ✅ | ✅ |
+| Overwrite, append, sparse write at 100 000 (zero fill), truncate | ✅ | ✅ |
+| Read-only attribute blocks writes; `LastWriteTime` round-trips | ✅ | ✅ |
+| `ReplaceFile` with backup (`File.Replace`) | ✅ | ✅ |
+| `robocopy /MIR` in, all SHA-256 equal | 10 000 files, 70 s | 1 000 files, 13 s |
+| `robocopy /MIR` again after adding 100, changing 100, deleting 100 (extra files purged) | ✅ | ✅ |
+| `robocopy /MIR` out, all SHA-256 equal | ✅ | ✅ |
+| 1 GiB `CopyFile` in, SHA-256 equal | ✅ 2 301 MiB/s | (network run only) |
+| 1 GiB `CopyFile` out, SHA-256 equal | ✅ 2 841 MiB/s | (network run only) |
+| `quit` unmounts; letter gone | ✅ | ✅ |
+| **Kill** (`Stop-Process -Force`) with a file handle open: letter gone from `GetLogicalDrives` (NFR-REL-04) | ✅ within 0.3 s | ✅ within 0.3 s |
+
+- The `robocopy` times are mostly the harness hashing 20 000 files, not the drive.
+- The 1 GiB rates are in-memory, so they show WinFsp's own overhead is far below any SFTP link speed.
+- Two bugs found by the checks were fixed during the spike. A case-only rename removed its own node, which caused a panic. The root listing contained the root itself.
 
 ## 4. `FileInfoTimeout`
 
-__TIMEOUT__
+Same Explorer-like workload for each value, in network mode: 200 files in a directory, five rounds 200 ms apart, each round listing the directory, reading attributes and refreshing every entry, and reading one file. The table shows callback counts.
+
+| `FileInfoTimeout` | `get_security_by_name` | `open` | `get_file_info` | `read_directory` | `read` | Total |
+|---|---|---|---|---|---|---|
+| 0 ms | 2 431 | 2 430 | 4 460 | 80 | 10 | 11 841 |
+| 1000 ms | 2 431 | 2 430 | 0 | 5 | 10 | 7 306 |
+| 5000 ms | 2 431 | 2 430 | 0 | 5 | 10 | 7 306 |
+
+- **0 ms** turns the kernel's metadata and directory cache off: about 4 500 extra `get_file_info` calls and 16× more `read_directory` calls. Over SFTP each of those would be a round trip or a cache lookup, so 0 is not an option.
+- **1000 ms and 5000 ms** give identical counts for this workload. A longer value only helps workloads that revisit the same entries more than 1 s apart, and it widens the window for stale metadata, which is the NEO bug class (spec §5.6).
+- `open`/`get_security_by_name` are not reduced by any value: every `CreateFile` reaches the file system. Our own stat cache (spec §5.6) has to absorb these.
+- **Chosen: `FileInfoTimeout` = 1000 ms**, as the spec already says. No separate `DirInfoTimeout`/`VolumeInfoTimeout` is needed.
 
 ## 5. Manual checks (H-04)
 
-__MANUAL__
+Pending (owner). Mount for the checks, from a normal PowerShell:
+
+```powershell
+C:\marcin\fs-manager\spikes\m0-1-winfsp\target\system\release\m0-1-winfsp.exe --mount M: --prefix \fsm\spike
+```
+
+| # | Check | Result |
+|---|---|---|
+| 1 | Explorer shows "FSM Spike (M:)" under *Network locations* with a network-drive icon | ☐ |
+| 2 | Drag and drop a few files and a folder from the desktop to M:, and back | ☐ |
+| 3 | Notepad: create a file on M:, save, edit, save again, reopen | ☐ |
+| 4 | LibreOffice Writer: save a document to M:, edit, save again, reopen | ☐ |
+| 5 | Delete a file in Explorer: it asks "permanently delete" (no Recycle Bin) | ☐ |
+| 6 | Copy a few images to M: and switch to *Large icons*: thumbnails appear | ☐ |
 
 ## 6. Volume parameters (final set → spec §5.8)
 
-__PARAMS__
+Used in all spike runs, unchanged from spec §5.8 apart from the explicit additions marked *new*:
+
+| Parameter | Value |
+|---|---|
+| `SectorSize` / `SectorsPerAllocationUnit` | 4096 / 1 |
+| `MaxComponentLength` | 255 |
+| `CaseSensitiveSearch` / `CasePreservedNames` / `UnicodeOnDisk` | false / true / true |
+| `PersistentAcls` | false (fixed descriptor: SY, BA and Everyone full access, owner BA) *new: descriptor* |
+| `ReadOnlyVolume` | per profile |
+| `PostCleanupWhenModifiedOnly` | true |
+| `FileInfoTimeout` | 1000 ms |
+| `VolumePrefix` | `\fsm\<profile-slug>` (network mode) |
+| `FileSystemName` | `FSM-SFTP` (shown as the drive's format in `DriveInfo`) |
+| `VolumeSerialNumber` / `VolumeCreationTime` | fixed per profile / mount time *new* |
+| Left at crate defaults | `UmFileContextIsUserContext2` = 1 (one context per open handle), `AlwaysUseDoubleBuffering` = 1, `HardLinks`, `ReparsePoints`, `NamedStreams`, `ExtendedAttributes`, `PassQueryDirectoryPattern`, `FlushAndPurgeOnCleanup` = 0 |
+| Dispatcher | `FineGuard`, default thread count (`start_with_threads(0)`) |
 
 ## 7. Other findings
 
@@ -60,4 +122,4 @@ __PARAMS__
 
 ## 8. Go / no-go
 
-__GO__
+Scripted part: **go**. Every automated condition holds unelevated in network mode, and the letter disappears on kill. The final go waits for H-04. No fallback (plain drive or Dokany) has been needed so far.

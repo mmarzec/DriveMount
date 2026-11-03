@@ -61,6 +61,7 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | Docker | Docker Engine 24.0.6 + Compose v2.21 already inside WSL2 Ubuntu-22.04 (found during S-03); no Docker Desktop | S-03 ✅ |
 | WSL | WSL 2 (3.0.3); Virtual Machine Platform enabled 2026-11-03; systemd on. VirtualBox 7.0.10 also used on this PC and must coexist with Hyper-V | S-03 ✅ |
 | GitHub CLI (`gh`) | Installed, but unused: the remote will be the owner's LAN Gitea | S-05 |
+| LLVM / libclang | LLVM 23.1.4 (`C:\Program Files\LLVM`), installed in M0-1: `winfsp-sys` runs `bindgen` on every build. CI runners need it too | M0-1 ✅ |
 
 ### 1.5 Human checkpoints
 

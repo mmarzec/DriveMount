@@ -2,6 +2,17 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-03: M0-1 WinFsp spike (branch `spike/m0-1-winfsp`)
+
+**Status:** scripted checks done (32/32 pass); waiting for the owner's H-04 Explorer checks. Report: `docs/spikes/m0-1-winfsp.md`.
+
+- Build the spike: `cargo build --release --features system --target-dir target/system` in `spikes/m0-1-winfsp`. Run the checks: `checks.ps1` (unelevated; mounts `Q:`).
+- **Decided:** `winfsp` crate with the `system` feature (installed DLL found via the registry; bundled mode fails at runtime with 1285). `FileInfoTimeout` = 1000 ms confirmed.
+- **New prerequisite:** LLVM/libclang for `bindgen`, installed via winget. CI needs it, plus the WinFsp MSI with `ADDLOCAL=ALL`.
+- Use `windows` 0.61 alongside `winfsp` 0.13 (error conversions), or the crate's `windows-62` feature.
+- The owner's PC has remembered drive mappings `W:`–`Z:` (`Y:` → `\\wsl$\Ubuntu-22.04` is disconnected but remembered). Don't mount tests there. FR-MNT-03's check is needed for real.
+- **Next:** after H-04, finish the report's §5 and §8, tick M0-1, update spec §5.8 with the final parameter table (report §6), then M0-2 (SFTP throughput with russh against the S-03 server).
+
 ## 2026-11-03: Setup (S-01 to S-05)
 
 **Status:** setup complete except S-05 (deferred to Gitea). G0 is met.
