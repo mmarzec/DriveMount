@@ -1,0 +1,25 @@
+[package]
+name = "m0-1-winfsp"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Spike M0-1: in-memory WinFsp drive (throw-away)"
+
+# Spikes stay outside the main workspace.
+[workspace]
+
+[features]
+# Bundled mode (default): the crate's own WinFsp 2.1 headers; the DLL must be on PATH or next to the exe.
+# System mode: the installed Developer files at build time, and the installed DLL found via the registry.
+system = ["winfsp/system"]
+
+[dependencies]
+winfsp = { version = "0.13.2", default-features = false, features = ["delayload"] }
+winfsp-sys = "0.12.1"
+# Must match the windows version winfsp uses, so NTSTATUS converts into FspError.
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization"] }
+parking_lot = "0.12"
+
+[build-dependencies]
+winfsp = { version = "0.13.2", default-features = false, features = ["delayload"] }
