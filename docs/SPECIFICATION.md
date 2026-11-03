@@ -892,7 +892,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 ### 10.2 Backend integration tests (Linux CI, Docker)
 
 `tests/docker-compose.yml` starts:
-- `linuxserver/openssh-server`, configured with password, key, certificate and keyboard-interactive users, and a second instance acting as a jump host;
+- an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host;
 - an SFTP server without OpenSSH extensions (ProFTPD `mod_sftp`);
 - *(M4)* an NFSv3 server (`erichough/nfs-server` or Ganesha).
 

@@ -58,9 +58,9 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | Rust toolchain | **Not installed** | S-01 |
 | MSVC build tools / Windows SDK | Not verified | S-01 |
 | WinFsp | **2.2 beta installed** (`winfsp-x64.dll` 2.2.26286, "2026 Beta5"), runtime only: no Developer files, no test tools | S-02 |
-| Docker | **Not installed** | S-03 |
-| WSL | Available (`wsl.exe` present) | S-03 |
-| GitHub CLI (`gh`) | Not installed | S-05 |
+| Docker | Docker Engine 24.0.6 + Compose v2.21 already inside WSL2 Ubuntu-22.04 (found during S-03); no Docker Desktop | S-03 ✅ |
+| WSL | WSL 2 (3.0.3); Virtual Machine Platform enabled 2026-11-03; systemd on. VirtualBox 7.0.10 also used on this PC and must coexist with Hyper-V | S-03 ✅ |
+| GitHub CLI (`gh`) | Installed, but unused: the remote will be the owner's LAN Gitea | S-05 |
 
 ### 1.5 Human checkpoints
 
@@ -143,7 +143,7 @@ These are rough ranges, not commitments:
 |---|---|---|---|---|
 | S-01 | **Rust toolchain:** install `rustup` with the stable `x86_64-pc-windows-msvc` target, then Visual Studio Build Tools with the "Desktop development with C++" workload (MSVC linker + Windows 10/11 SDK), both via `winget`. Then `cargo install cargo-deny cargo-audit cargo-about cargo-wix`. | `cargo new hello && cargo run` works; `link.exe` found | H-01: approve UAC | ☑ |
 | S-02 | **WinFsp for development:** re-run the WinFsp installer with the **Developer** feature (headers, import libraries, `fsext`). Download the matching `winfsp-tests` zip. Keep the latest stable 2.1.x installer, so tests also run on the minimum supported version (PLAT-02). | `winfsp-tests-x64.exe --list` runs (needs `C:\Program Files (x86)\WinFsp\bin` on PATH; installers and tests kept in `C:\marcin\tools\winfsp`); Developer files present under `C:\Program Files (x86)\WinFsp\inc` and `lib` | H-01: approve UAC | ☑ |
-| S-03 | **Test servers:**<br>• **Option A (recommended):** Docker Engine (`docker-ce` + compose plugin) inside the WSL2 Ubuntu distro, driven from Windows with `wsl docker compose …`, so the same `docker-compose.yml` runs locally and in CI. **No Docker Desktop** (owner's decision, 2026-11-03).<br>• **Option B:** WSL2 Ubuntu with `openssh-server`, set up by script (`tests/wsl/setup-sshd.sh`).<br>• Either way, add users for password, key, certificate and keyboard-interactive (TOTP) logins. | `sftp -P 2222 tester@localhost` works from Windows for each auth method | H-01: approve installs, reboot | ☐ |
+| S-03 | **Test servers:**<br>• **Option A (recommended):** Docker Engine (`docker-ce` + compose plugin) inside the WSL2 Ubuntu distro, driven from Windows with `wsl docker compose …`, so the same `docker-compose.yml` runs locally and in CI. **No Docker Desktop** (owner's decision, 2026-11-03).<br>• **Option B:** WSL2 Ubuntu with `openssh-server`, set up by script (`tests/wsl/setup-sshd.sh`).<br>• Either way, add users for password, key, certificate and keyboard-interactive (TOTP) logins. | `sftp -P 2222 tester@localhost` works from Windows for each auth method. Done: `tests/docker/servers.ps1 up` / `check` (see `tests/docker/README.md`) | H-01: approve installs, reboot | ☑ |
 | S-04 | `git init`; `.gitignore` (target/, *.msi); first commit of `docs/`. | Repository with `docs/` committed | Approve commit | ☑ |
 | S-05 | **CI skeleton (deferred):** the repository stays local for now; it will later be pushed to the owner's LAN Gitea instance, not GitHub. Write a GitHub-Actions-compatible workflow (Gitea Actions runs it) with Windows and Linux jobs running `cargo --version`. Running it needs self-hosted `act_runner`s, including one on Windows. | Both jobs green on Gitea | H-02: set up the Gitea repo and runners | ☐ |
 

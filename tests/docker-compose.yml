@@ -1,0 +1,11 @@
+# Test servers for backend integration tests (spec §10.2).
+# Keys come from docker/gen-keys.sh; start everything with docker/servers.ps1 up.
+name: fsm-test
+services:
+  sshd:
+    build: ./docker/sshd
+    image: fsm-test-sshd
+    ports:
+      - "2222:22"
+    volumes:
+      - ./docker/keys:/keys:ro

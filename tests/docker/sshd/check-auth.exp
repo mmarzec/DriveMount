@@ -1,0 +1,33 @@
+#!/usr/bin/expect -f
+# Usage: check-auth.exp <user> <password-or-passphrase> [totp-secret] [identity-file]
+# Logs in with sftp, answering password, passphrase and TOTP prompts; exits 0 on success.
+set timeout 10
+lassign $argv user secret totp identity
+
+set opts {-P 22 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR}
+if {$identity ne ""} {
+    lappend opts -o IdentitiesOnly=yes -i $identity
+} else {
+    lappend opts -o PubkeyAuthentication=no
+}
+
+set tries 0
+spawn sftp {*}$opts $user@127.0.0.1
+expect {
+    -nocase -re {(passphrase|password)[^\n]*: ?$} {
+        if {[incr tries] > 2} { exit 1 }
+        send "$secret\r"
+        exp_continue
+    }
+    -nocase -re {verification code: ?$} {
+        send "[exec oathtool --totp -b $totp]\r"
+        exp_continue
+    }
+    "sftp>" {
+        send "bye\r"
+        expect eof
+        exit 0
+    }
+    timeout { exit 1 }
+    eof { exit 1 }
+}

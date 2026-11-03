@@ -1,0 +1,21 @@
+Port 22
+HostKey /etc/ssh/ssh_host_ed25519_key
+LogLevel VERBOSE
+PermitRootLogin no
+UsePAM yes
+
+PubkeyAuthentication yes
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+TrustedUserCAKeys /etc/ssh/user_ca.pub
+
+Subsystem sftp internal-sftp
+
+Match User tester
+    AuthenticationMethods publickey password
+Match User keyonly
+    AuthenticationMethods publickey
+Match User certuser
+    AuthenticationMethods publickey
+Match User totpuser
+    AuthenticationMethods keyboard-interactive
