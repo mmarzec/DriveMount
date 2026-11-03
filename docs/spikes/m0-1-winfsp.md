@@ -6,7 +6,7 @@
 | Code | `spikes/m0-1-winfsp/` (throw-away): `src/main.rs` (in-memory file system), `checks.ps1` (scripted checks) |
 | Machine | Windows 10 Home 22H2, WinFsp 2.2.26286 (2026 Beta5), Rust 1.99.1, `winfsp` crate 0.13.2+winfsp-2.1 |
 | Date | 2026-11-03 |
-| Result | Scripted checks: **32 / 32 pass** unelevated, network and disk mode. Go/no-go waits for the H-04 manual checks. |
+| Result | **Go.** Scripted checks 32/32 and manual checks (H-04) 6/6 pass unelevated. Two Explorer integration issues go to M1-12c (§7). |
 
 ## 1. What was tried
 
@@ -81,7 +81,7 @@ Same Explorer-like workload for each value, in network mode: 200 files in a dire
 
 ## 5. Manual checks (H-04)
 
-Pending (owner). Mount for the checks, from a normal PowerShell:
+Done by the owner on 2026-11-03: **all pass**. Mounted from a normal PowerShell with:
 
 ```powershell
 C:\marcin\fs-manager\spikes\m0-1-winfsp\target\system\release\m0-1-winfsp.exe --mount M: --prefix \fsm\spike
@@ -89,12 +89,14 @@ C:\marcin\fs-manager\spikes\m0-1-winfsp\target\system\release\m0-1-winfsp.exe --
 
 | # | Check | Result |
 |---|---|---|
-| 1 | Explorer shows "FSM Spike (M:)" under *Network locations* with a network-drive icon | ☐ |
-| 2 | Drag and drop a few files and a folder from the desktop to M:, and back | ☐ |
-| 3 | Notepad: create a file on M:, save, edit, save again, reopen | ☐ |
-| 4 | LibreOffice Writer: save a document to M:, edit, save again, reopen | ☐ |
-| 5 | Delete a file in Explorer: it asks "permanently delete" (no Recycle Bin) | ☐ |
-| 6 | Copy a few images to M: and switch to *Large icons*: thumbnails appear | ☐ |
+| 1 | Explorer shows the drive under *Network locations* with a network-drive icon. It is named **"spike (\\fsm) (M:)"**, not the volume label. It appeared only after Explorer was restarted (§7) | ✅ |
+| 2 | Drag and drop a few files and a folder from the desktop to M:, and back | ✅ |
+| 3 | Notepad: create a file on M:, save, edit, save again, reopen | ✅ |
+| 4 | LibreOffice Writer 7.1: save a document to M:, edit, save again, reopen | ✅ |
+| 5 | Delete a file in Explorer: it asks "permanently delete" (no Recycle Bin) | ✅ |
+| 6 | Copy a few images to M: and switch to *Large icons*: thumbnails appear | ✅ |
+
+Total Commander also saw and used `M:` (`\\fsm\spike`) immediately.
 
 ## 6. Volume parameters (final set → spec §5.8)
 
@@ -117,9 +119,20 @@ Used in all spike runs, unchanged from spec §5.8 apart from the explicit additi
 
 ## 7. Other findings
 
+- **A running Explorer does not notice the new drive (open issue → FR-MNT-06).** WinFsp creates the letter with `DefineDosDevice` and sends no notification. In the owner's already-running Explorer, `M:` stayed invisible after F5 and in new windows, while Total Commander and a fresh process's shell namespace (`Shell.Application`, "This PC") listed it. Restarting Explorer made it appear.
+  - `SHChangeNotify(SHCNE_DRIVEADD, M:\)` from another process had no effect.
+  - A synchronous `WM_DEVICECHANGE`/`DBT_DEVICEARRIVAL` broadcast (`BroadcastSystemMessage`, and `SendMessageTimeout(HWND_BROADCAST, SMTO_ABORTIFHUNG)`) **hung** on unresponsive windows (a suspended Store app) and had to be killed. Its effect on Explorer is unknown. FS Manager must never broadcast synchronously.
+  - Candidate fix to test in M1-12c: mount with the `\fsm\<slug>` prefix but no letter, then assign the letter with `WNetAddConnection2W` through WinFsp's network provider (`WinFsp.Np`). That is the `net use` path, which Explorer picks up immediately. Fallback: `SHChangeNotify` called from inside our own process plus an asynchronous (posted) device broadcast, then check again.
+- **Explorer names network drives after the UNC path, not the volume label (→ FR-MNT-05).** `\fsm\spike` shows as "spike (\\fsm) (M:)", while `DriveInfo.VolumeLabel` is "FSM Spike". Getting "Production (Z:)" needs the per-user `_LabelFromReg` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2\##fsm#<slug>` (how renamed mapped drives keep their names); not tested in the spike. Alternative: make the slug readable, since it becomes the visible name.
 - **Remembered network mappings.** `GetLogicalDrives` does not report a remembered but disconnected `net use` mapping (here `Y:` → `\\wsl$\Ubuntu-22.04`), and WinFsp mounts over such a letter without error. This confirms FR-MNT-03: the letter allocator must also check `WNetGetConnectionW`/`HKCU\Network`. The owner's mapping was unaffected (`HKCU\Network\Y` intact).
 - Windows PowerShell 5.1 prefixes the first line written to a child's redirected stdin with a BOM. The spike strips it. This only matters for test harnesses.
 
 ## 8. Go / no-go
 
-Scripted part: **go**. Every automated condition holds unelevated in network mode, and the letter disappears on kill. The final go waits for H-04. No fallback (plain drive or Dokany) has been needed so far.
+**Go.** All scripted checks (32/32) and all manual checks (6/6) pass unelevated in network mode, and the letter disappears on kill. No fallback (plain drive or Dokany) is needed.
+
+Carried into M1 (spec updated):
+- the `winfsp` crate with the `system` feature; LLVM and the WinFsp Developer feature on build machines and CI;
+- volume parameters as in §6, with `FileInfoTimeout` = 1000 ms;
+- FR-MNT-06: how a running Explorer learns about the drive (see §7) is solved and tested in M1-12c;
+- FR-MNT-05: the Explorer name comes from `_LabelFromReg` or the slug, tested in M1-12c.

@@ -4,14 +4,16 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 
 ## 2026-11-03: M0-1 WinFsp spike (branch `spike/m0-1-winfsp`)
 
-**Status:** scripted checks done (32/32 pass); waiting for the owner's H-04 Explorer checks. Report: `docs/spikes/m0-1-winfsp.md`.
+**Status: done, go.** Scripted checks 32/32, owner's H-04 checks 6/6. Report: `docs/spikes/m0-1-winfsp.md`. Spec §5.8, FR-MNT-05/06 and plan M1-12c updated.
+
+- **Open for M1-12c:** a running Explorer did not show the new `M:` until Explorer was restarted. `SHChangeNotify` from another process did nothing, and synchronous `WM_DEVICECHANGE` broadcasts hung on a suspended Store app. Try `WNetAddConnection2W` via `WinFsp.Np` first. Explorer also names the drive "spike (\\fsm)" (from the UNC path), not the volume label; use `_LabelFromReg`.
 
 - Build the spike: `cargo build --release --features system --target-dir target/system` in `spikes/m0-1-winfsp`. Run the checks: `checks.ps1` (unelevated; mounts `Q:`).
 - **Decided:** `winfsp` crate with the `system` feature (installed DLL found via the registry; bundled mode fails at runtime with 1285). `FileInfoTimeout` = 1000 ms confirmed.
 - **New prerequisite:** LLVM/libclang for `bindgen`, installed via winget. CI needs it, plus the WinFsp MSI with `ADDLOCAL=ALL`.
 - Use `windows` 0.61 alongside `winfsp` 0.13 (error conversions), or the crate's `windows-62` feature.
 - The owner's PC has remembered drive mappings `W:`–`Z:` (`Y:` → `\\wsl$\Ubuntu-22.04` is disconnected but remembered). Don't mount tests there. FR-MNT-03's check is needed for real.
-- **Next:** after H-04, finish the report's §5 and §8, tick M0-1, update spec §5.8 with the final parameter table (report §6), then M0-2 (SFTP throughput with russh against the S-03 server).
+- **Next:** M0-2 (SFTP throughput with russh against the S-03 server), then M0-3 (UI spike).
 
 ## 2026-11-03: Setup (S-01 to S-05)
 

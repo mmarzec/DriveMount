@@ -128,8 +128,8 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-MNT-02 | M | Each mount gets its drive letter: the profile's letter, or *Auto*, which picks the highest free letter from Z downwards. | *Auto* with Z: free → Z:. |
 | FR-MNT-03 | M | **Free letter** means not present in `GetLogicalDrives()` *and* not a remembered network connection (`WNetGetConnectionW` ≠ `ERROR_NOT_CONNECTED`). A, B and C are never used. | A disconnected persistent `net use Y:` mapping makes Y: count as taken. |
 | FR-MNT-04 | M | **Letter taken** at mount time: behaviour depends on the `letter_conflict` setting. *auto* (default) mounts on the next free letter, shows "Y: (Z: was in use)" in the row and sends a notification. *fail* stops with E-LETTER-TAKEN. | Both behaviours are covered by tests. |
-| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\fsm\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. | Explorer shows "Production (Z:)" with a network-drive icon. |
-| FR-MNT-06 | M | Explorer is told about drive changes at once with `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)`. | An open Explorer window shows or hides the drive within 1 s. |
+| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\fsm\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. Explorer names network drives after the UNC path ("slug (\\fsm)"), not the volume label, so the profile name is also written to `_LabelFromReg` under `HKCU\…\Explorer\MountPoints2\##fsm#<slug>` (verified in M1-12c; spike M0-1 §7). | Explorer shows "Production (Z:)" with a network-drive icon. |
+| FR-MNT-06 | M | An already-running Explorer is told about drive changes at once. Spike M0-1 showed that a WinFsp letter created with `DefineDosDevice` stays invisible to a running Explorer, and `SHChangeNotify` from another process did not help. The mechanism is chosen in M1-12c: first candidate, assign the letter with `WNetAddConnection2W` through WinFsp's network provider (the `net use` path); otherwise `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)` plus an **asynchronous** device broadcast. Synchronous `WM_DEVICECHANGE` broadcasts are forbidden, because they hang on unresponsive windows. | An open Explorer window shows or hides the drive within 1 s, without restarting Explorer. |
 | FR-MNT-07 | M | **Read-only** profiles mount a read-only volume. Writes fail with "media is write protected" (`STATUS_MEDIA_WRITE_PROTECTED`). | Copying into a read-only drive fails cleanly. |
 | FR-MNT-08 | M | **Mount on start**: profiles with `mount_on_start` are mounted in parallel when the app starts. Profiles that need a prompt queue their prompts one at a time. | 5 such profiles mount in parallel at start-up. |
 | FR-MNT-09 | M | **Mount all** (toolbar) mounts every unmounted profile in the current filter. **Unmount all** (toolbar and tray) unmounts everything. | Mount all with search "web" mounts only the matching profiles. |
@@ -503,15 +503,21 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 | Sector size / sectors per allocation unit | 4096 / 1 |
 | `MaxComponentLength` | 255 |
 | `CaseSensitiveSearch` / `CasePreservedNames` / `UnicodeOnDisk` | false / true / true |
-| `PersistentAcls` | false |
+| `PersistentAcls` | false; fixed security descriptor `O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;WD)` |
 | `ReadOnlyVolume` | `read_only` |
 | `VolumePrefix` | `\fsm\<profile-slug>` (network-drive mode) |
 | `FileSystemName` | `FSM-SFTP` / `FSM-NFS` |
 | Volume label | profile name, ≤ 32 chars |
 | `FileInfoTimeout` | 1000 ms (see §5.6) |
 | `PostCleanupWhenModifiedOnly` | true |
+| `VolumeSerialNumber` / `VolumeCreationTime` | fixed per profile / mount time |
+| Other flags | crate defaults: one file context per open handle, double buffering on; no hard links, reparse points, named streams or EAs |
+| Dispatcher | `FineGuard`; thread count from settings (0 = WinFsp default) |
 
-The exact flag set is confirmed in spike M0-1 and recorded in `docs/spikes/m0-1-winfsp.md`.
+Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode mounts pass all scripted and manual checks. Build notes:
+- the `winfsp` crate is used with its `system` feature, so the installed WinFsp DLL is found through the registry;
+- builds need LLVM (libclang for `bindgen`) and the WinFsp Developer feature;
+- `windows` must stay on the version `winfsp` uses (0.61 for `winfsp` 0.13).
 
 **Operation mapping**
 

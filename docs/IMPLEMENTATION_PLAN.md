@@ -161,6 +161,8 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 ### M0-1: WinFsp in-memory drive (risk: "network-drive mode from an unelevated process")
 
+**Status: ☑ Go (2026-11-03).** Report: [spikes/m0-1-winfsp.md](spikes/m0-1-winfsp.md). Explorer-notification and label issues moved to M1-12c.
+
 1. Create `spikes/m0-1-winfsp`, depending on the `winfsp` crate.
    - Add `build.rs` with `winfsp::build::winfsp_link_delayload()`.
    - Find out whether the default (bundled) link mode works, or whether the `system` feature plus S-02's Developer files are needed.
@@ -274,7 +276,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M1-11 | **`fsm-win` helpers** (windows-rs):<br>• Credential Manager wrapper (`CredWriteW`/`CredReadW`/`CredDeleteW`, targets from NFR-SEC-01) returning `Secret`;<br>• drive-letter queries (`GetLogicalDrives` + `WNetGetConnectionW`);<br>• `SHChangeNotify` drive add/remove;<br>• open Explorer (`ShellExecuteW`);<br>• WinFsp detection (registry `InstallDir` + DLL file version ≥ 2.1). | Windows-only tests: credential round-trip and delete; letter detection with a test `subst` drive; version parse | – | ☐ |
 | M1-12a | **`fsm-winfsp` adapter: read path**:<br>• `WinFspBackend` skeleton over `Arc<dyn RemoteFs>` wrapped as `CachedFs<DeadlineFs<…>>`;<br>• `block_on` with a deadline on the dispatcher threads;<br>• per-file context (path, lazily opened handle, is-directory, read-ahead state);<br>• `get_volume_info`, `get_security_by_name` (fixed security descriptor: full control for the current user), `open`, `read`, `get_file_info`, `read_directory`, `get_dir_info_by_name`, `close`;<br>• NTSTATUS mapping table. | Mounted `MemFs`: listing, reading and attribute queries pass scripted Win32 tests | – | ☐ |
 | M1-12b | **`fsm-winfsp` adapter: write path**: `create`, `overwrite`, `write`, `flush`, `set_basic_info`, `set_file_size`, `can_delete`/`set_delete`, `cleanup` (delete-pending, flush), `rename`. | Mounted `MemFs` passes CopyFileEx, MoveFileEx, ReplaceFile, delete and attribute tests, and `fsx` 10k operations | – | ☐ |
-| M1-12c | **`fsm-winfsp` adapter: mount lifecycle and test harness**:<br>• volume parameters from M0-1; `MountBackend::mount`/`unmount`; thread count from settings;<br>• a Windows test harness that mounts `MemFs` and an in-process `russh` SFTP server;<br>• the agreed `winfsp-tests` subset, with exclusions and reasons in `tests/winfsp-tests-exclusions.txt`;<br>• the same tests wired into CI. | Harness and `winfsp-tests` subset green locally and in CI | – | ☐ |
+| M1-12c | **`fsm-winfsp` adapter: mount lifecycle and test harness**:<br>• volume parameters from M0-1; `MountBackend::mount`/`unmount`; thread count from settings;<br>• a Windows test harness that mounts `MemFs` and an in-process `russh` SFTP server;<br>• the agreed `winfsp-tests` subset, with exclusions and reasons in `tests/winfsp-tests-exclusions.txt`;<br>• the same tests wired into CI;<br>• **Explorer integration** (spike M0-1 §7): make a running Explorer show and hide the drive (try `WNetAddConnection2W` via `WinFsp.Np` first; never a synchronous broadcast), and the profile name as the Explorer label (`_LabelFromReg`). | Harness and `winfsp-tests` subset green locally and in CI; owner confirms a running Explorer shows "Name (X:)" within 1 s, without restarting Explorer | H-06 | ☐ |
 
 ### WP 1.E: Engine (portable)
 
