@@ -1,0 +1,22 @@
+# Rust build output
+/target/
+**/target/
+
+# Installer output
+*.msi
+*.wixobj
+*.wixpdb
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+
+# Local secrets and test keys
+*.pem
+*.key
+.env
+tests/docker/keys/
