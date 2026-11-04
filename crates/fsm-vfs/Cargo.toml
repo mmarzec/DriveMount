@@ -24,6 +24,8 @@ zeroize = { workspace = true }
 # Depending on itself turns `testing` on for this crate's own tests, so plain `cargo test` runs them.
 fsm-vfs = { path = ".", features = ["testing"] }
 proptest = { workspace = true }
+# test-util lets the cache tests pause the clock.
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

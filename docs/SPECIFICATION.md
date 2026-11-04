@@ -464,11 +464,17 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 
 | Cache | Default TTL | Invalidation |
 |---|---|---|
-| Attributes (path → Attr) | `cache_ttl_secs` (5 s; 0–60) | Any local create/write/set_attr/rename/remove on the path. Rename also invalidates the destination. |
-| Directory listings | same TTL | Any local change to an entry inside the directory |
-| Negative lookups (path not found) | 1 s; 60 s for Explorer "noise" names | Local create or rename onto the path |
+| Attributes (path → Attr) | `cache_ttl_secs` (5 s; 0–60) | Any local create/write/set_attr/rename/remove on the path, and flush or close after a write. Rename also invalidates the destination. A new or removed entry also invalidates its directory's attributes. |
+| Directory listings | same TTL | Any local change to an entry inside the directory, including a write, because listings show size and time |
+| Negative lookups (path not found) | 1 s; 60 s for Explorer "noise" names | Local create or rename onto the path; also a listing that shows the name, or opening the file |
 
 - **Explorer noise names** get the longer negative TTL: `desktop.ini`, `Desktop.ini`, `thumbs.db`, `Thumbs.db`, `autorun.inf`, `AutoRun.inf`, `folder.jpg`, `folder.gif`, `$RECYCLE.BIN`, `System Volume Information`. They are looked up normally first, so real files with these names still work.
+- **What is cached.** `stat` and `read_dir` only; `lstat` always reaches the server. A listing also fills the attributes of its entries, except symbolic links, whose entries do not describe the target. A TTL of 0 turns attributes and listings off; the negative TTLs stay.
+- **Whole subtrees.** Rename, `remove_dir` and `mkdir` invalidate everything cached below the path as well as the path itself. Open handles follow local renames, so a later write invalidates the file's new path.
+- **Invalidation cannot be skipped.** It runs when the call ends, even if the call failed or was dropped by a layer above, because the server may have acted anyway. An answer that was on its way while a change to its path finished is returned but not stored.
+- **Age.** A TTL counts from when the question was asked, not from when the answer arrived.
+- **Size.** Each of the three caches holds at most 10,000 entries, least recently used going first. A listing counts as one plus one per directory entry, so a directory of 10,000 or more entries is not cached.
+- **Other clients.** Changes made by others, and local changes that reach a path through a symbolic link, show up when the TTL runs out.
 - **Kernel-side caches.** WinFsp's own caches are configured **short and never infinite**: `FileInfoTimeout` = 1000 ms. This fixes NEO's NUL-byte bug class. Final values are confirmed in spike M0-1.
 
 **Reads.**

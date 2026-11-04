@@ -2,6 +2,27 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-05 `CachedFs` (branch `feat/m1-05-cachedfs`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-vfs` in a `rust:1.99.1` container. The size check was not run: nothing in `fsm.exe` uses this yet. `fsm-vfs` now has 176 tests (78 unit, 60 cache, 31 contract, 3 `dyn` trait, 4 doc).
+
+- **Added:** `CachedFs::new(inner, ttl)` in `fsm_vfs`. Nothing wraps a backend with it yet. The profile's `cache_ttl_secs` becomes `ttl` where the mount is put together. `tokio`'s `test-util` is a dev-dependency only; `Cargo.lock` did not change.
+- **Spec §5.6 tightened, because the table's rules alone leave stale data.** See the bullets added under it:
+  - **Subtrees:** rename, `remove_dir` and `mkdir` clear everything below the path. Without this, `/d/f` stays visible after `/d` is renamed.
+  - **Failed and dropped calls invalidate too:** a timeout says nothing about whether the server acted. It runs from a drop guard, so **M1-06 can put `DeadlineFs` above or below `CachedFs`**; the plan does not say which.
+  - **Overlapping lookups:** an answer overtaken by a change to its path is returned but not stored. Paths share 256 generation counters, plus one for subtree changes, so memory stays fixed; a collision only loses one fill.
+  - **Writes also invalidate the parent's listing**, since listings show size and time, and again on flush and close, since a server can update times that late. Handles that wrote nothing do not invalidate, or browsing would empty the caches. Handles follow local renames.
+- **Choices the plan left open:**
+  - **10k per cache, a listing weighing 1 + its entries.** Counting a listing as one entry would allow 10k huge listings, and expired entries stay until pushed out. So **a directory of 10,000 or more entries is never cached**, and its entries' attributes are not filled either. **M1-12a:** keep a snapshot per directory handle for paged `ReadDirectory`, or a big folder is listed again on each page. Worth a second look in M2-08 if that hurts.
+  - Only `stat` is cached, not `lstat`; nothing in the spec's mapping needs `lstat` to be fast. `open` always goes to the server, so a negative entry can never stop a file being opened.
+  - A TTL of 0 leaves the negative TTLs on, as the spec's table reads. So with TTL 0, a `desktop.ini` created by someone else can still look missing for up to 60 s, unless a listing or an open shows it.
+  - Noise names match exactly as listed: `DESKTOP.INI` is an ordinary name.
+- **Settled from M1-02:** `CachedFs` does not change what `read_dir` returns, so showing a link as its target is still for `SftpFs` or the adapter (M1-10/M1-12a). `CachedFs` only avoids filling `stat` from a symlink's entry.
+- **Known limits:** a change that reaches a path through a symbolic link, and a rename that failed without saying whether it happened (a handle then keeps its old path), can leave attributes stale until the TTL runs out.
+- **The tests are checked too:** 65 faults injected by hand, one per rule. 57 failed at least one test at once. Of the other 8, 6 were test gaps, now closed and re-run; one was a harmful line, now removed: an older "not found" arriving last wiped a newer positive answer. One remains uncaught and changes nothing observable: dropping the zero-TTL check, which only avoids a clone, since `insert` refuses expired entries anyway. The script was not kept.
+- **Not measured:** memory. Three full caches may take several MiB, and entries are not removed on a timer (NFR-PERF-05 forbids wake-ups). **M2-08/M2-09:** check against NFR-PERF-04's 8 MiB per idle mount. NFR-PERF-08's "repeated listing < 20 ms" should hold but is untested. Each `mkdir` and rename walks up to 30k entries; this should be small next to a round trip, but it was not measured against NFR-PERF-07.
+- **Next:** M1-06.
+
 ## 2026-11-04: M1-04 name mapping (branch `feat/m1-04-name-mapping`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass in a `rust:1.99.1` container. `fsm-vfs` now has 104 tests (66 unit, 31 contract, 3 `dyn` trait, 4 doc).

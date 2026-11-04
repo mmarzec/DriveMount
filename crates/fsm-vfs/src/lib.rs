@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod cache;
 #[cfg(feature = "testing")]
 pub mod contract;
 mod error;
@@ -25,6 +26,7 @@ mod remote;
 mod secret;
 mod types;
 
+pub use cache::CachedFs;
 pub use error::{ChangedHostKey, ConnectError, FsError, FsResult, MountError};
 #[cfg(feature = "testing")]
 pub use memfs::MemFs;
