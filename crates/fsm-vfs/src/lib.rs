@@ -30,7 +30,7 @@ mod types;
 
 pub use cache::CachedFs;
 pub use deadline::DeadlineFs;
-pub use error::{ChangedHostKey, ConnectError, FsError, FsResult, MountError};
+pub use error::{ChangedHostKey, ConnectError, FsError, FsResult, MountError, RevokedHostKey};
 #[cfg(feature = "testing")]
 pub use memfs::MemFs;
 pub use mount::{DriveLetter, Health, MountBackend};

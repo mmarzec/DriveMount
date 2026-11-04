@@ -68,6 +68,21 @@ pub struct ChangedHostKey {
     pub line: u32,
 }
 
+/// The details of a refused revoked host key (FR-SSH-08).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevokedHostKey {
+    /// The host name as the profile gives it.
+    pub host: String,
+    /// The TCP port.
+    pub port: u16,
+    /// SHA256 fingerprint of the key the server presented.
+    pub fingerprint: String,
+    /// The `known_hosts` file holding the `@revoked` line.
+    pub known_hosts: PathBuf,
+    /// The 1-based line of the `@revoked` entry in that file.
+    pub line: u32,
+}
+
 /// Why a connection could not be set up.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConnectError {
@@ -85,6 +100,9 @@ pub enum ConnectError {
     /// E-HOSTKEY-CHANGED. There is no way to override this.
     #[error("server key has changed: connection refused")]
     HostKeyChanged(Box<ChangedHostKey>),
+    /// E-HOSTKEY-REVOKED. There is no way to override this.
+    #[error("server key has been revoked: connection refused")]
+    HostKeyRevoked(Box<RevokedHostKey>),
     /// E-HOSTKEY-REJECTED: the user did not trust an unknown key.
     #[error("server key not trusted")]
     HostKeyRejected,
@@ -179,7 +197,7 @@ mod tests {
 
     #[test]
     fn errors_stay_small() {
-        // ChangedHostKey is boxed so the Result of every connect call stays small.
+        // The host key details are boxed so the Result of every connect call stays small.
         assert!(size_of::<ConnectError>() <= 64);
         assert!(size_of::<MountError>() <= 64);
     }

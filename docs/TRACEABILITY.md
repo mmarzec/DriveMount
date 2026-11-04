@@ -39,9 +39,9 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SSH-05 | M1-08b, M1-17 | – | – |
 | FR-SSH-06 | M1-08b, M1-17 | – | – |
 | FR-SSH-07 | M1-08b, M1-17 | – | – |
-| FR-SSH-08 | M1-07, M1-08a, M1-17 | – | – |
-| FR-SSH-09 | M1-07, M1-08a, M1-17 | – | – |
-| FR-SSH-10 | M1-07, M1-08a, M1-17 | – | – |
+| FR-SSH-08 | M1-07, M1-08a, M1-17 | So far only the file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: M1-08a | – |
+| FR-SSH-09 | M1-07, M1-08a, M1-17 | So far only the file: `ssh_accepts_what_was_saved` shows `ssh.exe` accepts a saved line without asking (needs S-03). Dialog and second mount: M1-08a, M1-17 | – |
+| FR-SSH-10 | M1-07, M1-08a, M1-17 | So far only detection, with the line and fingerprints: `the_fixture_gives_the_expected_answers`. Refusal and dialog: M1-08a, M1-17 | – |
 | FR-SSH-11 | M1-09 | – | – |
 | FR-SSH-12 | M1-08a, M2-01 | – | – |
 | FR-SSH-13 | M1-08a, M1-10 | – | – |

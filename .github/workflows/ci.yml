@@ -2,8 +2,8 @@
 #
 # Runs on GitHub Actions and on Gitea Actions, which also reads .github/workflows.
 # Gitea runners (act_runner) must be registered with the labels ubuntu-latest and windows-latest.
-# Each needs rustup, git and Node (for actions/checkout); the Windows one also needs the MSVC build
-# tools. rust-toolchain.toml selects the toolchain.
+# Each needs rustup, git, Node (for actions/checkout) and ssh-keygen (known_hosts tests); the Windows
+# one also needs the MSVC build tools. rust-toolchain.toml selects the toolchain.
 
 name: CI
 

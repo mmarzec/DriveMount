@@ -2,6 +2,34 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-07 `known_hosts` (branch `feat/m1-07-known-hosts`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. `fsm-sftp` now has 38 tests (7 unit, 22 fixture and append, 9 against OpenSSH, of which 4 need the S-03 server and are `#[ignore]`d). `Cargo.lock` gained `base64`, `hmac`, `sha1`, `sha2` and what they need; `getrandom` is a new direct pin, at the version already locked.
+
+- **Added:** `fsm_sftp::known_hosts`: `HostKey::from_wire`, `KnownHosts::{load, parse, check, known_key_types, uses_hashing}`, `append_if_unknown`. Nothing calls them yet. Also `ConnectError::HostKeyRevoked` and code E-HOSTKEY-REVOKED, the gap the M1-02 notes left; its hint text is new in §7.8, so the owner may want to reword it.
+- **The rules come from running `ssh`, not from memory**, and two surprised me (now in spec §6.3):
+  - **A known key of another type counts as changed.** With FR-SSH-10's no-override rule, that is a refusal.
+  - **A plain `host` line also serves other ports**, but only for its exact key; a different key there is just unknown.
+  - `ssh` reports the last offending line, and the Windows build skips a UTF-8 byte order mark. Both are followed.
+- **For M1-08a:**
+  - **Must ask the server for the key types on file first** (`known_key_types`), as `ssh` does. Otherwise a server with RSA on file and a newer ed25519 key is refused with no way out. The plan row now says so.
+  - **`append_if_unknown` returns a status, and `Changed` or `Revoked` must still refuse.** The file is read again under the lock, because the dialog may have been open for minutes.
+  - It blocks, for up to 5 s on the lock: use `spawn_blocking`. Treat every `KnownHostsError` as not trusted.
+  - `HostKey` takes the wire blob. The spike's `check_server_key` receives `&PublicKeyOrCertificate`: **a certificate branch needs a decision**, since `@cert-authority` lines are ignored here. Getting the blob from `russh` is untested.
+  - The caller resolves `%USERPROFILE%\.ssh\known_hosts`.
+- **One deliberate difference from OpenSSH:** a `@revoked` line under plain `host` wins even if the key is good under `[host]:port`. OpenSSH accepts that. Tested.
+- **Host names are checked before saving.** A host with a newline, space, comma or pattern character is refused, or a profile could make the file trust a key for another host.
+- **`known_hosts.lock` stays behind, empty.** It uses an operating-system lock, so a crash cannot leave it stuck. Removing it safely would need a second lock.
+- **Known limits:**
+  - Only the one file is read, as §6.3 says. A `@revoked` line in `known_hosts2` or the system-wide file has no effect here.
+  - A UTF-16 file (what `>` writes in PowerShell 5.1) is not handled and was not tested: it would read as empty, and an append would add UTF-8 to it.
+  - A line with a valid type but a truncated key is kept, so it can report `Changed`, where `ssh` probably skips the line (not tried). The result is a refusal naming the line to remove.
+  - The concurrency tests use threads, each with its own handle on the lock file. Two separate processes were not tested.
+  - The comparison with real `ssh` ran on OpenSSH 9.5 on Windows only. On Debian's 9.2 only a few cases were tried by hand (plain-name fallback, another curve counting as changed), and they agreed.
+- **For CI:** the `ssh-keygen` tests fail if it is missing, on purpose, so runners need it (noted in `ci.yml`). The `#[ignore]`d `ssh` tests do not run in CI yet. **M1-08a:** run them where it starts the S-03 server. To run them now: `tests/docker/servers.ps1 up`, then `cargo test -p fsm-sftp --test known_hosts_openssh -- --ignored`.
+- **The tests are checked too:** 46 faults injected by hand. 41 failed a test at once. 2 hung rather than failed (a broken glob loop, a lock that never times out); they are noticed, but only by a time limit. 3 were test gaps, now closed and re-run. The script was not kept.
+- **Next:** M1-08a.
+
 ## 2026-11-04: M1-06 `DeadlineFs` and `ReadAhead` (branch `feat/m1-06-deadline-readahead`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-vfs` in a `rust:1.99.1` container. The size check was not run: nothing in `fsm.exe` uses this yet. `fsm-vfs` now has 229 tests (78 unit, 60 cache, 41 read-ahead, 31 contract, 12 deadline, 3 `dyn` trait, 4 doc). `Cargo.lock` did not change.

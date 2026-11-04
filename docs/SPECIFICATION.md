@@ -688,7 +688,15 @@ Windows Credential Manager entries (NFR-SEC-01) are created only when "Remember"
 ### 6.3 Known hosts
 
 - **File:** reads and appends to `%USERPROFILE%\.ssh\known_hosts`; the directory is created if missing. New lines use the OpenSSH format, hashed (`|1|…`) only if the existing file already uses hashed entries.
-- **Concurrency:** the file is never rewritten, only appended. A lock file prevents concurrent appends.
+- **Concurrency:** the file is never rewritten, only appended. A lock file prevents concurrent appends: `known_hosts.lock` beside the file, held with an operating-system lock, so a crash cannot leave it stuck. The empty file stays behind. The file is read again under the lock, and the line is written only if the key is still unknown; if another program saved a different key while the trust dialog was open, the connection is refused.
+- **Matching:** the same as OpenSSH, so both programs give the same answer for one file (checked against OpenSSH 9.5 on Windows; see `known_hosts_openssh.rs`):
+  - Names are compared in lower case. `*`, `?`, `!` and comma-separated lists work in plain entries. A server on another port is looked up as `[host]:port`.
+  - The key is **known** if any entry for the name holds it. If there is no entry at all under `[host]:port`, an entry for plain `host` with exactly this key also counts.
+  - The key has **changed** if the name has other keys on file, **whatever their type**. The line shown is the last of them, as `ssh` reports it. A connection must therefore ask the server for the key types on file first, as `ssh` does; otherwise a server that also has a newer key type looks changed.
+  - The key is **unknown** otherwise. A different key under plain `host` does not make a server on another port *changed*.
+  - `@cert-authority` lines are ignored, because host certificates are not supported. Lines OpenSSH would skip are skipped, and a UTF-8 byte order mark at the start of the file is ignored, as in the Windows build.
+- **Revoked keys:** a `@revoked` line for `[host]:port` or plain `host` with this key always refuses the connection (E-HOSTKEY-REVOKED). This is the one difference from OpenSSH, which accepts a key found under `[host]:port` without looking at plain `host`.
+- **Only this file is read.** `known_hosts2` and the system-wide `%PROGRAMDATA%\ssh\ssh_known_hosts` are not, so a `@revoked` line there has no effect here.
 
 ### 6.4 Logs
 
@@ -867,6 +875,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 |---|---|---|
 | E-AUTH | "Authentication failed for {user}@{host}." | "Check the user name and password or key." Clears a remembered password only when the user re-enters one. |
 | E-HOSTKEY-CHANGED | "Server key has changed: connection refused." | Dialog §7.4.3 |
+| E-HOSTKEY-REVOKED | "Server key has been revoked: connection refused." | "`known_hosts` line {line} marks this key as revoked. Ask the server's administrator for its current key." |
 | E-HOSTKEY-REJECTED | "Server key not trusted." | Mount again to see the prompt |
 | E-DNS | "Host {host} not found." | "Check the host name." |
 | E-HOST-UNREACHABLE | "Cannot reach {host}:{port}." | "Check the network, VPN or firewall." |
