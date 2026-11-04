@@ -210,6 +210,15 @@ pub struct FsStats {
     pub free_bytes: u64,
 }
 
+impl FsStats {
+    /// What a session without [`Capabilities::statvfs`] reports: 1 PiB of each, so Windows' copy
+    /// pre-checks never fail (spec §5.7).
+    pub const PLACEHOLDER: Self = Self {
+        total_bytes: 1 << 50,
+        free_bytes: 1 << 50,
+    };
+}
+
 /// What a session can do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Capabilities {
@@ -217,8 +226,8 @@ pub struct Capabilities {
     pub posix_rename: bool,
     /// [`flush`](crate::RemoteFs::flush) reaches stable storage. Otherwise it does nothing.
     pub fsync: bool,
-    /// [`statfs`](crate::RemoteFs::statfs) reports real numbers. Otherwise it reports a placeholder
-    /// (spec §5.7).
+    /// [`statfs`](crate::RemoteFs::statfs) reports real numbers. Otherwise it reports
+    /// [`FsStats::PLACEHOLDER`].
     pub statvfs: bool,
     /// Largest single read request in bytes.
     pub max_read: u32,

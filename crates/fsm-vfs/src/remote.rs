@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The remote file system and how sessions are created. The contract tests of M1-03 hold backends to
-//! what these doc comments promise.
+//! The remote file system and how sessions are created. The contract tests in `contract` (feature
+//! `testing`) hold backends to what these doc comments promise.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -19,6 +19,9 @@ use crate::{
 ///
 /// Calls can overlap, including several on one handle. Names and paths are the server's own, before
 /// name mapping.
+///
+/// A path whose parent is missing, or runs through a file, gives `PathNotFound` where the backend can
+/// tell and `NotFound` where it cannot: SFTP has only one "no such file" status.
 #[async_trait]
 pub trait RemoteFs: Send + Sync + 'static {
     /// The attributes of `path`, following symbolic links. A broken link gives `NotFound`.
@@ -31,17 +34,19 @@ pub trait RemoteFs: Send + Sync + 'static {
     async fn fstat(&self, handle: &RemoteHandle) -> FsResult<Attr>;
 
     /// All entries of a directory, in no particular order and without `.` and `..`. Symbolic links
-    /// are not followed.
+    /// are not followed. Fails if `path` is not a directory.
     async fn read_dir(&self, path: &RemotePath) -> FsResult<Vec<DirEntry>>;
 
-    /// Opens a file. New files get the server's default permissions (spec §5.6).
+    /// Opens a file. New files get the server's default permissions (spec §5.6). Asking to write a
+    /// read-only file gives `PermissionDenied` and leaves it unchanged.
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle>;
 
     /// Reads up to `len` bytes at `offset`. Fewer bytes mean only that the rest must be asked for
-    /// again; an empty result means end of file.
+    /// again; an empty result means end of file. Fails on a write-only handle.
     async fn read(&self, handle: &RemoteHandle, offset: u64, len: u32) -> FsResult<Bytes>;
 
-    /// Writes all of `data` at `offset`, or fails. Returns once the server has acknowledged it.
+    /// Writes all of `data` at `offset`, or fails. Returns once the server has acknowledged it. A gap
+    /// left by writing past the end of the file reads as zeros. Fails on a read-only handle.
     async fn write(&self, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()>;
 
     /// Asks the server to move the file's data to stable storage, where it can
@@ -51,20 +56,26 @@ pub trait RemoteFs: Send + Sync + 'static {
     /// Closes a file. The handle is gone even if this fails.
     async fn close(&self, handle: RemoteHandle) -> FsResult<()>;
 
-    /// Changes attributes and returns the result.
+    /// Changes attributes and returns the result. Extending a file adds zeros, and data cut off by
+    /// shrinking it does not come back.
     async fn set_attr(&self, target: AttrTarget<'_>, changes: AttrChanges) -> FsResult<Attr>;
 
     /// Creates a directory with the server's default permissions. `Exists` if the name is taken.
     async fn mkdir(&self, path: &RemotePath) -> FsResult<Attr>;
 
-    /// Removes a file or symbolic link.
+    /// Removes a file or symbolic link. Fails on a directory, leaving it in place.
     async fn remove_file(&self, path: &RemotePath) -> FsResult<()>;
 
-    /// Removes an empty directory. `NotEmpty` otherwise.
+    /// Removes an empty directory. `NotEmpty` if it has entries; fails on a file, leaving it in place.
     async fn remove_dir(&self, path: &RemotePath) -> FsResult<()>;
 
     /// Renames a file or directory. If the target exists, `replace` decides between replacing it
     /// and failing with `Exists`.
+    ///
+    /// A failed rename leaves both paths as they were, whether the source is missing or the target
+    /// cannot be replaced: a non-empty directory cannot be, and a file and a directory cannot replace
+    /// each other. A directory cannot move into itself. Renaming a path onto itself with `replace`
+    /// does nothing and keeps the file.
     async fn rename(&self, from: &RemotePath, to: &RemotePath, replace: bool) -> FsResult<()>;
 
     /// The space on the file system.

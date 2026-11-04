@@ -9,6 +9,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# MemFs and the RemoteFs contract suite, for tests in this and other crates.
+testing = []
+
 [dependencies]
 async-trait = { workspace = true }
 bytes = { workspace = true }
@@ -17,6 +21,8 @@ tokio = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+# Depending on itself turns `testing` on for this crate's own tests, so plain `cargo test` runs them.
+fsm-vfs = { path = ".", features = ["testing"] }
 proptest = { workspace = true }
 
 [lints]

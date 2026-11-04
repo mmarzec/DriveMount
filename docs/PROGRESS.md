@@ -2,6 +2,22 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-03 `MemFs` and the contract suite (branch `feat/m1-03-memfs-contract`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass in a `rust:1.99.1` container. `fsm-vfs` now has 75 tests (39 unit, 31 contract, 3 `dyn` trait, 2 doc). The full suite with the 1 GiB file takes about 3 s in a debug build on Windows. Peak memory was not measured.
+
+- **Differs from the plan:** `run_all(fs, root)` rather than `run_all(fs)`, because SFTP users cannot write to `/`. It works in a new directory under `root` and removes it if everything passes. `run_quick` is the same without the 1 GiB file, for extra configurations of a backend. Each call needs about 1 GiB of RAM on `MemFs`, so only one test uses `run_all`.
+- **Trait docs tightened, because the suite tests them:** gaps and extensions read as zeros; a failed rename leaves both paths alone, including a missing source with `replace`; renaming a path onto itself with `replace` keeps the file; a file and a directory cannot replace each other; a missing parent may give `PathNotFound` or `NotFound`, since SFTP cannot tell them apart. **M1-10:** the §5.7 rename fallback (remove the target, then rename) has to check these first, or it loses data; the suite has cases for it.
+- **Added:** `FsStats::PLACEHOLDER` (1 PiB, spec §5.7), for `SftpFs` too.
+- **`MemFs` choices:** sparse 64 KiB pages, so writes past 4 GiB cost nothing. One lock for the tree and one per file, state before file. Handles keep removed files alive, as on POSIX. Reads are cut to `max_read`, and writes above `max_write` fail, to catch callers that do not split them. `statfs` counts written pages against a nominal 1 TiB, and writes never run out, so **`NoSpace` cannot be tested with it yet**.
+- **`testing` feature:** `fsm-vfs` has a dev-dependency on itself so plain `cargo test` covers it. Other crates should take the feature in `[dev-dependencies]` only. `cargo tree` shows it stays off in normal builds.
+- **The suite is checked too:** `tests/contract.rs` wraps `MemFs` in 25 faults, each breaking one promise, and each must make the suite panic. `should_panic` cannot say why, so the panic sites were read by hand once; all were relevant. The fault-free wrapper must pass.
+- **Not covered:**
+  - **Symbolic links:** the `stat`/`lstat`/broken-link promises are untested, because `RemoteFs` cannot create links and `MemFs` has none. M1-10 needs a fixture on the Docker server, or a separate case taking a prepared link. Settle with the `DirEntry` question from M1-02.
+  - **Rest of §10.2:** pipelined throughput, connection kill and deadline expiry belong to M1-06, M1-10 and M2-01.
+  - **Running it for real:** the suite needs a non-root user and POSIX names, so Windows servers stay in the lab matrix. The `tester` Docker user fits, but nothing but `MemFs` has run it yet; expect real servers to find mistakes in the suite as well as in `SftpFs`.
+- **Next:** M1-04.
+
 ## 2026-11-04: M1-02 `fsm-vfs` types and traits (branch `feat/m1-02-vfs-types`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the secret check also pass in a `rust:1.99.1` container. The types have 32 tests (28 unit, 3 `dyn` trait, 1 doc); backends do not exist yet, so the traits' contract is first exercised in M1-03.

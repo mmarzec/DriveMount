@@ -932,6 +932,8 @@ The `RemoteFs` contract-test suite (one generic suite run against each backend) 
 - connection kill mid-read with reconnect and handle reopen;
 - deadline expiry.
 
+The generic part is `fsm_vfs::contract` (feature `testing`): everything down to large files. It needs a server that allows any POSIX name and a user who is not root, and it cannot cover symbolic links because `RemoteFs` cannot create them. The last three items depend on the backend or on other layers and are tested with them.
+
 ### 10.3 Windows integration tests (Windows CI runner with WinFsp installed)
 
 - Mount an **in-memory `RemoteFs`** and an **in-process russh SFTP server** (from the `russh-sftp` server side) as drives, then run:

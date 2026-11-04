@@ -161,7 +161,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-REL-01 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
+| NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `fsm_vfs::contract` round-trips the listed sizes on `MemFs`. Through the drive: M1-12b | – |
 | NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-03 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
