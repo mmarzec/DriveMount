@@ -2,6 +2,27 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-02 `fsm-vfs` types and traits (branch `feat/m1-02-vfs-types`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the secret check also pass in a `rust:1.99.1` container. The types have 32 tests (28 unit, 3 `dyn` trait, 1 doc); backends do not exist yet, so the traits' contract is first exercised in M1-03.
+
+- **Decided (ADR-0001):** `async-trait`. It is a new dependency: `russh` does not use it. Native `async fn` still fails behind `dyn` on 1.99.1; boxing costs 95 ns per call by either method. `fsm-vfs` re-exports `async_trait` and `Bytes`.
+- **Differs from spec §5.4, spec updated:**
+  - Added `RemoteFs::fstat`: §5.8 maps `GetFileInfo` to it, but the trait did not have it.
+  - `AttrChanges::read_only` is a flag, not permission bits. The backend fetches the current permissions and calls `apply_read_only`, so a stale cache cannot overwrite the mode.
+- **Choices the plan left open:**
+  - `RemotePath`: a `..` above the root is an error, not clamped. `join` rejects absolute arguments rather than replacing the path as `std::path` does. NUL is rejected. Paths are UTF-8 `String`s, so `fsm-sftp` must decide what to do with non-UTF-8 names from a server (M1-10); the spec does not say.
+  - `OpenMode` constructors make nonsense like create-for-read impossible, so backends need no check.
+  - `RemoteHandle` is a `u64` and not `Clone`, because `close` consumes it. `Secret` has no `Clone` either; add one only if M1-08b needs it.
+  - `DirEntry::attr` does not follow symlinks. Showing a link as its target (§5.6) is left to the layer above, or to `SftpFs`; settle it in M1-05/M1-10.
+- **For later tasks:**
+  - **M1-07/M1-08a:** `ConnectError` has no variant for a `@revoked` host key, and §7.8 has no code. E-HOSTKEY-REJECTED's hint ("Mount again to see the prompt") would be wrong for it. Add both there.
+  - **M1-08b/M1-17:** FR-SSH-05's *Ask each time* prompt offers "password, or a key file plus passphrase". `Prompter::secret` only returns a string, so it cannot pick a key file yet. `SecretRequest::allow_remember` covers the "stores nothing" half.
+  - **M1-15/M1-16:** the variant docs name the §7.8 codes, but plan §11's one place mapping errors to codes and localised text does not exist yet. The `Display` text is English, for logs. E-NO-FREE-LETTER belongs to the allocator's own error. M3 and M4 add their E-SMB and E-NFS variants.
+- **Secret check:** `scripts/check-secret-format.sh` finds `expose_secret()` inside formatting and logging macros, including multi-line calls. It cannot follow a value through a variable. `assert*` macros are excluded because tests compare secrets. Negative-tested with Git Bash's `awk` and with `mawk` in the container, the kind Linux runners have.
+- `cargo deny` and `cargo audit` stay clean: the `russh`/`winfsp` problems in the M1-01 notes below still arrive with those crates.
+- **Next:** M1-03.
+
 ## 2026-11-04: M1-01 workspace skeleton (branch `feat/m1-01-workspace`)
 
 **Status: done locally; the CI workflow has never run.** It needs the Gitea runners (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and the header check pass on Windows and in a `rust:1.99.1` container; the size check passes on Windows (empty `fsm.exe`: 0.20 MB).
