@@ -43,10 +43,10 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SSH-09 | M1-07, M1-08a, M1-17 | Below the UI: `trust_and_save_is_asked_once_and_real_ssh_agrees`, `trust_once_connects_and_saves_nothing`, `cancel_refuses_and_saves_nothing` (`tests/connector.rs`, need S-03). Dialog: M1-17 | – |
 | FR-SSH-10 | M1-07, M1-08a, M1-17 | Refusal below the UI, with the line and both fingerprints: `a_changed_key_is_refused_without_asking` (needs S-03). Simulated by editing the file, not by replacing the server's key. Traffic after key exchange was not captured. Dialog: M1-17 | – |
 | FR-SSH-11 | M1-09, M1-15, M1-17 | Below the UI: `crates/fsm-sftp/tests/jump.rs`, such as `each_host_key_is_asked_for_and_saved_for_its_own_host` (needs S-03), and `a_jump_host_can_log_in_with_the_agent` in `tests/auth.rs`. Storing `jump-password`: M1-15. Fields and dialogs: M1-17 | – |
-| FR-SSH-12 | M1-08a, M2-01 | So far the SSH layer: `unanswered_keep_alives_close_the_connection` and its two companions (`tests/connector.rs`, need S-03). State change to *Reconnecting*: M2-01 | – |
-| FR-SSH-13 | M1-08a, M1-10 | So far `~` on OpenSSH: `remote_paths_are_resolved_and_checked` (needs S-03). Windows OpenSSH: M1-10 | – |
-| FR-SSH-14 | M1-08a, M1-10 | So far `limits@openssh.com` and reading the list on OpenSSH: `the_session_works_and_knows_the_servers_limits_and_extensions` (needs S-03). Servers without them: M1-10 | – |
-| FR-SSH-15 | M1-08a, M1-10 | So far setup against OpenSSH 9.2 only. Test matrix: M1-10, §10.4 | – |
+| FR-SSH-12 | M1-08a, M1-10, M2-01 | So far the SSH layer: `unanswered_keep_alives_close_the_connection` and its two companions (`tests/connector.rs`, need S-03), now 3 intervals. State change to *Reconnecting*: M2-01 | – |
+| FR-SSH-13 | M1-08a, M1-10 | `remote_paths_are_resolved_and_checked`, and `drive_letter_paths_work_where_the_server_uses_them` against a Linux server laid out like Windows (need S-03). **Real Windows OpenSSH has not run:** lab matrix, §10.4 | – |
+| FR-SSH-14 | M1-08a, M1-10 | `the_contract_holds_on_openssh` and `the_contract_holds_on_a_server_without_the_extensions` (`crates/fsm-sftp/tests/sftpfs.rs`, need S-03) | – |
+| FR-SSH-15 | M1-08a, M1-10 | The contract suite against OpenSSH 9.2 and ProFTPD 1.3.8. OpenSSH 7.4, Windows OpenSSH: lab matrix, §10.4 | – |
 
 ## Mounting
 

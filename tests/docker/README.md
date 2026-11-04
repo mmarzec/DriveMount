@@ -47,6 +47,17 @@ The same users and image also run with one difference each, for testing failures
 | 2228 | `sshd-bastion` | None: the jump host for `sshd-target` |
 | none | `sshd-target` | Host key: RSA only. Reachable only through a jump host, as `sshd-target:22` |
 | 2229 | `sshd-noforward` | `AllowTcpForwarding no`: a jump host that refuses the channel |
+| 2231 | `sshd-rekey` | `RekeyLimit 1M`: rekeys all through a transfer |
+| 2232 | `sshd-winpaths` | `tester` is locked into `/srv/winroot`, with the home directory `/C:/Users/tester` and a folder `/C:/data`, as Windows OpenSSH shows paths |
+
+`sshd` also has `/srv/fixture`, owned by root and holding what `RemoteFs` cannot make: links to a file and a folder, a broken link, and a name that is not UTF-8. Its `/srv/small` is a 1 MiB `tmpfs` that any user can fill.
+
+## SFTP server `proftpd`: `localhost:2230`
+
+ProFTPD 1.3.8 `mod_sftp`, with every optional extension off (FR-SSH-14). User `tester`, password `tester`, host key `keys/ssh_host_rsa_key`. Its own log is `/var/log/proftpd/sftp.log` in the container, and says why it refused something.
+
+## Notes
+
 
 - `keys/` is created by `gen-keys.sh` and is git-ignored. Existing keys are kept, so the host key stays stable.
 - The TOTP file has no `DISALLOW_REUSE`, so tests can log in more than once per 30 s window.

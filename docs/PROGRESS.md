@@ -2,6 +2,49 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-10 `SftpFs` (branch `feat/m1-10-sftpfs`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy` and the server tests also pass for `fsm-sftp` in a `rust:1.99.1` container. `fsm-sftp` now has 220 tests on Windows: 96 that need no server and 124 that do, 27 of those in the new `tests/sftpfs.rs`. The server tests passed 3 runs of 3 in a row on Windows. The exe size check was not run: `fsm.exe` does not use `fsm-sftp` yet.
+
+- **Added:** `fsm_sftp::fs::SftpFs`, `Connector for SftpConnector` with `probe`, `SftpSession::key_exchanges`, and `examples/sftpfs_throughput.rs`. The rules are in spec §5.7.
+- **The contract suite passes, 1 GiB file included, on OpenSSH 9.2 and on ProFTPD 1.3.8 with every extension off.**
+- **Throughput, 1 GiB, MiB/s, VM IP, medians of 3 unless noted.** All meet the done-when:
+
+| | LAN now | LAN M0-2 | WAN now | WAN M0-2 |
+|---|---|---|---|---|
+| Download, `ReadAhead`, 1 MiB reads | 227 (5 runs, 210–279) | 230.7 (AES-GCM) | 50.8 | 49.6 (chacha20) |
+| Upload, 1 MiB per call | 207 | 151.8 (chacha20) | 18.2 | 17.2 (chacha20) |
+
+  - `SftpFs` negotiates AES-GCM, and M0-2's WAN and per-call rows used chacha20, so those two are not like for like. M0-2 has no per-call figure for AES-GCM.
+  - LAN downloads are noisy: a first batch of 3 gave a median of 197. The spike's own binary, alternating with `SftpFs` on the same day, gave 190–341 with a median of 214, so the spread is not `SftpFs`'s.
+- **Found in `russh-sftp` 3.0.1, none of it visible from the spike. For the owner to decide:** spec §12.1's fallback, our own small SFTP v3 client, would remove all three. It was not started: it is a change of plan, and everything here passes without it.
+  - **File handles are decoded as lossy UTF-8.** OpenSSH's are 4-byte indexes, so the 129th open at once is garbled and useless (`russh_sftp_garbles_the_129th_openssh_handle`). **A mount can hold 112 files open, and the next open fails** with `FsError::Other`. The other 16 slots are for listings. Whether that is enough depends on M1-12a's lazy handles and on what programs do; robocopy with `/MT:128` could reach it. A server with binary handles from the start cannot be used at all, whatever its other merits (FR-SSH-15's "other SFTP v3 servers").
+  - **A status code above 8 ends the whole session** (`russh_sftp_loses_the_session_over_proftpds_rename_refusal`). ProFTPD sends one for a rename onto a taken name, so a rename without `posix-rename` looks first, at the cost of 2 requests. Another client taking the name in between costs a reconnect, not data.
+  - **Names that are not UTF-8 are lost.** This settles the question open since M1-02, as far as this crate allows: such a name is listed with U+FFFD and cannot be opened, renamed or removed. It stays listed, so the folder does not look empty when it cannot be removed.
+- **Differs from the plan or spec, for the owner to check:**
+  - **A rename by hand moves the target aside, rather than removing it first as §5.7 said.** Removing first breaks `RemoteFs::rename`'s promise, and loses the target if the source cannot move: `a_failed_rename_by_hand_gives_the_target_back`. §5.7 is updated.
+  - **Windows servers are not detected,** though §5.7 said they would be. A check on `realpath` turned out to change nothing, so it was removed: a server that is not Windows has no `/C:/data`, which is E-PATH-NOT-FOUND either way.
+  - **`Limited` is not `ConnectionLost`,** though the plan says every error that is neither a status nor a timeout is. It comes from this side, and a reconnect would not help.
+  - **`keepalive_max` is 2,** as the plan says, now that M0-2's 60 s is confirmed: 3 intervals, 45 s at the default. Only 2 keep-alives are sent in that time, which reads differently from FR-SSH-12's "three unanswered"; the 60 s criterion is what it meets.
+- **Choices the plan left open:**
+  - **`SftpFs`'s `/` is the profile's remote path,** since the trait has no way to hand over a root. M1-12a just maps `\a\b` to `/a/b`.
+  - **`request_timeout_secs` stays at `op_timeout_secs` for the session,** so the backend's limit and `DeadlineFs`'s are the same. Time spent waiting for the in-flight limit counts only against `DeadlineFs`.
+  - The in-flight limits are per handle and shared by reads and writes. `ReadAhead` stays within them by itself, so they matter only for overlapping calls.
+  - Read and write access is checked here before anything is sent, so every server behaves the same. Flushing a read handle does nothing, as it has nothing to flush; this also avoids asking a server to fsync a handle it may not allow that on. Not tried on Windows OpenSSH.
+- **For later tasks:**
+  - **M1-12a:** show a link as its target by `stat`ing each `Symlink` entry of a listing (§5.6); `read_dir` reports the link, as the trait says. Opening a directory as a file is untested and may succeed on some servers, so stat first. A file that cannot be opened because of the limit should read as "too many open files".
+  - **M2-01:** `probe` needs `connect` to have run, and reads as `ConnectionLost` after the file system is dropped. An open abandoned by a deadline stays open on the server until the session ends, using up a slot, and enough of those make handles garbled, which are then refused.
+  - **M2-08:** per-call uploads on WAN are still 18 MiB/s, as OD-4 expected. Through a jump host is still unmeasured.
+  - **§10.4:** **real Windows OpenSSH has never run.** `sshd-winpaths` shows the paths as Windows does, on Linux, and that is all. OpenSSH 7.4 has not run either.
+- **Rekey:** tested both ways. The server asks after every MiB in `a_transfer_survives_rekeying`, which requires at least 19 rekeys in 64 MiB, and `russh` asks after 1 GiB in the OpenSSH contract run. Pipelined requests pass through both, and the data comes back the same.
+- **S-03 changes (run `servers.ps1 up`):** `proftpd` on 2230, `sshd-rekey` on 2231, `sshd-winpaths` on 2232; `/srv/fixture` and a 1 MiB `tmpfs` at `/srv/small` on `sshd`. CI's `integration` job needs no change.
+- **Gotchas:**
+  - `TimeoutIdle 0` made `mod_sftp` drop every connection at once, logging polls that timed out after 0 s, rather than turning the limit off. It cannot log to `/dev/stderr` either, as that is a link.
+  - Through the Windows `localhost` relay, the 1 GiB case on ProFTPD takes many minutes: 32 KiB writes one at a time meet M0-2's stall. Set `FSM_TEST_HOST` to the VM's IP.
+- **The tests are checked too:** 33 faults injected by script (kept out of the repository). All 33 seemed to fail a test, but **that count was wrong**: one fault left the `tmpfs` full, and `a_full_disk_is_no_space` then failed in every later run, so 4 faults had no other test behind them. That test now clears the disk first, and those 4 and the first were run again. Of the 4: 1 was caught, 1 was a test gap, now closed (`a_probe_in_flight_when_the_connection_ends_says_so`), and 1 was the Windows check above, now removed. The last stays uncaught and is harmless: not stopping for a missing source in a rename by hand, as the target moves aside and back and the error is the same. The other 28 were not run again after these changes.
+- **Not measured:** memory, including against NFR-PERF-04. NFR-PERF rows stay open until M2-08.
+- **Next:** M1-11.
+
 ## 2026-11-04: M1-09 jump host (branch `feat/m1-09-jump-host`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, the server tests and both script checks also pass for `fsm-sftp` in a `rust:1.99.1` container. `fsm-sftp` now has 173 tests on Windows (27 unit, 45 `auth`, 7 `auth_script`, 35 connector, 28 `jump`, 22 `known_hosts`, 9 against OpenSSH). The server tests passed 3 runs of 3 in a row on Windows. `Cargo.lock` did not change.

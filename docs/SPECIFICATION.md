@@ -531,7 +531,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
   - No algorithm in common is E-ALGORITHMS, with both lists in the log.
   - A `known_hosts` file that cannot be read, or a key that cannot be saved after *Trust and save*, refuses the connection with E-INTERNAL.
   - A remote path the server will not let this user see is E-PATH-NOT-FOUND: the server does not say whether it exists.
-- **Remote path:** `~`, `~/below/home` or an absolute path. Anything else is E-PATH-NOT-FOUND. Windows-style paths come with M1-10.
+- **Remote path:** `~`, `~/below/home` or an absolute path; or `C:/data` or `C:\data`, which mean `/C:/data`. Anything else is E-PATH-NOT-FOUND. `SftpFs` paths are relative to the result: its `/` is the folder the mount shows, so nothing above it needs to know where that is.
 - **Host certificates** are not requested, so a server cannot present one. If one arrived anyway, it would be refused.
 - **Logging in:**
   - The client first asks the server which methods it takes, and only uses those, so a method it does not take costs neither a dialog nor a failed attempt.
@@ -551,10 +551,20 @@ A timeout reported by the backend itself counts the same as an expired deadline.
   - The connection to the jump host lasts as long as the target's session, and losing it ends that session.
 - **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. Spike M0-2 measured head-of-line blocking that grows with bytes in flight; the 4 MiB limit (§5.6) keeps it to about one extra round trip. A second SFTP channel for bulk transfers removes it and stays an option if M2-08 finds browsing during a copy too slow.
 - **Window sizes:** the SSH channel window is 16 MiB (spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing).
-- **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. The connection is lost after 3 misses. `russh` decides that at the next interval, so a dead link is noticed 4 intervals after the last reply: at the default 15 s, that is on FR-SSH-12's 60 s limit (M1-10 decides whether to lower it).
+- **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. `keepalive_max` is 2, and `russh` closes at the interval after that many go unanswered, so a dead link is noticed 3 intervals after the last reply: 45 s at the default 15 s, within FR-SSH-12's 60 s. Only 2 keep-alives are actually sent in that time; the third would be due as it closes.
 - **Free space:** `statvfs@openssh.com`. Without it, total and free are reported as 1 PiB, so Windows' copy pre-checks never fail.
-- **Rename:** `posix-rename@openssh.com` for rename-with-replace. Without it, the target is removed and then the source renamed; this non-atomic fallback is logged at Debug level.
-- **Windows OpenSSH servers:** detected from the server version string or a `/C:/` style `realpath`. Paths are normalised (FR-SSH-13).
+- **Rename:** `posix-rename@openssh.com` for rename-with-replace. Without it, a non-atomic fallback, logged at Debug level: first check that the source exists, that the two are the same kind and that a target directory is empty; then move the target aside, rename the source, and remove what was moved aside. If renaming the source fails, the target is moved back, so a failed rename leaves both paths as they were (`RemoteFs::rename`). This differs from the first design, which removed the target first and could lose it.
+- **Windows OpenSSH servers** are not detected, because nothing depends on it: a drive-letter path is normalised on any server (FR-SSH-13), and a server that is not Windows has no such folder, which is E-PATH-NOT-FOUND. The home directory arrives from `realpath` as `/C:/Users/me` and needs nothing done to it.
+- **Requests:** reads and writes longer than the largest request are split and sent together, within §5.6's limits per handle (64 chunks, 4 MiB). A write waits for everything it sent, and its first error is the result. A read returns what it has up to the first chunk that fell short or failed, so the caller meets a later failure on its next read. Every request has `op_timeout_secs`.
+- **Errors:** `no such file` is `NotFound`, `permission denied` is `PermissionDenied` and `operation unsupported` is `NotSupported`. Any other reply that is not a timeout means the connection is gone, except a limit `russh-sftp` applies on this side. SFTP v3's catch-all code says little, so:
+  - A name that was taken gives `Exists` after a look shows it is (exclusive create, `mkdir`, rename without replace), and `rmdir` gives `NotEmpty` after a listing shows entries.
+  - A failed write gives `NoSpace` if `statvfs` then shows nothing free (§5.8), or if the server's text says so, on any request.
+  - ProFTPD's text `Not a directory` gives `PathNotFound`.
+- **Limits of `russh-sftp` 3.0.1.** Tests pin the first two, so that an upgrade shows when they go away, and a third test shows the last. The fallback in §12.1 would remove all three:
+  - **File handles are decoded as lossy UTF-8**, though they are opaque bytes. OpenSSH's are 4-byte indexes, lowest free first, so the 129th open at once is garbled and useless. A session therefore holds at most 112 files open, and more gives an error, leaving room for 16 listings at once, beyond which listings wait. A handle that arrives garbled anyway is refused, and stays open on the server until the session ends. A server with binary handles from the start cannot be used.
+  - **Status codes above SFTP v3's 8 end the session.** ProFTPD sends one when a rename without replace meets a taken name, so on a server without `posix-rename` such a rename looks first. Another client taking the name between the look and the rename would cost a reconnect.
+  - **Names are decoded as lossy UTF-8 too.** A name that is not UTF-8 is listed with U+FFFD in it and cannot be reached: opening it gives `NotFound`, and two such names can look the same. It stays listed, so a folder that cannot be removed does not look empty.
+- **Symbolic links:** `read_dir` and `lstat` report the link, as `RemoteFs` promises, and `stat` the target. Showing a link as its target (§5.6) is the WinFsp adapter's work: `stat` each `Symlink` entry, and list a broken one (M1-12a).
 
 ### 5.8 WinFsp adapter (fsm-winfsp)
 
@@ -973,8 +983,8 @@ This page replaces the list area inside the main window; a ← back arrow return
 ### 10.2 Backend integration tests (Linux CI, Docker)
 
 `tests/docker-compose.yml` starts:
-- an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host. Further instances each differ in one way, to produce one failure: no SFTP subsystem, one that exits at once, one that never answers, only SHA-1 host key signatures, and two host keys;
-- an SFTP server without OpenSSH extensions (ProFTPD `mod_sftp`);
+- an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host. Further instances each differ in one way: no SFTP subsystem, one that exits at once, one that never answers, only SHA-1 host key signatures, two host keys, a rekey after every MiB, and paths laid out like Windows OpenSSH's;
+- an SFTP server without OpenSSH extensions (ProFTPD `mod_sftp`), with all of them switched off;
 - *(M4)* an NFSv3 server (`erichough/nfs-server` or Ganesha).
 
 The `RemoteFs` contract-test suite (one generic suite run against each backend) covers:
@@ -1050,7 +1060,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 
 | Risk | Likelihood / impact | Mitigation / fallback |
 |---|---|---|
-| `russh-sftp` too slow or buggy | Medium / High | Spike M0-2. Fallback: our own minimal SFTP v3 client on `russh` channels (the protocol is small: about 20 packet types). |
+| `russh-sftp` too slow or buggy | Medium / High | Spike M0-2 found the speed fine. M1-10 found three decoding limits (§5.7), worked around for now. Fallback: our own minimal SFTP v3 client on `russh` channels (the protocol is small: about 20 packet types). |
 | Network-drive mode or some volume flags misbehave from an unelevated process | Low / High | Spike M0-1. Fallback: a plain drive-letter mount (not network mode). |
 | Explorer is slow on high-latency links (many metadata calls) | Medium / Medium | Attribute, directory and negative caches; noise names; read-ahead; a configurable cache TTL |
 | Slint and tray integration issues | Low / Medium | Spike M0-3. Fallback: a raw Win32 `Shell_NotifyIcon` in `fsm-win`. |

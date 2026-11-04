@@ -5,4 +5,5 @@
 #![forbid(unsafe_code)]
 
 pub mod connector;
+pub mod fs;
 pub mod known_hosts;

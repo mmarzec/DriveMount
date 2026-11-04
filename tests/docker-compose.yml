@@ -13,6 +13,9 @@ services:
     <<: *sshd
     ports:
       - "2222:22"
+    # A disk that fills up, for the disk-full mapping (spec §5.8).
+    tmpfs:
+      - /srv/small:size=1m,mode=1777
 
   # The variants below exist to make a connection fail in one way each (see docker/README.md).
   sshd-nosftp:
@@ -61,3 +64,26 @@ services:
     command: ["-o", "AllowTcpForwarding=no"]
     ports:
       - "2229:22"
+
+  # FR-SSH-14: a server without the OpenSSH extensions.
+  proftpd:
+    build: ./docker/proftpd
+    image: fsm-test-proftpd
+    volumes:
+      - ./docker/keys:/keys:ro
+    ports:
+      - "2230:22"
+
+  # Rekeys after every MiB, whichever way it travels.
+  sshd-rekey:
+    <<: *sshd
+    command: ["-o", "RekeyLimit=1M"]
+    ports:
+      - "2231:22"
+
+  # FR-SSH-13: paths laid out as Windows OpenSSH shows them, as far as a Linux server can.
+  sshd-winpaths:
+    <<: *sshd
+    command: ["-f", "/etc/ssh/sshd_config_winpaths"]
+    ports:
+      - "2232:22"

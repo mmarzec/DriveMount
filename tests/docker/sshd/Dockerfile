@@ -24,6 +24,18 @@ RUN install -m 400 -o keytotp -g keytotp /home/totpuser/.google_authenticator /h
 COPY sshd_config /etc/ssh/sshd_config
 RUN sed '/^Subsystem/d' /etc/ssh/sshd_config > /etc/ssh/sshd_config_nosftp
 RUN sed 's#^HostKey .*#HostKey /etc/ssh/ssh_host_rsa_key#' /etc/ssh/sshd_config > /etc/ssh/sshd_config_rsa
+# Tester is locked into a tree where the home directory reads /C:/Users/tester.
+RUN cp /etc/ssh/sshd_config /etc/ssh/sshd_config_winpaths \
+ && printf 'Match User tester\n    ChrootDirectory /srv/winroot\n    ForceCommand internal-sftp -d /C:/Users/tester\n' >> /etc/ssh/sshd_config_winpaths \
+ && mkdir -p /srv/winroot/C:/Users/tester /srv/winroot/C:/data \
+ && chown tester:tester /srv/winroot/C:/Users/tester /srv/winroot/C:/data
+# Things a test cannot make with RemoteFs: links, and a name that is not UTF-8.
+RUN mkdir -p /srv/fixture/dir \
+ && echo target > /srv/fixture/file \
+ && ln -s file /srv/fixture/link-to-file \
+ && ln -s dir /srv/fixture/link-to-dir \
+ && ln -s absent /srv/fixture/broken-link \
+ && : > "$(printf '/srv/fixture/caf\351')"
 COPY entrypoint.sh check-auth.sh check-auth.exp /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/check-auth.sh /usr/local/bin/check-auth.exp \
  && mkdir -p /run/sshd

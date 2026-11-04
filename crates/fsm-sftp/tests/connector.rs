@@ -721,7 +721,7 @@ async fn remote_paths_are_resolved_and_checked() {
     }
 }
 
-/// FR-SSH-14, the part that is here. A server without these is ProFTPD's, in M1-10.
+/// FR-SSH-14 on a server that has them. ProFTPD, without them, is in `tests/sftpfs.rs`.
 #[tokio::test]
 #[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
 async fn the_session_works_and_knows_the_servers_limits_and_extensions() {
@@ -762,7 +762,7 @@ async fn closed_within(session: &SftpSession, limit: Duration) -> Option<Duratio
     None
 }
 
-/// One keep-alive per second: three go unanswered, and the next due one ends it, so 4 s.
+/// One keep-alive per second: two go unanswered, and the next due one ends it, so 3 s (FR-SSH-12).
 #[tokio::test]
 #[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
 async fn unanswered_keep_alives_close_the_connection() {
@@ -772,7 +772,7 @@ async fn unanswered_keep_alives_close_the_connection() {
         .await
         .expect("must notice a dead link");
     assert!(
-        closed >= Duration::from_secs(3) && closed <= Duration::from_secs(6),
+        closed >= Duration::from_secs(2) && closed <= Duration::from_secs(5),
         "{closed:?}"
     );
 }

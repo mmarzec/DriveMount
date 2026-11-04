@@ -4,8 +4,8 @@
 //! subsystem, optionally through a jump host (spec §5.7, FR-SSH-08 to FR-SSH-11). Every failure
 //! becomes a [`ConnectError`], and so one of the codes of spec §7.8.
 //!
-//! [`SftpConnector`] will implement `Connector` once `SftpFs` exists (M1-10). Logging in is in
-//! the `auth` submodule (FR-SSH-01 to FR-SSH-07).
+//! [`SftpConnector`] implements `Connector` in the `fs` module, around [`SftpFs`](crate::fs::SftpFs).
+//! Logging in is in the `auth` submodule (FR-SSH-01 to FR-SSH-07).
 //!
 //! Each stage has [`SftpProfile::timeout`] to finish. Time in a dialog does not count. Dropping the
 //! future at any point, including during the dialog, abandons the connection.
@@ -15,7 +15,8 @@ mod auth;
 use std::borrow::Cow;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
 use fsm_vfs::{
@@ -42,6 +43,12 @@ use crate::known_hosts::{self, HostKey, HostKeyStatus, KnownHosts, KnownHostsErr
 
 /// Spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing.
 const CHANNEL_WINDOW: u32 = 16 * 1024 * 1024;
+/// `russh` closes at the interval after this many go unanswered. Two means 3 intervals of silence,
+/// so 45 s at the default 15 s, safely within FR-SSH-12's 60 s. Three would land on the limit.
+const KEEPALIVE_MAX: usize = 2;
+/// A reply can carry the largest read `SftpFs` asks for, and the crate's default is 256 KiB. A reply
+/// over the limit ends the session.
+const MAX_SFTP_PACKET: u32 = crate::fs::MAX_CHUNK + 64 * 1024;
 const LIMITS_EXTENSION: &str = "limits@openssh.com";
 const HOME: &str = "~";
 const S_IFMT: u32 = 0o170_000;
@@ -57,7 +64,8 @@ pub struct SftpProfile {
     pub user: String,
     /// How to log in.
     pub auth: Auth,
-    /// The folder to mount: `~`, `~/below/home` or an absolute path.
+    /// The folder to mount: `~`, `~/below/home` or an absolute path; or `C:/data` or `C:\\data` for
+    /// `/C:/data`, as Windows OpenSSH shows it (FR-SSH-13).
     pub remote_path: String,
     /// Seconds between keep-alives; 0 turns them off (FR-SSH-12).
     pub keepalive_secs: u64,
@@ -92,6 +100,10 @@ pub struct SftpConnector {
     jump: Option<Box<SftpConnector>>,
     /// Whether this is the connector of a jump host.
     is_jump: bool,
+    /// Key exchanges finished by this connector's connections.
+    key_exchanges: Arc<AtomicU64>,
+    /// The session of the file system handed out last, for [`probe`](fsm_vfs::Connector::probe).
+    current: Mutex<Weak<SftpSession>>,
 }
 
 /// A logged-in SSH connection with its SFTP channel, ready for use.
@@ -101,6 +113,7 @@ pub struct SftpSession {
     root: RemotePath,
     limits: Limits,
     extensions: Vec<String>,
+    key_exchanges: Arc<AtomicU64>,
 }
 
 impl SftpSession {
@@ -134,6 +147,13 @@ impl SftpSession {
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
     }
+
+    /// How many key exchanges the connector's connections have finished: one per connection, and
+    /// one for each rekey, whichever side asked for it.
+    #[must_use]
+    pub fn key_exchanges(&self) -> u64 {
+        self.key_exchanges.load(Ordering::Relaxed)
+    }
 }
 
 /// The host key, from the task that runs the connection to the future that can reach the prompter.
@@ -145,6 +165,7 @@ struct KeyQuestion {
 
 struct Client {
     ask: Option<oneshot::Sender<KeyQuestion>>,
+    key_exchanges: Arc<AtomicU64>,
 }
 
 impl client::Handler for Client {
@@ -184,6 +205,7 @@ impl client::Handler for Client {
             cipher = %names.cipher.as_ref(),
             "key exchange done"
         );
+        self.key_exchanges.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 }
@@ -209,6 +231,8 @@ impl SftpConnector {
                 memory: LoginMemory::default(),
                 jump: None,
                 is_jump: true,
+                key_exchanges: Arc::default(),
+                current: Mutex::default(),
             })
         });
         Self {
@@ -216,6 +240,8 @@ impl SftpConnector {
             memory: LoginMemory::default(),
             jump,
             is_jump: false,
+            key_exchanges: Arc::default(),
+            current: Mutex::default(),
         }
     }
 
@@ -243,6 +269,32 @@ impl SftpConnector {
         let session = session.map_err(|_| self.timed_out())??;
         info!(host = %p.host, root = session.root.as_str(), "connected");
         Ok(session)
+    }
+
+    /// Keeps `session` as the one [`probe`](fsm_vfs::Connector::probe) asks about, for as long as
+    /// its file system lives.
+    pub(crate) fn remember_session(&self, session: &Arc<SftpSession>) {
+        let mut current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        *current = Arc::downgrade(session);
+    }
+
+    /// `send_ping` also returns once the reply can no longer come, so only the state after it says
+    /// that the server answered (spike M0-2).
+    pub(crate) async fn probe_session(&self) -> Result<Duration, ConnectError> {
+        let session = {
+            let current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+            current.upgrade()
+        };
+        let session = session.ok_or(ConnectError::ConnectionLost)?;
+        let start = Instant::now();
+        time::timeout(self.profile.timeout, session.handle.send_ping())
+            .await
+            .map_err(|_| self.timed_out())?
+            .map_err(|error| self.classify(error))?;
+        if session.is_closed() {
+            return Err(ConnectError::ConnectionLost);
+        }
+        Ok(start.elapsed())
     }
 
     /// As [`take_remembered`](Self::take_remembered), for the jump host's password, to be stored as
@@ -378,7 +430,10 @@ impl SftpConnector {
     {
         let timeout = self.profile.timeout;
         let (ask, mut question) = oneshot::channel();
-        let client = Client { ask: Some(ask) };
+        let client = Client {
+            ask: Some(ask),
+            key_exchanges: Arc::clone(&self.key_exchanges),
+        };
         let connect = client::connect_stream(Arc::new(config), stream, client);
         tokio::pin!(connect);
 
@@ -494,7 +549,9 @@ impl SftpConnector {
         }
 
         let config = SftpConfig {
+            // Stays for the session: each file operation has the same `op_timeout_secs` to answer.
             request_timeout_secs: self.profile.timeout.as_secs().max(1),
+            max_packet_len: MAX_SFTP_PACKET,
             ..SftpConfig::default()
         };
         let mut sftp = RawSftpSession::new_with_config(channel.into_stream(), config);
@@ -525,6 +582,7 @@ impl SftpConnector {
             root,
             limits,
             extensions: version.extensions.into_keys().collect(),
+            key_exchanges: Arc::clone(&self.key_exchanges),
         })
     }
 
@@ -549,8 +607,12 @@ impl SftpConnector {
                 Some(below) => home.join(below).map_err(|_| not_found())?,
                 None => home,
             }
-        } else {
+        } else if wanted.starts_with('/') {
             RemotePath::new(wanted).map_err(|_| not_found())?
+        } else {
+            // Any other server simply has no such folder, so there is no need to ask which this is.
+            let path = windows_path(wanted).ok_or_else(not_found)?;
+            RemotePath::new(&path).map_err(|_| not_found())?
         };
 
         let attrs = sftp
@@ -620,6 +682,14 @@ impl SftpConnector {
     }
 }
 
+/// `C:/data` or `C:\\data` as an SFTP path, `/C:/data` (FR-SSH-13).
+fn windows_path(path: &str) -> Option<String> {
+    let mut chars = path.chars();
+    let is_drive =
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic()) && chars.next() == Some(':');
+    is_drive.then(|| format!("/{}", path.replace('\\', "/")))
+}
+
 const NO_LIMITS: Limits = Limits {
     packet_len: None,
     read_len: None,
@@ -656,8 +726,7 @@ fn client_config(keepalive_secs: u64, known_key_types: &[String]) -> client::Con
         window_size: CHANNEL_WINDOW,
         nodelay: true,
         keepalive_interval: (keepalive_secs > 0).then(|| Duration::from_secs(keepalive_secs)),
-        // After this many go unanswered, `russh` closes at the next interval.
-        keepalive_max: 3,
+        keepalive_max: KEEPALIVE_MAX,
         preferred: Preferred {
             key: Cow::Owned(host_key_preference(known_key_types)),
             cipher: Cow::Borrowed(&[
@@ -758,11 +827,22 @@ mod tests {
         assert!(config.window_size >= 16 * 1024 * 1024);
         assert!(config.nodelay);
         assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
-        assert_eq!(config.keepalive_max, 3);
+        assert_eq!(config.keepalive_max, 2);
         assert_eq!(config.preferred.cipher[0], cipher::AES_256_GCM);
         assert_eq!(config.preferred.cipher[1], cipher::CHACHA20_POLY1305);
         assert_eq!(config.preferred.compression.as_ref(), [compression::NONE]);
         assert!(config.preferred.host_key_certificates.is_empty());
+    }
+
+    #[test]
+    fn windows_paths_become_sftp_paths() {
+        assert_eq!(windows_path("C:/data").as_deref(), Some("/C:/data"));
+        assert_eq!(windows_path("C:\\data").as_deref(), Some("/C:/data"));
+        assert_eq!(windows_path("d:\\a\\b/c").as_deref(), Some("/d:/a/b/c"));
+        assert_eq!(windows_path("C:").as_deref(), Some("/C:"));
+        for other in ["data", "", ":", "1:/data", "CC:/data", "\\data", "ż:/data"] {
+            assert_eq!(windows_path(other), None, "{other}");
+        }
     }
 
     #[test]
