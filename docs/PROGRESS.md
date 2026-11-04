@@ -2,6 +2,22 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M0-3 UI spike (branch `spike/m0-3-ui`)
+
+**Status: done, go with open items.** Report: `docs/spikes/m0-3-ui.md`; logs and screenshots in `spikes/m0-3-ui/results/`. Start 160 ms, `--tray` 50 ms, working set 17.6 MiB (25.7 after a toast), exe 9.31 MiB. Plan, spec and analysis updated.
+
+- **Decided:** toasts through `windows` directly. The app writes `HKCU\Software\Classes\AppUserModelId\<id>` at start. On this PC, a shortcut with an AUMID alone showed no toast even after 5 min (cause not found); the key alone or both together work.
+- **Open for M2-04:** a toast clicked in Action Center does nothing, whether or not the app runs, so FR-NOT-04 is unmet on that path. COM activator and protocol activation not tried.
+- **Open for M2-02/H-08:** real sleep/resume not tested; the owner deferred it. Only sent messages reached the hidden window. Do it first in M2-02.
+- **Open for M2-08:** idle CPU with the window visible bursts past 0.1% in some 60 s windows, sometimes with no redraw; cause not found. Hidden: 0.000% every time.
+- **Owner accepted** the go verdict on 2026-11-04 and considers the open items very minor, to be dealt with later.
+- **Exe size:** UI + SFTP spikes total 12.13 MiB, leaving about 2.2 MiB under 15 MB. `opt-level = "s"` saves 1.3 MiB (speed not measured). M1-01 gets a CI size check.
+- **Don't trust:** `Show()`, `History` and `Setting` for whether a toast appeared, `tray.rect()` (flaky), `tray-icon`'s `build()` (ignores `NIM_ADD` failure). Screen captures of the corner gave the toast results.
+- **Compare manual results with the logs:** the first H-05 report and the logs disagreed on toast clicks and sleep; a short retest cleared it up.
+- Run: `cargo build --release`, then `checks.ps1 all` (actions at the top of the file). It shows the window, tray icon and toasts on the desktop. `checks.ps1 cleanup` removes the shortcut and registry keys.
+- PowerShell 5.1 traps met: `$null` to a .NET `string` parameter arrives as `""` (use `[NullString]::Value`); a GUI exe called with `&` doesn't block and loses its exit code.
+- **Next:** G1, then M1-01.
+
 ## 2026-11-04: M0-2 SFTP spike (branch `spike/m0-2-sftp`)
 
 **Status: done, go.** At the SFTP layer, reads and free-running writes reach 102–261% of `sftp.exe` on LAN and WAN (50 ms). Report: `docs/spikes/m0-2-sftp.md`; raw data in `spikes/m0-2-sftp/results/`. Spec §5.6, §5.7, OD-4 and plan M1-10 updated.

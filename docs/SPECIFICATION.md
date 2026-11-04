@@ -167,7 +167,7 @@ States, transitions and events are defined in §5.5.
 | FR-NOT-01 | M | A Windows toast is shown when a mount fails, a connection is lost without auto-reconnect, reconnect stops (FR-REC-06), or a letter is reassigned (FR-MNT-04). | Each of the four events produces exactly one toast naming the profile and the error text from §7.8. |
 | FR-NOT-02 | M | No toasts for successful mounts or successful reconnects. | Mount-on-start of 5 profiles produces no toasts. |
 | FR-NOT-03 | M | Toasts can be switched off in Settings. | With notifications off, the FR-NOT-01 events produce no toasts; row errors are still shown. |
-| FR-NOT-04 | M | Clicking a toast opens the main window with the profile selected. | Clicking a toast for "Dev box" shows the window with that row selected. |
+| FR-NOT-04 | M | Clicking a toast opens the main window with the profile selected. Spike M0-3: works while the toast is on screen; a click from Action Center does nothing so far (to settle in M2-04). | Clicking a toast for "Dev box" shows the window with that row selected. |
 
 ### 3.7 Application lifecycle (FR-APP)
 
@@ -359,7 +359,7 @@ fs-manager/
 ### 5.3 Process and threading model
 
 - **One process** holds the UI and the engine. It runs unelevated in the user's session, so drive letters land in the user's logon session and are visible to their Explorer.
-- **UI thread**: runs the Slint event loop, `tray-icon`, and a hidden message window. That window receives `WM_POWERBROADCAST`, `WM_QUERYENDSESSION`/`WM_ENDSESSION`, the "show window" message from a second instance, and toast clicks.
+- **UI thread**: runs the Slint event loop, `tray-icon`, and a hidden message window. That window is a hidden top-level window, not a message-only one, and receives `WM_POWERBROADCAST`, `WM_QUERYENDSESSION`/`WM_ENDSESSION` and the "show window" message from a second instance. Toast clicks arrive through the toast's `Activated` handler, not on that window. Everything reaches Slint through `invoke_from_event_loop`.
 - **Tokio runtime**: multi-threaded with 2–4 workers. All network I/O, the mount manager and the reconnect timers run here.
 - **WinFsp dispatcher threads**: WinFsp calls our `FileSystemContext` on its own thread pool, sized by `winfsp_threads`. Each callback runs `runtime_handle.block_on(timeout(op_deadline, fut))`. Dispatcher threads are not Tokio threads, so `block_on` is allowed there.
 - **UI ↔ engine**:
@@ -875,6 +875,7 @@ This page replaces the list area inside the main window; a ← back arrow return
   - Checks the WinFsp version in the registry (`HKLM\SOFTWARE\WOW6432Node\WinFsp`, `InstallDir` + DLL version). If WinFsp is missing or older than 2.1, it offers the official, **unmodified** WinFsp MSI as a chained install (allowed by WinFsp's FLOSS exception, ADR-0003) or a link (OD-5).
   - Start-menu shortcut; optional *Start with Windows* checkbox (writes the HKCU Run key for the installing user).
   - Uninstall removes the program. It keeps `%APPDATA%\FsManager` and the credentials unless "Remove my settings" is ticked.
+- **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\<id>` with a `DisplayName`. Spike M0-3 showed this is what makes toasts appear; a shortcut with an AUMID alone did not.
 - **Portable:** a zip with `fsm.exe`. It needs WinFsp installed separately.
 - **Signing:** Authenticode for `fsm.exe` and the MSI (OD-3).
 - **Updates:** none in v1. Users install a newer MSI over the old one. Settings and profiles are kept and migrated (§6.1).

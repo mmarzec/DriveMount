@@ -1,0 +1,73 @@
+      21.8 main start tray=false aumid=Some("FsManager.M03Spike")
+      39.4 ui created
+     107.3 tray added rect=Some((2320.0, 1379.0))
+     110.3 hidden window created
+     111.9 entering event loop
+     204.7 redraw 1 requested
+     206.5 first frame
+     252.6 redraw 1 done colours=Some(53)
+    1113.1 tray after 1 s rect=Some((2320.0, 1379.0))
+   60112.1 cmd Memory
+   60112.3 memory visible: working_set=17.5MB peak=17.6MB private=4.4MB
+   90681.9 tray click Left Down
+   90683.1 tray click Left Up
+   90683.8 cmd Toggle
+   90687.8 window hidden visible=false
+   93932.7 tray click Left Down
+   93933.8 tray click Left Up
+   93934.2 cmd Toggle
+   93960.6 window shown visible=true set_foreground=true is_foreground=true
+   93961.4 redraw 2 requested
+   94003.8 redraw 2 done colours=Some(53)
+   94670.8 tray click Left Down
+   94673.0 tray click Left Up
+   94673.0 cmd Toggle
+   94679.3 window hidden visible=false
+   95317.5 tray click Left Down
+   95318.3 tray click Left Up
+   95318.4 cmd Toggle
+   95337.2 window shown visible=true set_foreground=true is_foreground=true
+   95337.5 redraw 3 requested
+   95371.9 redraw 3 done colours=Some(53)
+   96013.2 tray click Left Down
+   96013.8 tray click Left Up
+   96013.8 cmd Toggle
+   96018.3 window hidden visible=false
+  101874.1 tray click Right Down
+  102002.2 tray click Right Up
+  121494.1 tray menu click id=open
+  121494.5 cmd Show
+  121518.3 window shown visible=true set_foreground=true is_foreground=true
+  121519.5 redraw 4 requested
+  121555.6 redraw 4 done colours=Some(53)
+  122181.7 redraw 5 requested
+  122217.1 redraw 5 done colours=Some(53)
+  123091.7 close requested: hiding to tray
+  134429.3 tray click Right Down
+  134531.9 tray click Right Up
+  135932.5 tray menu click id=toast
+  135932.7 cmd Toast
+  135947.3 toast notifier setting error: Nie można odnaleźć elementu. (0x80070490)
+  135963.1 toast 1 shown aumid=FsManager.M03Spike
+  138077.7 toast 1 dismissed reason=Some(0)
+  155725.3 tray click Right Down
+  155834.5 tray click Right Up
+  156544.3 tray menu click id=toast
+  156544.4 cmd Toast
+  156553.2 toast notifier setting=0
+  156561.6 toast 2 shown aumid=FsManager.M03Spike
+  163233.6 toast 2 dismissed reason=Some(2)
+  191793.0 tray click Right Down
+  191935.7 tray click Right Up
+  203213.6 tray menu click id=toast
+  203213.9 cmd Toast
+  203224.4 toast notifier setting=0
+  203235.9 toast 3 shown aumid=FsManager.M03Spike
+  219670.6 toast 3 dismissed reason=Some(2)
+  220732.6 tray click Right Down
+  220829.6 tray click Right Up
+  221518.6 tray menu click id=quit
+  221519.0 cmd Quit
+  221519.0 quit requested
+  221519.3 event loop ended: Ok(())
+  221554.1 exit

@@ -219,6 +219,8 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 ### M0-3: Slint window + tray + Windows messages (risk: "Slint/tray integration")
 
+**Status: ☑ Go with open items (2026-11-04).** Report: [spikes/m0-3-ui.md](spikes/m0-3-ui.md). Toasts need a registry AUMID, not a shortcut. Open: Action Center toast clicks (M2-04), real sleep/resume deferred by the owner (M2-02, H-08), idle-CPU bursts with the window visible (M2-08).
+
 1. Create `spikes/m0-3-ui`: a Slint window (winit back-end, software renderer, Fluent style) with a list of 20 fake rows.
 2. Tray icon and menu with the `tray-icon` crate on the UI thread. Events go to Slint through `slint::invoke_from_event_loop`, with no polling timers.
 3. Close-to-tray: the close request hides the window, `run_event_loop_until_quit()` keeps running, and the tray "Open" item shows the window again.
@@ -234,10 +236,10 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 - if memory is too high, try another Slint renderer.
 
 **G1 checklist:**
-- three spike reports written;
+- three spike reports written ✅;
 - OD-1 (licence) decided ✅ GPLv3 (ADR-0003);
 - OD-4 decided ✅ write-behind on (M0-2);
-- spec updated with the spike results (volume flags, write mode).
+- spec updated with the spike results (volume flags, write mode) ✅.
 
 ---
 
@@ -249,7 +251,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 | ID | Task | Done when | You | ☐ |
 |---|---|---|---|---|
-| M1-01 | **Workspace skeleton**:<br>• root `Cargo.toml` with `[workspace]`, `[workspace.dependencies]` (versions pinned) and `[workspace.lints]`: `unsafe_code = "deny"` except in `fsm-win`/`fsm-winfsp`; clippy `unwrap_used` and `expect_used` denied outside tests;<br>• `rust-toolchain.toml`, `rustfmt.toml`, `deny.toml` (licence allow-list from ADR-0003);<br>• licensing per NFR-LIC-01: `LICENSE` (GPLv3 text), `license = "GPL-3.0-or-later"` in every crate, SPDX headers, plus a CI check for missing headers;<br>• empty crates from spec §5.2 and the `apps/fsm` binary (`windows_subsystem = "windows"`);<br>• CI jobs: `fmt`, `clippy -D warnings`, `deny`, `test`;<br>• `docs/TRACEABILITY.md` and `docs/PROGRESS.md`;<br>• apply SC-1 to spec §5.2. | `cargo build --workspace` and CI green on Windows and Linux | – | ☐ |
+| M1-01 | **Workspace skeleton**:<br>• root `Cargo.toml` with `[workspace]`, `[workspace.dependencies]` (versions pinned) and `[workspace.lints]`: `unsafe_code = "deny"` except in `fsm-win`/`fsm-winfsp`; clippy `unwrap_used` and `expect_used` denied outside tests;<br>• `rust-toolchain.toml`, `rustfmt.toml`, `deny.toml` (licence allow-list from ADR-0003);<br>• licensing per NFR-LIC-01: `LICENSE` (GPLv3 text), `license = "GPL-3.0-or-later"` in every crate, SPDX headers, plus a CI check for missing headers;<br>• empty crates from spec §5.2 and the `apps/fsm` binary (`windows_subsystem = "windows"`);<br>• CI jobs: `fmt`, `clippy -D warnings`, `deny`, `test`, and an exe size check (M0-3 leaves about 2.2 MiB of margin);<br>• `docs/TRACEABILITY.md` and `docs/PROGRESS.md`;<br>• apply SC-1 to spec §5.2. | `cargo build --workspace` and CI green on Windows and Linux | – | ☐ |
 | M1-02 | **`fsm-vfs` types and traits**:<br>• `RemotePath` (normalised POSIX path: join, parent, file_name, no `..` escapes);<br>• `Attr`, `DirEntry`, `OpenMode`, `AttrChanges`, `FsStats`, `Capabilities`;<br>• `FsError` (NotFound, PathNotFound, PermissionDenied, Exists, NotEmpty, NotSupported, ReadOnly, Timeout, ConnectionLost, NoSpace, Other);<br>• the traits `RemoteFs`, `Connector`, `MountBackend`, `Prompter`;<br>• `Secret<T>` (zeroize on drop, `Debug` = `***`).<br>Write **ADR-0001**: `async-trait` vs boxed futures for `dyn` traits. | Types compile; doc comments on all public items; ADR committed | – | ☐ |
 | M1-03 | **`MemFs` and the contract test suite**:<br>• `MemFs` (in-memory `RemoteFs`, behind the `testing` feature);<br>• a generic async suite `fsm_vfs::contract::run_all(fs)` covering spec §10.2: offsets, truncate, rename ± replace, mkdir/rmdir non-empty, remove, set times and the read-only bit, statfs, 0 B…1 GiB sizes. | Suite passes against `MemFs` on Linux and Windows | – | ☐ |
 
@@ -305,14 +307,14 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 |---|---|---|---|---|
 | M2-01 | **Reconnect** (FR-REC-01 to FR-REC-07):<br>• **Health:** `Connector` reports health from keep-alive misses, transport errors and the DeadlineFs suspect signal.<br>• **State and backoff:** the Reconnecting state uses backoff 1→2→4→8→16→32→60 s; auth failure or host-key change stops it.<br>• **Adapter during reconnect:** it holds the current session in an `ArcSwap` plus a `watch`, so calls during reconnect wait up to the deadline and then return `ConnectionLost` → `STATUS_NETWORK_UNREACHABLE`.<br>• **Handles:** each handle carries a session generation and is reopened by path (no truncation) on first use after a reconnect. | Automated tests: server kill/restart during a large read finishes with a matching hash; cable-pull simulation (iptables DROP) gives an error within 15 s and never hangs; a password change on the server → Error, no retries | – | ☐ |
 | M2-02 | **Windows events**: hidden top-level window (from M0-3) for `PBT_APMRESUMEAUTOMATIC` and `WM_QUERYENDSESSION`/`WM_ENDSESSION`; `NotifyIpInterfaceChange` callback → engine command `NetworkChanged` (immediate retry, keep-alive probe). | Owner runs sleep/resume, Wi-Fi switch and sign-out; logs show the drive working within 5 s of the network being up and an unmount within 5 s of sign-out (FR-APP-05) | H-08 | ☐ |
-| M2-03 | **Tray** (FR-TRAY): four icon variants (`.ico`, 16/20/24/32 px); tooltip with counts; left-click toggles the window; menu rebuilt on state events (spec §7.6). | Menu/tooltip logic unit-tested; owner confirms the look and behaviour | H-08 | ☐ |
-| M2-04 | **Notifications** (FR-NOT): toasts for the four events, with an AppUserModelID set on the Start-menu shortcut (see M2-10); clicking a toast opens the window with the profile selected; respects the setting. | Event → toast logic tested; owner confirms toast and click behaviour | H-08 | ☐ |
+| M2-03 | **Tray** (FR-TRAY): first compare Slint's own `SystemTrayIcon` (Slint ≥ 1.18, not tested in M0-3) with `tray-icon`, which hides `NIM_ADD` failures; four icon variants (`.ico`, 16/20/24/32 px); tooltip with counts; left-click toggles the window; menu rebuilt on state events (spec §7.6). | Menu/tooltip logic unit-tested; owner confirms the look and behaviour | H-08 | ☐ |
+| M2-04 | **Notifications** (FR-NOT): toasts for the four events through the `windows` crate; the app writes `HKCU\Software\Classes\AppUserModelId\<id>` at start (spike M0-3: a shortcut alone showed no toast); clicking a toast opens the window with the profile selected; **settle clicks from Action Center, which did nothing in M0-3** (COM activator, protocol activation, or the owner agrees to change FR-NOT-04); respects the setting. | Event → toast logic tested; owner confirms toast and click behaviour | H-08 | ☐ |
 | M2-05 | **Settings page** (FR-SET): six items plus About (version, GPLv3 notice and source link, WinFsp attribution, third-party licences button: NFR-LIC-02/03); changes apply immediately (log level through a `tracing` reload handle; theme live); Start with Windows writes or removes the HKCU Run value with `--tray`. | Persistence and Run-key tests; each setting takes effect without restart | – | ☐ |
 | M2-06 | **Lifecycle** (FR-APP):<br>• single instance: named mutex plus a registered "show" message to the existing window;<br>• `--tray` start; close to tray; quit confirmation;<br>• crash hook: panic hook writes `crash-*.txt`, then `panic = "abort"`; notice on next start. | Scripted tests (second instance exits, crash file written); owner confirms close-to-tray and quit dialog | H-08 | ☐ |
 | M2-07 | **Bulk and start-up mounting**: mount on start (parallel, prompts queued); Mount all (honours the filter) and Unmount all; letter-conflict auto-pick with row note and toast (FR-MNT-04). | FR-MNT-04/08/09 acceptance criteria pass | – | ☐ |
 | M2-08 | **Performance pass**: measure every NFR-PERF budget on the spec §4.1 environment (the local machine + WSL/Docker server, with netem for WAN); profile with `tracing` spans and Windows Performance Recorder; tune cache TTLs, chunk sizes and thread count; implement write-behind if OD-4 says so (ADR-0002). | `docs/perf/v1.md` shows all budgets met | – | ☐ |
 | M2-09 | **Reliability campaign**:<br>• `fsx` 100k operations on SFTP mounts;<br>• full `winfsp-tests` subset;<br>• NEO regressions (spec §10.3);<br>• kill test;<br>• **72 h soak:** 5 mounts; a PowerShell driver copies files in a loop while a WSL/Docker script toggles iptables DROP every 20 min and a wake-timer script sleeps and resumes the PC;<br>• working set logged. | No data mismatch; no stuck state; working-set growth < 10% (NFR-REL-06) | H-09 | ☐ |
-| M2-10 | **Installer** (`cargo-wix`, WiX):<br>• per-machine install;<br>• Start-menu shortcut with an AppUserModelID;<br>• optional Start with Windows;<br>• WinFsp ≥ 2.1 check, then chain-install of the unmodified WinFsp MSI or a link (OD-5);<br>• uninstall with "Remove my settings";<br>• portable zip;<br>• `LICENSE` and `THIRD-PARTY-LICENSES.html` (generated with `cargo-about`) in both artefacts (NFR-LIC-04). | Install, upgrade and uninstall scripted on the dev machine; owner verifies on a clean Windows 11 Pro machine | H-11 | ☐ |
+| M2-10 | **Installer** (`cargo-wix`, WiX):<br>• per-machine install;<br>• Start-menu shortcut with an AppUserModelID (toasts rely on the HKCU key from M2-04, not on this);<br>• optional Start with Windows;<br>• WinFsp ≥ 2.1 check, then chain-install of the unmodified WinFsp MSI or a link (OD-5);<br>• uninstall with "Remove my settings";<br>• portable zip;<br>• `LICENSE` and `THIRD-PARTY-LICENSES.html` (generated with `cargo-about`) in both artefacts (NFR-LIC-04). | Install, upgrade and uninstall scripted on the dev machine; owner verifies on a clean Windows 11 Pro machine | H-11 | ☐ |
 | M2-11 | **Signing and release workflow**: GitHub Actions on tag builds, signs (OD-3), builds the MSI and zip, writes `sha256sums.txt` and drafts the release. | A signed test tag produces the artefacts; SmartScreen does not block | H-10 | ☐ |
 | M2-12 | **User guide** `docs/USER_GUIDE.md`: install, add a connection, auth methods, host keys, tray, troubleshooting (one entry per §7.8 error), data locations, licence and WinFsp attribution (NFR-LIC-02). | Reviewed against the UI and the error catalogue | – | ☐ |
 | M2-13 | **Release v1.0.0**: run the full checklist (§9.3), update the traceability table, tag. | G3 passed | Approve the release | ☐ |
@@ -450,7 +452,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | Problems the AI cannot observe (visual glitches, Explorer quirks) | H-04, H-06, H-07 | Owner reports with a screenshot or exact steps; the AI turns each report into a scripted regression test where possible. |
 | Context lost between AI sessions | Any session | Status boxes, `docs/PROGRESS.md`, `docs/TRACEABILITY.md` and ADRs carry the state; each session starts by reading them (§1.3). |
 | Explorer too chatty over WAN | M2-08 | Tune TTLs; extend the noise list; consider longer `FileInfoTimeout` for directories only. |
-| Toasts need a shortcut and AUMID that the portable zip lacks | M0-3 | The portable build shows errors in the row and tray tooltip only; documented in the user guide. |
+| Toasts clicked in Action Center do nothing (M0-3); a fix may need a shortcut the portable zip lacks | M2-04 | Toasts themselves work without a shortcut. Worst case, the error is still in the row and tray tooltip, and FR-NOT-04 is narrowed with the owner's agreement. |
 | Soak test needs sleep/resume automation on Windows 10 Home | M2-09 | `rundll32 powrprof.dll,SetSuspendState` with a wake timer, or run the soak on a second machine. |
 | NFS crate cannot bind reserved ports | M4-01 | Own ONC-RPC/NFSv3 client (the protocol is well documented, RFC 1813). |
 
@@ -467,7 +469,7 @@ Versions are pinned in M1-01 to the latest stable releases at that time. Any cha
 | WinFsp | `winfsp` (+ `winfsp-sys`), GPL-3.0, allowed by ADR-0003 |
 | Windows API | `windows` (Win32: Credentials, NetworkManagement::WNet, Storage::FileSystem, UI::Shell, System::Power, NetworkManagement::IpHelper, Threading) |
 | UI | `slint` (+ `slint-build`; testing back-end for UI logic tests), `tray-icon` |
-| Toasts | `windows` (`UI::Notifications`) or `tauri-winrt-notification` (decided in M0-3) |
+| Toasts | `windows` (`UI::Notifications`), decided in M0-3 |
 | Config and data | `serde`, `toml`, `uuid` (v4, serde), `tempfile` |
 | Crypto helpers | `sha2`, `hmac` + `sha1` (hashed known_hosts), `base64`, `zeroize` |
 | Logging | `tracing`, `tracing-subscriber` (env-filter, reload), `tracing-appender` |

@@ -1,0 +1,29 @@
+      39.4 main start tray=false aumid=Some("FsManager.M03Spike")
+      55.8 ui created
+     116.7 tray added rect=Some((2320.0, 1379.0))
+     120.7 hidden window created
+     122.4 entering event loop
+     204.6 redraw 1 requested
+     206.2 first frame
+     237.2 redraw 1 done colours=Some(53)
+    1124.0 tray after 1 s rect=Some((2320.0, 1379.0))
+    1803.4 close requested: hiding to tray
+    2156.5 cmd Show
+    2173.5 window shown visible=true set_foreground=false is_foreground=false
+    2174.0 redraw 2 requested
+    2207.4 redraw 2 done colours=Some(53)
+    2576.3 cmd Toggle
+    2581.0 window hidden visible=false
+    2892.1 cmd Toggle
+    2903.3 window shown visible=true set_foreground=false is_foreground=false
+    2903.4 redraw 3 requested
+    2935.3 redraw 3 done colours=Some(53)
+    3221.6 WM_POWERBROADCAST PBT_APMSUSPEND (0x4)
+    3228.7 WM_POWERBROADCAST PBT_APMRESUMEAUTOMATIC (0x12)
+    3235.7 WM_POWERBROADCAST PBT_APMRESUMESUSPEND (0x7)
+    3250.1 WM_QUERYENDSESSION ENDSESSION_LOGOFF
+    3261.3 WM_ENDSESSION ending=false ENDSESSION_LOGOFF
+    3268.4 cmd Quit
+    3268.4 quit requested
+    3268.5 event loop ended: Ok(())
+    3319.9 exit

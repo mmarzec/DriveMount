@@ -1,0 +1,68 @@
+﻿--- size
+PASS  exe size < 15 MB (NFR-PERF-03)  9.31 MiB, stripped, LTO, static CRT
+--- behaviour
+PASS  first frame logged  
+PASS  first frame really on screen (pixels in the window)       237.2 redraw 1 done colours=Some(53)
+      1124.0 tray after 1 s rect=Some((2320.0, 1379.0))
+PASS  hidden window exists and is not visible  
+PASS  main window visible at start  
+PASS  window rendered (screenshot not blank)  231 colours, results\window.png, 96 dpi
+PASS  close: request logged  
+PASS  close: window hidden  
+PASS  close: process and event loop alive  
+PASS  show after close: command reached the UI thread  
+PASS  show after close: window visible, same HWND  
+PASS  show after close: rendered again  231 colours
+PASS  toggle hides a visible window  
+PASS  toggle shows a hidden window  
+PASS  synthetic WM_POWERBROADCAST PBT_APMSUSPEND  
+PASS  synthetic WM_POWERBROADCAST PBT_APMRESUMEAUTOMATIC  
+PASS  synthetic WM_POWERBROADCAST PBT_APMRESUMESUSPEND  
+PASS  synthetic WM_QUERYENDSESSION logged, returns TRUE  
+PASS  synthetic WM_ENDSESSION logged  
+PASS  quit: process exits  
+PASS  quit: exit logged, in order  
+--- start-up (process creation to log line)
+warm, first frame: min 132.8  median 160.0  max 279.7 ms (n=15)
+PASS  warm start to first frame < 250 ms (NFR-PERF-01)  160.0 ms median
+cold exe, first frame: min 167.4  median 178.0  max 226.1 ms (n=8)
+PASS  cold-exe start to first frame < 250 ms (NFR-PERF-01)  178.0 ms median
+--tray, tray added: min 40.1  median 49.8  max 60.8 ms (n=15)
+PASS  --tray start to tray icon < 150 ms (NFR-PERF-02)  49.8 ms median
+--- memory and CPU (idle: no input, nothing mounted)
+window visible, 60 s: WS 17.6 MiB, private 4.5 MiB, threads 6, handles 246, CPU 0.266 s in 60 s
+PASS  working set after 60 s, visible < 40 MB (NFR-PERF-04)  17.6 MiB
+FAIL  idle CPU, visible < 0.1% of one core  0.443%
+window hidden, 60 s: WS 17.6 MiB, private 4.5 MiB, threads 5, handles 244, CPU 0.000 s in 60 s
+PASS  working set after 60 s, hidden < 40 MB  17.6 MiB
+PASS  idle CPU, hidden < 0.1% of one core  0.000%
+--- toasts: Windows accepting a toast does not prove it reached the screen; see H-05
+no-shortcut:
+       668.1 toast notifier setting=0
+       681.3 toast 1 shown aumid=FsManager.M03Spike.None
+      2734.7 toast history count=1
+  
+registry:
+       602.7 toast notifier setting=0
+       619.4 toast 1 shown aumid=FsManager.M03Spike.Registry
+      2687.8 toast history count=1
+      6916.0 toast 1 dismissed reason=Some(2)
+PASS  shortcut written with the AUMID (read back)  exit 0, read back 'FsManager.M03Spike.Shortcut'
+shortcut:
+       576.8 toast notifier setting=0
+       592.6 toast 1 shown aumid=FsManager.M03Spike.Shortcut
+      2636.2 toast history count=1
+  
+PASS  shortcut written with the AUMID (read back)  exit 0, read back 'FsManager.M03Spike.Both'
+both:
+       664.3 toast notifier setting error: Nie moĹĽna odnaleĹşÄ‡ elementu. (0x80070490)
+       685.9 toast 1 shown aumid=FsManager.M03Spike.Both
+      2729.0 toast history count=1
+      6978.4 toast 1 dismissed reason=Some(2)
+=== 29 passed, 1 failed
+--- idle CPU, window visible: 3 x 60 s after a 10 s settle
+  first 10 s after first frame: CPU 0.000 s
+PASS  idle CPU, visible, window 1, < 0.1% of one core  0.000%
+PASS  idle CPU, visible, window 2, < 0.1% of one core  0.000%
+FAIL  idle CPU, visible, window 3, < 0.1% of one core  0.260%
+=== 2 passed, 1 failed
