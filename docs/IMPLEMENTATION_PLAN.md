@@ -259,7 +259,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 | ID | Task | Done when | You | ☐ |
 |---|---|---|---|---|
-| M1-04 | **Name mapping**: Windows ↔ remote names. `\ : * ? " < > \|`, 0x01–0x1F and trailing dot/space map to U+F000 + code and back. Add a case-insensitive resolver over a listing: exact match first, then a unique case-insensitive match. | Property tests (`proptest`) prove round-trips; ambiguity tests | – | ☐ |
+| M1-04 | **Name mapping**: Windows ↔ remote names. `\ : * ? " < > \|`, 0x01–0x1F and trailing dot/space map to U+F000 + code and back. Add a case-insensitive resolver over a listing: exact match first, then a unique case-insensitive match. | Property tests (`proptest`) prove round-trips; ambiguity tests. **Done locally:** passes on Windows and in a Linux container; the workflow itself first runs with S-05/H-02 | – | ☑ |
 | M1-05 | **`CachedFs<F>`**: a `RemoteFs` wrapper with attribute, directory and negative caches.<br>• Bounded size (10k entries).<br>• TTL from the profile; negative TTL 1 s, or 60 s for the noise names.<br>• Invalidation rules from spec §5.6.<br>• Tests use `tokio::time::pause()`. | Each invalidation rule has a test; NFR-REL-02 test passes on `CachedFs<MemFs>` | – | ☐ |
 | M1-06 | **`DeadlineFs<F>`** and **read-ahead**.<br>• **Deadline wrapper:** applies `op_timeout`, maps expiry to `FsError::Timeout`, and signals "suspect" on a `watch` channel.<br>• **Read-ahead:** a per-handle reader that detects sequential access, grows its window from 128 KiB to 4 MiB, and splits reads into chunks with up to 64 in flight. | Tests: a slow `MemFs` produces Timeout at the deadline; a sequential read issues the expected chunk pattern | – | ☐ |
 

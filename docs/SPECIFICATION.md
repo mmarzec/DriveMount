@@ -487,7 +487,9 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 
 **Name mapping.**
 - Characters invalid in Windows names (`\ : * ? " < > |` and 0x01–0x1F) and trailing dots or spaces are shown as the Unicode private-use character U+F000 + code. This is the same scheme as Cygwin and SSHFS-Win, so names look the same as in NEO.
-- The mapping is reversed when sending names to the server.
+- All the dots and spaces at the end of a name are mapped, not just the last: `a..` is shown as `a` + U+F02E + U+F02E.
+- The mapping is reversed when sending names to the server. A Windows name that would reach the server as `.` or `..`, or that contains `/` or NUL, is refused, so it cannot address a different directory.
+- A remote name that really contains one of these private-use characters is shown as it is, so `a` + U+F03A and `a:` look the same on Windows; the scheme cannot escape them. The resolver below still finds such a name. If both exist, the Windows name means `a:`.
 - Name matching is **case-preserving**: an exact-case lookup first, then a case-insensitive match against the cached listing, used only when exactly one entry matches.
 - Names that differ only by case are all listed.
 

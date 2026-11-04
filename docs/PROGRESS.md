@@ -2,6 +2,26 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-04 name mapping (branch `feat/m1-04-name-mapping`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass in a `rust:1.99.1` container. `fsm-vfs` now has 104 tests (66 unit, 31 contract, 3 `dyn` trait, 4 doc).
+
+- **Added:** `remote_to_windows`, `windows_to_remote` and `resolve_name` in `fsm_vfs`, working on one path component. Nothing calls them yet. **Plan gap:** no M1-12 row mentions name mapping, though the adapter is the only place that can call it; M1-12a needs to pick it up. No requirement names this behaviour, only spec §5.6, so `TRACEABILITY.md` has no row to update.
+- **Spec §5.6 tightened, because it left these open:**
+  - The whole trailing run is mapped, the plain reading of "trailing dots or spaces". **Not confirmed against NEO or SSHFS-Win:** Cygwin's manual says trailing dots and spaces are converted but gives no per-character rule, and WinFsp's source could not be fetched. If M1-12 finds that NEO shows `a..` differently, only `remote_to_windows` and its inverse change; nothing is stored.
+  - `windows_to_remote` can fail. Without that, `` reaches the server as `..` and leaves the directory.
+- **Choices the plan left open:**
+  - A private-use dot or space is reversed only in the run at the end, and not if a real dot or space comes just before it. That is what makes every valid Windows name round-trip, including ones nobody would type, like `a.`.
+  - U+F000 and U+F02F are ordinary characters both ways, so they can never become NUL or `/`.
+  - Names with a literal U+F03A and the like are the one case that does not round-trip. `resolve_name` compares what Windows would show, so they still open. **M1-12a:** use the name it returns, not `windows_to_remote`, for anything that exists; use `windows_to_remote` only for creating.
+  - Case folding is per-character upper-casing, like the upper-cased keys of spike M0-1: `ß` is not `SS`. Non-ASCII never folds to ASCII, so `file` does not open `fıle`. It uses Unicode's table, not NTFS's `$UpCase`; rare differences only affect the fallback.
+- **The tests are checked too:** 12 faults, injected by hand, each failed at least one test. The script was not kept.
+- **For later tasks:**
+  - **M1-12a:** WinFsp names are UTF-16 and can hold lone surrogates, which a Rust `str` cannot; decide how to refuse them. `Ambiguous` means not found, so `NOTES` with `notes` and `Notes` listed makes a third file on create. The spec does not cover that case; it seems right, because it opens nothing by guesswork.
+  - **M1-05:** `resolve_name` is O(n) over a listing and allocates only for names it has to map. Spec §10.5 wants a criterion benchmark for name mapping, not done here: no task has claimed it, and it is not in M1-04's done-when.
+  - **M1-10:** the non-UTF-8 names question from M1-02 is still open.
+- **Next:** M1-05.
+
 ## 2026-11-04: M1-03 `MemFs` and the contract suite (branch `feat/m1-03-memfs-contract`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass in a `rust:1.99.1` container. `fsm-vfs` now has 75 tests (39 unit, 31 contract, 3 `dyn` trait, 2 doc). The full suite with the 1 GiB file takes about 3 s in a debug build on Windows. Peak memory was not measured.
