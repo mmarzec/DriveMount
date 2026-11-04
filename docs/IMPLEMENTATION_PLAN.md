@@ -252,7 +252,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | ID | Task | Done when | You | ☐ |
 |---|---|---|---|---|
 | M1-01 | **Workspace skeleton**:<br>• root `Cargo.toml` with `[workspace]`, `[workspace.dependencies]` (versions pinned) and `[workspace.lints]`: `unsafe_code = "deny"` except in `fsm-win`/`fsm-winfsp`; clippy `unwrap_used` and `expect_used` denied outside tests;<br>• `rust-toolchain.toml`, `rustfmt.toml`, `deny.toml` (licence allow-list from ADR-0003);<br>• licensing per NFR-LIC-01: `LICENSE` (GPLv3 text), `license = "GPL-3.0-or-later"` in every crate, SPDX headers, plus a CI check for missing headers;<br>• empty crates from spec §5.2 and the `apps/fsm` binary (`windows_subsystem = "windows"`);<br>• CI jobs: `fmt`, `clippy -D warnings`, `deny`, `test`, and an exe size check (M0-3 leaves about 2.2 MiB of margin);<br>• `docs/TRACEABILITY.md` and `docs/PROGRESS.md`;<br>• apply SC-1 to spec §5.2. | `cargo build --workspace` and CI green on Windows and Linux. **Done locally:** all CI steps pass on Windows and in a Linux container; the workflow itself first runs with S-05/H-02 | – | ☑ |
-| M1-02 | **`fsm-vfs` types and traits**:<br>• `RemotePath` (normalised POSIX path: join, parent, file_name, no `..` escapes);<br>• `Attr`, `DirEntry`, `OpenMode`, `AttrChanges`, `FsStats`, `Capabilities`;<br>• `FsError` (NotFound, PathNotFound, PermissionDenied, Exists, NotEmpty, NotSupported, ReadOnly, Timeout, ConnectionLost, NoSpace, Other);<br>• the traits `RemoteFs`, `Connector`, `MountBackend`, `Prompter`;<br>• `Secret<T>` (zeroize on drop, `Debug` = `***`).<br>Write **ADR-0001**: `async-trait` vs boxed futures for `dyn` traits. | Types compile; doc comments on all public items; ADR committed | – | ☐ |
+| M1-02 | **`fsm-vfs` types and traits**:<br>• `RemotePath` (normalised POSIX path: join, parent, file_name, no `..` escapes);<br>• `Attr`, `DirEntry`, `OpenMode`, `AttrChanges`, `FsStats`, `Capabilities`;<br>• `FsError` (NotFound, PathNotFound, PermissionDenied, Exists, NotEmpty, NotSupported, ReadOnly, Timeout, ConnectionLost, NoSpace, Other);<br>• the traits `RemoteFs`, `Connector`, `MountBackend`, `Prompter`;<br>• `Secret<T>` (zeroize on drop, `Debug` = `***`).<br>Write **ADR-0001**: `async-trait` vs boxed futures for `dyn` traits. | Types compile; doc comments on all public items; ADR committed. **Done:** `async-trait` chosen ([ADR-0001](adr/0001-async-traits.md)); the compiler enforces doc comments (`deny(missing_docs)`) | – | ☑ |
 | M1-03 | **`MemFs` and the contract test suite**:<br>• `MemFs` (in-memory `RemoteFs`, behind the `testing` feature);<br>• a generic async suite `fsm_vfs::contract::run_all(fs)` covering spec §10.2: offsets, truncate, rename ± replace, mkdir/rmdir non-empty, remove, set times and the read-only bit, statfs, 0 B…1 GiB sizes. | Suite passes against `MemFs` on Linux and Windows | – | ☐ |
 
 ### WP 1.B: VFS behaviour (portable)
@@ -429,7 +429,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 - **Secrets:** only inside `Secret<T>`. Never formatted or logged; zeroed on drop. A grep check in CI rejects `format!` of `Secret` contents.
 - **Logging:** `tracing` with one span per profile (`profile_id`, `name`). Info for state transitions, Debug for operations, Trace for protocol detail. The logs are also the AI's main way to verify behaviour after a manual step.
 - **Tests:** each task lands with its tests. Backends must pass the shared contract suite. Prefer scripted checks over manual ones whenever possible.
-- **Decisions:** architecture decisions go in `docs/adr/NNNN-title.md` (ADR-0001 async traits, ADR-0002 write mode; ADR-0003 licence is accepted).
+- **Decisions:** architecture decisions go in `docs/adr/NNNN-title.md` (ADR-0002 write mode; ADR-0001 async traits and ADR-0003 licence are accepted).
 - **Version control:** one task per branch; Conventional Commits (`feat:`, `fix:`, `test:`…); `main` always green; the owner approves merges and pushes.
 - **Versioning:** `0.x` pre-releases during M1–M2; `1.0.0` at G3; minor versions for M3 and M4.
 
@@ -473,6 +473,6 @@ Versions are pinned in M1-01 to the latest stable releases at that time. Any cha
 | Config and data | `serde`, `toml`, `uuid` (v4, serde), `tempfile` |
 | Crypto helpers | `sha2`, `hmac` + `sha1` (hashed known_hosts), `base64`, `zeroize` |
 | Logging | `tracing`, `tracing-subscriber` (env-filter, reload), `tracing-appender` |
-| Errors | `thiserror`, `anyhow` (app only), `async-trait` (if chosen in ADR-0001) |
+| Errors | `thiserror`, `anyhow` (app only), `async-trait` (ADR-0001) |
 | Dev and test | `proptest`, `criterion`, `tokio` test-util, `russh` server side (in-process SFTP test server), `sha2` for integrity checks |
 | Tooling | `cargo-deny`, `cargo-audit`, `cargo-about`, `cargo-wix` |

@@ -173,8 +173,8 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | – | – |
-| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | – | – |
-| NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | – | – |
+| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config and logs: M1-14, M1-18 | – |
+| NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | So far only zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Zeroed on unmount: M1-15 | – |
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-05 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-06 | M1-02, M1-07, M1-11, M2-11 | – | – |

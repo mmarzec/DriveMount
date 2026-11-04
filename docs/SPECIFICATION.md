@@ -382,13 +382,15 @@ apps/fsm ──▶ all of the above
   - State events come back over a `broadcast` channel: `MountEvent { id, state, detail }`. The UI applies them with `slint::invoke_from_event_loop`.
 - **Prompts**: backends never touch the UI. They call the `Prompter` trait, which the GUI implements by showing a dialog and awaiting a `oneshot` reply. Prompts are serialised, so there is one dialog at a time.
 
-### 5.4 Core abstractions (illustrative Rust; final signatures fixed in M1)
+### 5.4 Core abstractions (summary; `fsm-vfs` holds the signatures and their full contract)
 
 ```rust
 /// Async file system operations on a remote. Implemented by fsm-sftp and fsm-nfs.
+#[async_trait]
 pub trait RemoteFs: Send + Sync + 'static {
     async fn stat(&self, path: &RemotePath) -> FsResult<Attr>;            // follows symlinks
     async fn lstat(&self, path: &RemotePath) -> FsResult<Attr>;
+    async fn fstat(&self, h: &RemoteHandle) -> FsResult<Attr>;
     async fn read_dir(&self, path: &RemotePath) -> FsResult<Vec<DirEntry>>;
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle>;
     async fn read(&self, h: &RemoteHandle, offset: u64, len: u32) -> FsResult<Bytes>;
@@ -405,6 +407,7 @@ pub trait RemoteFs: Send + Sync + 'static {
 }
 
 /// Creates (and re-creates on reconnect) a RemoteFs session for one profile.
+#[async_trait]
 pub trait Connector: Send + Sync + 'static {
     async fn connect(&self, prompter: &dyn Prompter) -> Result<Arc<dyn RemoteFs>, ConnectError>;
     async fn probe(&self) -> Result<Duration, ConnectError>;   // keep-alive round trip
@@ -413,6 +416,7 @@ pub trait Connector: Send + Sync + 'static {
 /// What the MountManager drives. Two kinds of implementation:
 ///  - WinFspBackend<C: Connector>: hosts a RemoteFs as a drive (SFTP, NFS)
 ///  - SmbBackend: native Windows mapping (M3)
+#[async_trait]
 pub trait MountBackend: Send + Sync + 'static {
     async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError>;
     async fn unmount(&self) -> Result<(), MountError>;
@@ -420,6 +424,7 @@ pub trait MountBackend: Send + Sync + 'static {
 }
 
 /// UI-mediated user interaction; implemented by the GUI.
+#[async_trait]
 pub trait Prompter: Send + Sync {
     async fn secret(&self, req: SecretRequest) -> Option<(Secret<String>, Remember)>;
     async fn keyboard_interactive(&self, req: KbdIntRequest) -> Option<Vec<Secret<String>>>;
@@ -427,7 +432,9 @@ pub trait Prompter: Send + Sync {
 }
 ```
 
-Async functions in traits need `dyn` dispatch here. M1 decides between `async-trait` and hand-boxed futures.
+Async functions in traits need `dyn` dispatch here, so the traits use `async-trait` ([ADR-0001](adr/0001-async-traits.md)).
+
+`RemotePath` is always absolute and normalised. `..` is resolved lexically, and a `..` above the root is an error, not clamped to the root. `AttrChanges` carries the Windows read-only attribute as a flag rather than permission bits, so the backend applies it to the server's current permissions (§5.6) and not to a cached copy.
 
 ### 5.5 Mount state machine
 
