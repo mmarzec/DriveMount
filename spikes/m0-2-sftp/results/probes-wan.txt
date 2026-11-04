@@ -1,0 +1,40 @@
+--- info
+connect+auth+sftp init: 686 ms
+limits: Limits { packet_len: Some(262144), read_len: Some(261120), write_len: Some(261120), open_handles: Some(1019) }
+extensions: [("copy-data", "1"), ("expand-path@openssh.com", "1"), ("fstatvfs@openssh.com", "2"), ("fsync@openssh.com", "1"), ("hardlink@openssh.com", "1"), ("home-directory", "1"), ("limits@openssh.com", "1"), ("lsetstat@openssh.com", "1"), ("posix-rename@openssh.com", "1"), ("statvfs@openssh.com", "2"), ("users-groups-by-id@openssh.com", "1")]
+--- meta
+connect+auth+sftp init: n=5 min=681.29 p50=696.73 p95=699.12 max=699.12 ms
+list 1000 entries (opendir, readdir*, close): n=30 min=728.42 p50=732.31 p95=745.90 max=763.10 ms
+stat, one at a time: n=300 min=50.51 p50=50.73 p95=51.27 max=104.47 ms
+stat 1000 files, 8 in flight: 6396 ms
+stat 1000 files, 64 in flight: 870 ms
+--- hol download, largest chunk, 64 in flight
+idle stat, same channel: n=50 min=50.74 p50=50.88 p95=51.54 max=53.85 ms
+during download (64 in flight), same channel: n=22 min=303.44 p50=307.35 p95=347.78 max=3210.81 ms
+during download (64 in flight), second channel: n=22 min=50.76 p50=53.02 p95=69.71 max=163.34 ms
+bulk rate alongside: 37.1 MiB/s
+--- hol download, largest chunk, 32 in flight
+idle stat, same channel: n=50 min=50.65 p50=50.92 p95=51.54 max=51.77 ms
+during download (32 in flight), same channel: n=43 min=138.73 p50=152.42 p95=184.10 max=1094.28 ms
+during download (32 in flight), second channel: n=43 min=50.82 p50=51.73 p95=58.60 max=87.24 ms
+bulk rate alongside: 44.9 MiB/s
+--- hol download, largest chunk, 16 in flight
+idle stat, same channel: n=50 min=50.64 p50=50.83 p95=51.31 max=51.56 ms
+during download (16 in flight), same channel: n=67 min=55.78 p50=67.84 p95=92.96 max=99.84 ms
+during download (16 in flight), second channel: n=67 min=51.02 p50=52.43 p95=76.48 max=83.45 ms
+bulk rate alongside: 49.9 MiB/s
+--- hol upload-free, largest chunk, 64 in flight
+idle stat, same channel: n=50 min=50.65 p50=50.98 p95=51.42 max=51.87 ms
+during upload-free (64 in flight), same channel: n=23 min=415.80 p50=422.32 p95=436.40 max=623.68 ms
+during upload-free (64 in flight), second channel: n=23 min=51.06 p50=51.60 p95=53.01 max=54.25 ms
+bulk rate alongside: 34.6 MiB/s
+--- hol upload-free, largest chunk, 32 in flight
+idle stat, same channel: n=50 min=50.62 p50=50.85 p95=51.26 max=51.53 ms
+during upload-free (32 in flight), same channel: n=39 min=206.30 p50=208.03 p95=210.31 max=346.86 ms
+during upload-free (32 in flight), second channel: n=39 min=50.86 p50=51.71 p95=52.59 max=79.90 ms
+bulk rate alongside: 34.5 MiB/s
+--- hol upload-free, largest chunk, 16 in flight
+idle stat, same channel: n=50 min=50.69 p50=50.91 p95=51.42 max=53.01 ms
+during upload-free (16 in flight), same channel: n=59 min=63.24 p50=103.41 p95=106.87 max=225.33 ms
+during upload-free (16 in flight), second channel: n=59 min=50.86 p50=51.75 p95=53.02 max=63.68 ms
+bulk rate alongside: 34.6 MiB/s

@@ -451,12 +451,12 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 
 **Reads.**
 - Each open handle tracks sequential access. On sequential reads, read-ahead grows from 128 KiB to 4 MiB.
-- Requests are split into chunks of the server's maximum read size (from `limits@openssh.com`, else 32 KiB) and sent in parallel, with up to 64 chunks in flight per handle.
+- Requests are split into chunks of the server's maximum read size (from `limits@openssh.com`, else 32 KiB) and sent in parallel, with up to 64 chunks and at most 4 MiB in flight per handle. More does not raise the rate and delays metadata on the shared channel (spike M0-2).
 
 **Writes (v1).**
 - Each WinFsp `Write` call is split into chunks of the maximum write size, sent in parallel, and **acknowledged before the call returns**. There is no write-back cache.
 - `Flush` and `Cleanup` call `fsync@openssh.com` when the server supports it.
-- If spike M0-2 shows this misses NFR-PERF-06 on WAN, a bounded write-behind is added: at most 8 MiB unacknowledged per handle; the first error is latched and returned on the next Write/Flush/Cleanup. That design is then recorded here.
+- Spike M0-2 showed this misses NFR-PERF-06 on WAN (49% of OpenSSH with a 50 ms delay), so a **bounded write-behind is added in M2-08** (OD-4): at most 4 MiB unacknowledged per handle, the same limit as reads; the first error is latched and returned on the next Write/Flush/Cleanup. The spike measured a free-running pipeline with that bound (102% of OpenSSH); the design itself is still to be built and tested.
 
 **Operation deadlines.** Every remote call runs under `op_timeout_secs`. On timeout:
 - the call returns `STATUS_IO_TIMEOUT`;
@@ -485,10 +485,10 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 
 ### 5.7 SFTP backend (fsm-sftp)
 
-- **Transport:** `russh` client over TCP. The default algorithm preferences are curve25519 key exchange, Ed25519 host keys, and chacha20-poly1305 or AES-GCM ciphers. Compression is off.
+- **Transport:** `russh` client over TCP with the `ring` crypto backend (its default, `aws-lc-rs`, needs NASM to build on Windows). The default algorithm preferences are curve25519 key exchange, Ed25519 host keys, and AES-256-GCM then chacha20-poly1305 ciphers (AES-GCM was 20–35% faster in spike M0-2). Compression is off.
 - **Jump host:** connect to the jump host, open a `direct-tcpip` channel to the target, and run the target SSH session over that channel. Each host is verified separately.
-- **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. A second SFTP channel for bulk transfers may be added if spike M0-2 shows head-of-line blocking.
-- **Window sizes:** the SSH channel window is at least 16 MiB, so the window does not limit LAN throughput.
+- **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. Spike M0-2 measured head-of-line blocking that grows with bytes in flight; the 4 MiB limit (§5.6) keeps it to about one extra round trip. A second SFTP channel for bulk transfers removes it and stays an option if M2-08 finds browsing during a copy too slow.
+- **Window sizes:** the SSH channel window is 16 MiB (spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing).
 - **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. The connection is lost after 3 misses.
 - **Free space:** `statvfs@openssh.com`. Without it, total and free are reported as 1 PiB, so Windows' copy pre-checks never fail.
 - **Rename:** `posix-rename@openssh.com` for rename-with-replace. Without it, the target is removed and then the source renamed; this non-atomic fallback is logged at Debug level.
@@ -988,7 +988,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 | OD-1 | Licence model | **Decided 2026-11-03** | **GPL-3.0-or-later open source, WinFsp + `winfsp` crate** ([ADR-0003](adr/0003-licence-gplv3.md)) |
 | OD-2 | Final product name and icon | Before M2 | |
 | OD-3 | Code-signing certificate (OV/EV or Azure Trusted Signing) | Before M2 | Azure Trusted Signing (low cost, SmartScreen reputation) |
-| OD-4 | Write-behind on or off | End of M0 | Decided by spike M0-2 data |
+| OD-4 | Write-behind on or off | End of M0 | ✅ **On**, 4 MiB bound (spike M0-2, §5.6) |
 | OD-5 | Bundle WinFsp MSI in our installer, or link to download | Before M2 | Bundle the unmodified MSI: WinFsp's FLOSS exception allows it for FLOSS apps that show the attribution (ADR-0003) |
 
 ---

@@ -196,6 +196,8 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 ### M0-2: SFTP throughput with russh (risk: "`russh-sftp` maturity and throughput"), fully automated
 
+**Status: ☑ Go (2026-11-04).** Report: [spikes/m0-2-sftp.md](spikes/m0-2-sftp.md). OD-4 decided: write-behind on, 4 MiB bound (built in M2-08). Performance tests must connect to the WSL VM's IP, not `localhost`.
+
 1. Create `spikes/m0-2-sftp`: connect with `russh` (key auth) to the S-03 server and open the SFTP subsystem with `russh-sftp`.
    - Check that its **low-level request API** (offset-based `read`/`write` on a handle, many requests in flight) is available, e.g. a raw session type.
    - Otherwise, plan the fallback client.
@@ -234,7 +236,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 **G1 checklist:**
 - three spike reports written;
 - OD-1 (licence) decided ✅ GPLv3 (ADR-0003);
-- OD-4 decided;
+- OD-4 decided ✅ write-behind on (M0-2);
 - spec updated with the spike results (volume flags, write mode).
 
 ---
@@ -267,7 +269,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M1-08a | **SFTP `Connector`: transport and host keys**:<br>• DNS resolution (→ `Dns` error), TCP connect with a timeout;<br>• the `russh` client config: algorithms per spec §8, channel window ≥ 16 MiB, keep-alive;<br>• `check_server_key` → known_hosts → `Prompter::host_key`;<br>• SFTP subsystem (→ `SftpUnavailable`), `limits@openssh.com`, `realpath` for `~`;<br>• every failure classified into the §7.8 codes. | Integration tests for each error class and each host-key outcome against the S-03 server | – | ☐ |
 | M1-08b | **SFTP `Connector`: authentication**:<br>• agent: `\\.\pipe\openssh-ssh-agent`, then Pageant;<br>• key file: OpenSSH/PEM; passphrase via `Prompter`; `-cert.pub` detection; `.ppk` → `KeyFormat`;<br>• password;<br>• keyboard-interactive, with automatic answering of password prompts. | Integration tests for each auth method (password, key, passphrase key, agent, certificate, TOTP) | – | ☐ |
 | M1-09 | **Jump host**: connect to the jump host, open a `direct-tcpip` channel, run the target session over the channel stream. Each host key is verified separately. | Test with a two-container compose file (bastion + target) | – | ☐ |
-| M1-10 | **`SftpFs`** (`RemoteFs` over SFTP):<br>• a handle table;<br>• pipelined chunked read/write (sizes from M0-2);<br>• extensions with fallbacks: `posix-rename`, `fsync`, `statvfs` (1 PiB when absent);<br>• Windows OpenSSH path normalisation (`/C:/`);<br>• SFTP status → `FsError` mapping. | Contract suite passes against OpenSSH and ProFTPD `mod_sftp`; throughput within 5% of the M0-2 numbers | – | ☐ |
+| M1-10 | **`SftpFs`** (`RemoteFs` over SFTP):<br>• a handle table;<br>• pipelined chunked read/write (sizes from M0-2: 64 chunks and at most 4 MiB in flight);<br>• extensions with fallbacks: `posix-rename`, `fsync`, `statvfs` (1 PiB when absent);<br>• Windows OpenSSH path normalisation (`/C:/`);<br>• SFTP status → `FsError` mapping: every error that is neither a status nor a timeout is `ConnectionLost` (russh-sftp reports dead sessions as varying strings);<br>• `keepalive_max` = 2 if M0-2's 60 s for a hung server is confirmed (FR-SSH-12);<br>• a test that a rekey during a transfer works. | Contract suite passes against OpenSSH and ProFTPD `mod_sftp`; throughput within 5% of the M0-2 numbers | – | ☐ |
 
 ### WP 1.D: Windows layer
 

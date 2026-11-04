@@ -1,0 +1,12 @@
+profile,op,chunk,inflight,window_mib,cipher,bytes,secs,mib_s,complete,short_reads,verified
+wan-window,download,261120,64,2,chacha20,638438400,30.82,19.8,false,0,bytes
+wan-window,download,261120,64,16,chacha20,1073741824,23.61,43.4,true,0,bytes
+wan-window,download,261120,64,64,chacha20,1073741824,23.77,43.1,true,0,bytes
+wan-packet64k,download,261120,64,16,chacha20,1073741824,22.50,45.5,true,0,bytes
+wan-chanbuf1000,download,261120,64,16,chacha20,1073741824,23.55,43.5,true,0,bytes
+lan-cipher,download,261120,64,16,chacha20,1073741824,8.75,117.0,true,0,bytes
+lan-cipher,upload-free,261120,64,16,chacha20,1073741824,4.71,217.4,true,0,n/a
+lan-cipher,download,261120,64,16,aes256gcm,1073741824,8.54,120.0,true,0,bytes
+lan-cipher,upload-free,261120,64,16,aes256gcm,1073741824,3.49,293.7,true,0,n/a
+lan-cipher,download,261120,64,16,aes128gcm,1073741824,7.70,133.0,true,0,bytes
+lan-cipher,upload-free,261120,64,16,aes128gcm,1073741824,3.25,314.7,true,0,n/a

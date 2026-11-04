@@ -127,7 +127,7 @@ Each problem below is taken from NEO's changelog, docs or troubleshooting guide.
 
 ### 5.3 SSH/SFTP client
 
-- **`russh` + `russh-sftp` (chosen).** This is an async, pure-Rust SSH stack: no OpenSSL and no C toolchain at build time.
+- **`russh` + `russh-sftp` (chosen).** This is an async SSH stack in Rust with no OpenSSL. Its crypto backend does need a C compiler at build time: spike M0-2 uses `ring`, which builds with MSVC alone, because the default `aws-lc-rs` also needs NASM.
   - **SSH layer (`russh`):** public key, password, keyboard-interactive and agent auth, plus OpenSSH certificates. Jump hosts work through `direct-tcpip` channels.
   - **SFTP layer (`russh-sftp`):** supports the `limits@openssh.com`, `fsync@openssh.com` and `statvfs@openssh.com` extensions, which give us maximum packet size, durable writes and free-space reporting.
   - **Throughput:** depends on keeping many read/write requests in flight. This is verified in spike M0-2.
