@@ -2,6 +2,29 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-11 `fsm-win` helpers (branch `feat/m1-11-win-helpers`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `check` and `clippy` for `fsm-win` also pass in a `rust:1.99.1` container, where the crate is empty. `fsm-win` has 34 tests: 31 that always run and 3 `#[ignore]`d, which passed here with `cargo test -p fsm-win -- --ignored --test-threads=1`. The exe size check was not run: `fsm.exe` does not use `fsm-win` yet. No faults were injected to check the tests, as was done for M1-10. `Cargo.lock` gained `uuid` and the `windows` 0.61 family; `pageant` still brings in 0.62, so there are two versions (`cargo deny` only warns).
+
+- **Added:** `credentials` (`store`, `load`, `delete`, `delete_all`, `SecretSlot`), `drives::is_letter_free`, `shell` (`notify_drive_added`, `notify_drive_removed`, `open_in_explorer`) and `winfsp::detect`.
+- **Not shown: that `SHChangeNotify` reaches anyone.** The code follows the documentation, but the test only shows the call returns at once. A test listener (`SHChangeNotifyRegister`, on a hidden window, for all events, new and old delivery) received nothing, not even a flushed `SHCNE_UPDATEDIR` for a real folder from its own process, so it was removed. The cause was not found: it may be the listener, or something about how this session's processes run. Spike M0-1 also saw no effect from `SHChangeNotify`, from another process, so **M1-12c should not count on it**, and should try it in the running app, with H-06 as the check.
+- **For the owner to check:**
+  - **A secret over 1280 UTF-16 units cannot be remembered,** a limit of Credential Manager. Spec §6.2 now says so; `store` returns `InvalidInput`.
+  - **If the Workstation service is stopped, every letter may read as taken.** FR-MNT-03 says anything but `ERROR_NOT_CONNECTED` is taken, so `ERROR_NO_NETWORK` is too, and that is what the code does. Not tried, as it needs admin rights. If it matters, the fallback from spike M0-1 is reading `HKCU\Network`.
+- **Choices the plan left open:**
+  - **Errors are `io::Error`,** with the Win32 code. M1-14's `SecretStore` can wrap them as it likes.
+  - **`open_in_explorer` starts `explorer.exe` by full path,** as FR-MNT-12 says, rather than opening `Z:\` with the default folder handler, and because `ShellExecuteW` would look in the current directory first.
+  - **A DLL with no version reads as `Missing`,** as there is one banner for missing and too old. WinFsp's DLL has the version in its file version (2.2.26286 here), not in its product version ("2026 Beta5").
+  - **`is_letter_free` is only the definition.** Skipping A, B and C is the allocator's (M1-15).
+- **For later tasks:**
+  - **M1-14:** the Windows `SecretStore` is `credentials::{store, load, delete}`. They take a `Uuid`, which `fsm-win` now depends on.
+  - **M1-15:** `DriveLetters` is `is_letter_free`, which takes one letter, so it is two system calls per letter.
+  - **M1-16:** `winfsp::detect()` for the banner. `https://winfsp.dev/rel/` still needs a helper to open it: `shell` opens drives only.
+  - **CI:** the credential tests are not `#[ignore]`d. They need a logon session with a loaded profile, and a Windows runner started as a service may fail with `ERROR_NO_SUCH_LOGON_SESSION`. If so, run it as a user. The 3 `#[ignore]`d tests run in no CI job.
+- **Tests that touch this user's settings:** the credential tests use random UUIDs and remove their entries. `a_remembered_mapping_that_is_down_is_taken` writes `HKCU\Network\<letter>` for a moment and refuses a letter that has a key already. After the runs here, no `subst` drive, `FsManager` credential or extra mapping remained.
+- **Gotcha:** `GetLogicalDrives` does list some disconnected mappings: `Z:`, marked disconnected by `net use` here, is in it. So the remembered-mapping test makes its own, on an unlisted letter.
+- **Next:** M1-12a.
+
 ## 2026-11-04: M1-10 `SftpFs` (branch `feat/m1-10-sftpfs`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy` and the server tests also pass for `fsm-sftp` in a `rust:1.99.1` container. `fsm-sftp` now has 220 tests on Windows: 96 that need no server and 124 that do, 27 of those in the new `tests/sftpfs.rs`. The server tests passed 3 runs of 3 in a row on Windows. The exe size check was not run: `fsm.exe` does not use `fsm-sftp` yet.

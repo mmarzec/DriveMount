@@ -722,6 +722,8 @@ key_path = ""
 
 Windows Credential Manager entries (NFR-SEC-01) are created only when "Remember" is ticked. They are deleted on profile delete, and when "Remember" is unticked.
 
+The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so a secret longer than 1280 UTF-16 code units cannot be remembered, and storing one fails without changing the existing entry.
+
 ### 6.3 Known hosts
 
 - **File:** reads and appends to `%USERPROFILE%\.ssh\known_hosts`; the directory is created if missing. New lines use the OpenSSH format, hashed (`|1|…`) only if the existing file already uses hashed entries.

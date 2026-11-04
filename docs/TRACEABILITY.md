@@ -10,7 +10,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | PLAT-01 | M2-09, M2-13 | – | – |
-| PLAT-02 | M1-11, M2-10 | – | – |
+| PLAT-02 | M1-11, M2-10 | Detection: `fsm-win` `winfsp::tests`, with the installed 2.2 in `the_installed_winfsp_is_ready` (`#[ignore]`). Installer: M2-10 | – |
 | PLAT-03 | M0-1, M1-12c | – | – |
 | PLAT-04 | M1-16, M1-17 | – | – |
 
@@ -24,7 +24,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | – | – |
 | FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | – | – |
 | FR-PROF-06 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-07 | M1-13, M1-14, M1-15, M1-17 | – | – |
+| FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | So far only the removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: M1-15 | – |
 | FR-PROF-08 | M1-13, M1-14, M1-15, M1-17 | – | – |
 | FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | – | – |
 
@@ -54,16 +54,16 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `fsm-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: M1-15 | – |
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Only that `SHChangeNotify` returns at once: `notifying_returns_with_no_such_drive`. Whether Explorer reacts: M1-12c, H-06 | – |
 | FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-12 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-12 | M1-11, M1-12a–c, M1-15, M2-07 | `fsm-win` `explorer_opens_at_the_root_of_the_drive` (`#[ignore]`): a real window at a `subst` drive's root. A mounted drive: M1-19 | – |
 
 ## Connection state and reconnect
 
@@ -104,7 +104,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-APP-03 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | – | – |
-| FR-APP-06 | M1-11, M2-02, M2-06 | – | – |
+| FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection only: `fsm-win` `winfsp::tests`. Banner: M1-16 | – |
 | FR-APP-07 | M1-11, M2-02, M2-06 | – | – |
 
 ## Settings
@@ -172,7 +172,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | – | – |
+| NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | `fsm-win` `credentials::tests`: names, type and persistence as Windows reports them, round-trip, delete, limits | – |
 | NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config and logs: M1-14, M1-18 | – |
 | NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | So far only zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Zeroed on unmount: M1-15 | – |
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
