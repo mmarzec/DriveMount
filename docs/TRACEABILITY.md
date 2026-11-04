@@ -58,7 +58,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Only that `SHChangeNotify` returns at once: `notifying_returns_with_no_such_drive`. Whether Explorer reacts: M1-12c, H-06 | – |
-| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | So far every drive is read-only, and each kind of change gets the error in the requirement: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`). A choice per profile, and copying into such a drive: M1-12b, M1-15 | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
@@ -163,7 +163,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `fsm_vfs::contract` round-trips the listed sizes on `MemFs`. Through the drive: M1-12b | – |
 | NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through the drive: M1-12b | – |
-| NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | So far only below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive: M1-12a | – |
+| NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | Below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive, for lookups, listings, opens, reads and volume queries: `a_hung_*_times_out` and `the_limit_is_for_the_callback_not_for_each_call` (`crates/fsm-winfsp/tests/read_path.rs`). Write callbacks: M1-12b | – |
 | NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-05 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-06 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |

@@ -3,8 +3,10 @@
 # Runs on GitHub Actions and on Gitea Actions, which also reads .github/workflows.
 # Gitea runners (act_runner) must be registered with the labels ubuntu-latest and windows-latest.
 # Each needs rustup, git, Node (for actions/checkout) and ssh-keygen (known_hosts tests); the Windows
-# one also needs the MSVC build tools. rust-toolchain.toml selects the toolchain. The Ubuntu one also
-# needs Docker Engine with Compose v2.
+# one also needs the MSVC build tools, LLVM (libclang, for winfsp-sys) and WinFsp with its Developer
+# feature (msiexec /i winfsp-*.msi ADDLOCAL=ALL /qn). Its test job mounts drives, so it has to run where
+# the WinFsp driver can be used. rust-toolchain.toml selects the toolchain. The Ubuntu one also needs
+# Docker Engine with Compose v2.
 
 name: CI
 

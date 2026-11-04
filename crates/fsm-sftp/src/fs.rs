@@ -551,7 +551,7 @@ impl RemoteFs for SftpFs {
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle> {
         let slot = Arc::clone(&self.file_slots)
             .try_acquire_owned()
-            .map_err(|_| FsError::Other("too many open files on this mount".to_owned()))?;
+            .map_err(|_| FsError::TooManyOpenFiles)?;
         let full = self.full(path);
         let opened = self
             .session

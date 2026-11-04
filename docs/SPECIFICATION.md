@@ -575,14 +575,15 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 | Sector size / sectors per allocation unit | 4096 / 1 |
 | `MaxComponentLength` | 255 |
 | `CaseSensitiveSearch` / `CasePreservedNames` / `UnicodeOnDisk` | false / true / true |
-| `PersistentAcls` | false; fixed security descriptor `O:BAG:BAD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;WD)` |
-| `ReadOnlyVolume` | `read_only` |
+| `PersistentAcls` | false; fixed security descriptor giving the mounting user alone full control, and naming that user as owner and group: `O:<sid>G:<sid>D:P(A;;FA;;;<sid>)`. Not the Everyone descriptor of spike M0-1: `\\fsm\<slug>` is reachable by other users of the PC, and they would act with this user's server login. |
+| `ReadOnlyVolume` | `read_only`. This only tells programs: WinFsp's driver still passes changes down, so the adapter refuses them with `STATUS_MEDIA_WRITE_PROTECTED`. Opening a file with write access works, so that a program asking for `MAXIMUM_ALLOWED` is not turned away; the write itself fails. |
 | `VolumePrefix` | `\fsm\<profile-slug>` (network-drive mode) |
 | `FileSystemName` | `FSM-SFTP` / `FSM-NFS` |
 | Volume label | profile name, ≤ 32 chars |
 | `FileInfoTimeout` | 1000 ms (see §5.6) |
 | `PostCleanupWhenModifiedOnly` | true |
 | `VolumeSerialNumber` / `VolumeCreationTime` | fixed per profile / mount time |
+| `PassQueryDirectoryFileName` | true, for `GetDirInfoByName` |
 | Other flags | crate defaults: one file context per open handle, double buffering on; no hard links, reparse points, named streams or EAs |
 | Dispatcher | `FineGuard`; thread count from settings (0 = WinFsp default) |
 
@@ -602,7 +603,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 | `Overwrite` | `open(truncate)` or `set_attr(size = 0)` |
 | `Read` / `Write` | `read` / `write` (§5.6) |
 | `Flush` | `flush` (fsync) |
-| `GetFileInfo` | cached `stat` / `fstat` |
+| `GetFileInfo` | `fstat` once the remote handle is open, otherwise cached `stat` |
 | `SetBasicInfo` | `set_attr(times, read-only bit)` |
 | `SetFileSize` | `set_attr(size)` |
 | `CanDelete` | check that a directory is empty |
@@ -611,6 +612,13 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 | `Rename` | `rename(replace = flag)` |
 | `ReadDirectory` | cached `read_dir`, paged by marker |
 | `GetDirInfoByName` | lookup in the cached listing |
+
+- **Deadline.** A callback has `op_timeout_secs` in all, however many remote calls it makes (NFR-REL-03). Running out counts as a timeout for the "suspect" signal (§5.6), as a remote call's timeout does. After a failed read, the reader drops what it has in flight, so the next read does not meet the same failure.
+- **Lookups.** `Open` and `GetSecurityByName` first try the name as spelled, and go down the listings only if that fails (§5.6).
+- **Searches for one name.** WinFsp's driver upper-cases the name before `GetDirInfoByName`, so the case that was asked for is lost and only the listing can answer. If several entries match, the first by name is shown, as finding nothing would make `notes` and `Notes` both look missing. `FindNextFile` after such a search reads the directory as well.
+- **File ids.** `Attr` has no inode, so the index number is a hash of the path. With one id for all, programs that compare ids would take all files for one.
+- **Names Windows cannot take.** A name with a lone surrogate gets `STATUS_OBJECT_NAME_INVALID`. A listed name over 255 UTF-16 units is left out of listings, with a note in the log.
+- **`.` and `..`** are listed outside the root, and `..` shows the directory's own details rather than cost a round trip for its parent's.
 
 **Error mapping**
 
@@ -625,6 +633,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 | Deadline exceeded | `STATUS_IO_TIMEOUT` |
 | Connection lost / reconnecting past deadline | `STATUS_NETWORK_UNREACHABLE` |
 | Disk full (`SSH_FX_FAILURE` after statvfs shows 0 free, or NFS `NOSPC`) | `STATUS_DISK_FULL` |
+| The session's limit on open files | `STATUS_TOO_MANY_OPENED_FILES` |
 | Anything else | `STATUS_UNEXPECTED_NETWORK_ERROR`, logged with details |
 
 ### 5.9 SMB backend (fsm-smb), M3

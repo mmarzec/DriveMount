@@ -51,13 +51,19 @@ impl<F: RemoteFs> DeadlineFs<F> {
         self.suspect.subscribe()
     }
 
+    /// Raises the [`suspect`](Self::suspect) signal, for a layer above that gave up first: its own
+    /// limit can run out just before this one, and then this one never sees the timeout.
+    pub fn mark_suspect(&self) {
+        // Unlike `send`, this also counts when nobody is watching yet.
+        self.suspect.send_modify(|count| *count += 1);
+    }
+
     async fn limit<T>(&self, call: impl Future<Output = FsResult<T>> + Send) -> FsResult<T> {
         let result = timeout(self.op_timeout, call)
             .await
             .unwrap_or(Err(FsError::Timeout));
         if matches!(result, Err(FsError::Timeout)) {
-            // Unlike `send`, this also counts when nobody is watching yet.
-            self.suspect.send_modify(|count| *count += 1);
+            self.mark_suspect();
         }
         result
     }

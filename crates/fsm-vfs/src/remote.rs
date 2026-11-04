@@ -85,6 +85,76 @@ pub trait RemoteFs: Send + Sync + 'static {
     fn capabilities(&self) -> Capabilities;
 }
 
+/// A shared file system is a file system, so the wrappers can sit on top of `Arc<dyn RemoteFs>`, which
+/// is what [`Connector::connect`] hands out, and a layer can be shared with whoever needs to reach it
+/// directly.
+#[async_trait]
+impl<F: RemoteFs + ?Sized> RemoteFs for Arc<F> {
+    async fn stat(&self, path: &RemotePath) -> FsResult<Attr> {
+        (**self).stat(path).await
+    }
+
+    async fn lstat(&self, path: &RemotePath) -> FsResult<Attr> {
+        (**self).lstat(path).await
+    }
+
+    async fn fstat(&self, handle: &RemoteHandle) -> FsResult<Attr> {
+        (**self).fstat(handle).await
+    }
+
+    async fn read_dir(&self, path: &RemotePath) -> FsResult<Vec<DirEntry>> {
+        (**self).read_dir(path).await
+    }
+
+    async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle> {
+        (**self).open(path, mode).await
+    }
+
+    async fn read(&self, handle: &RemoteHandle, offset: u64, len: u32) -> FsResult<Bytes> {
+        (**self).read(handle, offset, len).await
+    }
+
+    async fn write(&self, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()> {
+        (**self).write(handle, offset, data).await
+    }
+
+    async fn flush(&self, handle: &RemoteHandle) -> FsResult<()> {
+        (**self).flush(handle).await
+    }
+
+    async fn close(&self, handle: RemoteHandle) -> FsResult<()> {
+        (**self).close(handle).await
+    }
+
+    async fn set_attr(&self, target: AttrTarget<'_>, changes: AttrChanges) -> FsResult<Attr> {
+        (**self).set_attr(target, changes).await
+    }
+
+    async fn mkdir(&self, path: &RemotePath) -> FsResult<Attr> {
+        (**self).mkdir(path).await
+    }
+
+    async fn remove_file(&self, path: &RemotePath) -> FsResult<()> {
+        (**self).remove_file(path).await
+    }
+
+    async fn remove_dir(&self, path: &RemotePath) -> FsResult<()> {
+        (**self).remove_dir(path).await
+    }
+
+    async fn rename(&self, from: &RemotePath, to: &RemotePath, replace: bool) -> FsResult<()> {
+        (**self).rename(from, to, replace).await
+    }
+
+    async fn statfs(&self) -> FsResult<FsStats> {
+        (**self).statfs().await
+    }
+
+    fn capabilities(&self) -> Capabilities {
+        (**self).capabilities()
+    }
+}
+
 /// Creates a [`RemoteFs`] session for one profile, and re-creates it on reconnect.
 #[async_trait]
 pub trait Connector: Send + Sync + 'static {

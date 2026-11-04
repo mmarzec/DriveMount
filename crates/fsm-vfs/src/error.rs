@@ -46,6 +46,9 @@ pub enum FsError {
     /// The remote disk is full.
     #[error("no space left")]
     NoSpace,
+    /// The session cannot hold another open file. Another open may work once one has closed.
+    #[error("too many open files")]
+    TooManyOpenFiles,
     /// Anything else, with details for the log.
     #[error("{0}")]
     Other(String),

@@ -2,6 +2,44 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-12a `fsm-winfsp` read path (branch `feat/m1-12a-winfsp-read`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `clippy` and `test` for `fsm-vfs` and `fsm-winfsp` also pass in a `rust:1.99.1` container, where `fsm-winfsp` is empty. `fsm-winfsp` has 70 tests: 19 unit tests and 51 in `tests/read_path.rs`, which mount real drives through WinFsp, none `#[ignore]`d since building the crate needs WinFsp anyway. Those 51 passed 30 runs of 30 in a row. The workspace has 426 passing and 127 ignored. Of the ignored server tests only `the_limit_on_open_files_is_clean_*` was run, as that is all that changed in `fsm-sftp`. The exe size check was not run: `fsm.exe` does not use this crate yet. `Cargo.lock` gained `winfsp`, `winfsp-sys` and what they need.
+
+- **Added:** `WinFspBackend` with `start`, `stop` and `suspect`, and `VolumeConfig`. All the read callbacks of spec §5.8. In `fsm-vfs`: `RemoteFs for Arc<F>`, `DeadlineFs::mark_suspect` and `FsError::TooManyOpenFiles`, which `SftpFs` now returns at its limit.
+- **Not tried yet: a real `SftpFs` through a drive, and Explorer.** Everything here is `MemFs`, plus a test layer for links, delays and failures, through Win32 calls. M1-12c brings the SFTP harness; Explorer is H-06.
+- **For the owner to check:**
+  - **The security descriptor gives the mounting user alone full control,** as the plan and §5.6 say, rather than §5.8's Everyone from spike M0-1. `\\fsm\<slug>` can be reached by other users of the PC, who would act with this user's server login. §5.8 is updated. **SYSTEM is left out too,** so a service running as SYSTEM, some antivirus perhaps, cannot open files on the drive. Only this descriptor's form was checked, not another account being refused, and the manual checks of spike M0-1 ran with the old one, so H-06 should repeat them.
+  - **`paste` (RUSTSEC-2024-0436) is ignored in `deny.toml`, with a reason.** This was the open item from M1-01. The narrow ignore was chosen over `unmaintained = "workspace"`, which would hide other crates' advisories. `cargo audit` only warns about it.
+- **Found in WinFsp, none of it visible from the spike:**
+  - **`ReadOnlyVolume` only sets a flag.** The driver still passes changes down, so every drive refuses them in its callbacks with `STATUS_MEDIA_WRITE_PROTECTED`. Opening for write succeeds, and the write fails, so that `MAXIMUM_ALLOWED` is not turned away. There is no `read_only` in `VolumeConfig` yet, since every drive is read-only until M1-12b.
+  - **The driver upper-cases the name before `GetDirInfoByName`,** so the case asked for is gone. Only the listing can answer, and if several entries match, the first by name is shown. So with `FILE.TXT` and `file.txt`, a search for `file.txt` finds `FILE.TXT`, while opening it opens the right one.
+  - **`FindNextFileW` after a search for one name reads the directory** through `ReadDirectory`, which follows every link in it.
+  - **`FileInfoTimeout` other than `u32::MAX` means no Windows file cache,** so every read reaches us, and a closed handle reaches `Close` at once.
+  - **A file's trailing backslash gets `ERROR_INVALID_NAME` from the driver,** so listing a file as a directory is 123, not 267.
+- **Choices the plan left open (now in §5.8):**
+  - **A callback has `op_timeout_secs` in all.** Its limit can run out just before `DeadlineFs`'s, so it marks suspect itself.
+  - **After a failed read the reader drops what is in flight,** or the next read met the same failure moments later. Waiting for that adds at most 50 ms to a callback, and only if a read overlaps. Strictly, that is over NFR-REL-03 by that much.
+  - **`GetFileInfo` uses `fstat` once a remote handle is open,** so a growing file's size is not up to a TTL old.
+  - **The file id is a hash of the path,** as `Attr` has no inode. It changes on rename.
+  - **A broken link, or one the user may not follow, is listed as a file with the link's own details.** Only `Timeout` and `ConnectionLost` fail a listing.
+  - **A name over 255 UTF-16 units is left out of listings;** a lone surrogate gets `STATUS_OBJECT_NAME_INVALID`.
+- **For later tasks:**
+  - **M1-12b:** the write callbacks are stubs returning write-protected. `OpenFile::path` is fixed for now and has to follow renames. Call `discard()` on every reader of a path after a change (see M1-06's note). A remote handle opened read-only for a file later written needs thought. `read_only` goes in `VolumeConfig` then.
+  - **M1-12c:** map WinFsp's `STATUS_OBJECT_NAME_COLLISION` from `mount` to `MountError::LetterTaken`: it reads as `Other` now. **Check that `stop` closes what is open:** by reading the crate, `FspFileSystemDelete` calls no `Close`, so open `OpenFile`s and their remote handles may leak until the session ends. Not tested. A mounted drive's tests need `MAX_DRIVES` kept low: 24 threads ran out of letters.
+  - **M1-18:** `fsm.exe` needs its own `build.rs` calling `winfsp_link_delayload()`. The one in this crate reaches only this package's tests.
+  - **CI:** the Windows runner now needs LLVM and WinFsp's Developer feature just to build, and has to be able to mount (noted in `ci.yml`). The install steps are still for M1-12c.
+  - **M2-08:**
+    - A directory of 10,000 or more entries is never cached, so each lookup of a missing name, and each search for one name, lists all of it. Creating many files in such a folder will feel this.
+    - One read has one `op_timeout_secs`. A large read on a slow link could run out, though `CopyFile` uses 1 MiB.
+- **Known limit, not tested:** WinFsp's driver treats `notes` and `NOTES` as one name, so having both open at once may mix them up. The test reads them one after the other.
+- **The tests are checked too:** 30 faults injected by script (kept out of the repository). 24 failed a test on the first pass. Of the other 6:
+  - 2 were test gaps, now closed and re-run, and both fail a test: restarting a listing on one handle, and whether search by name is in use.
+  - 1 was a second `start` on another letter. A test was added, but the prefix collides anyway, so the guard only gives a clearer message.
+  - 3 stay uncaught and are harmless: reading a directory (the driver refuses first), not cutting the label (the crate cuts it too, and `fit_label` has its own tests), and not reporting end of file (`ReadFile` looks the same).
+  - The other 24 were not run again after these last test changes. `cargo test` stops at the first failing binary, so a fault caught by a unit test did not show whether the mounted tests catch it as well.
+- **Next:** M1-12b.
+
 ## 2026-11-04: M1-11 `fsm-win` helpers (branch `feat/m1-11-win-helpers`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `check` and `clippy` for `fsm-win` also pass in a `rust:1.99.1` container, where the crate is empty. `fsm-win` has 34 tests: 31 that always run and 3 `#[ignore]`d, which passed here with `cargo test -p fsm-win -- --ignored --test-threads=1`. The exe size check was not run: `fsm.exe` does not use `fsm-win` yet. No faults were injected to check the tests, as was done for M1-10. `Cargo.lock` gained `uuid` and the `windows` 0.61 family; `pageant` still brings in 0.62, so there are two versions (`cargo deny` only warns).

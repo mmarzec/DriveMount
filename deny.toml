@@ -8,6 +8,7 @@ version = 2
 yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "rsa, no fixed version; client signing only: docs/adr/0004-rustsec-2023-0071.md" },
+    { id = "RUSTSEC-2024-0436", reason = "paste, unmaintained, no known flaw; a macro winfsp uses at build time, in no shipped code" },
 ]
 
 [licenses]

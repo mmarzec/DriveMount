@@ -512,7 +512,7 @@ async fn the_limit_on_open_files_is_clean(port: u16) {
         handles.push(fs.open(&file, OpenMode::read()).await.unwrap());
     }
     let refused = fs.open(&file, OpenMode::read()).await.unwrap_err();
-    assert!(matches!(refused, FsError::Other(_)), "{refused:?}");
+    assert_eq!(refused, FsError::TooManyOpenFiles);
 
     // Listings and other requests carry on at the limit, and several listings fit beside it.
     let root = RemotePath::root();
