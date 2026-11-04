@@ -1,0 +1,7 @@
+profile,op,rep,secs,mib_s
+lan,get-nul,1,9.46,108.2
+lan,get-nul,2,9.52,107.6
+lan,get-nul,3,9.27,110.4
+lan,put,1,12.57,81.5
+lan,put,2,12.10,84.6
+lan,put,3,11.54,88.8

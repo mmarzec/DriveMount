@@ -1,0 +1,44 @@
+--- server closes abruptly, idle session
+trigger kill took 682 ms; busy=false, keepalive=15 s, request timeout=15 s
+disconnected() after 0.00 s: Error(IO(Custom { kind: UnexpectedEof, error: "early eof" }))
+is_closed() now: true
+new request after that returned in 0.000 s: Ok(Err("session closed"))
+--- server closes abruptly, 8 reads in flight
+trigger kill took 660 ms; busy=true, keepalive=15 s, request timeout=15 s
+disconnected() after 0.00 s: Error(IO(Custom { kind: UnexpectedEof, error: "early eof" }))
+is_closed() now: true
+first in-flight read failed after 0.00 s: sender dropped
+new request after that returned in 0.000 s: Ok(Err("session closed"))
+--- silent link loss, idle session
+trigger blackhole took 325 ms; busy=false, keepalive=15 s, request timeout=15 s
+disconnected() after 32.65 s: Error(IO(Os { code: 10054, kind: ConnectionReset, message: "Istniej?ce po??czenie zosta?o gwa?townie zamkni?te przez zdalnego hosta." }))
+is_closed() now: true
+new request after that returned in 0.000 s: Ok(Err("sender dropped"))
+--- silent link loss, 8 reads in flight
+trigger blackhole took 371 ms; busy=true, keepalive=15 s, request timeout=15 s
+disconnected() after 34.13 s: Error(IO(Os { code: 10054, kind: ConnectionReset, message: "Istniej?ce po??czenie zosta?o gwa?townie zamkni?te przez zdalnego hosta." }))
+is_closed() now: true
+first in-flight read failed after 14.98 s: Timeout
+new request after that returned in 0.000 s: Ok(Err("session closed"))
+--- server hangs but TCP stays up (SIGSTOP), idle session
+trigger freeze took 616 ms; busy=false, keepalive=15 s, request timeout=15 s
+disconnected() after 58.42 s: Error(KeepaliveTimeout)
+is_closed() now: true
+new request after that returned in 0.000 s: Ok(Err("sender dropped"))
+--- server hangs but TCP stays up (SIGSTOP), 8 reads in flight
+trigger freeze took 679 ms; busy=true, keepalive=15 s, request timeout=15 s
+disconnected() after 60.01 s: Error(KeepaliveTimeout)
+is_closed() now: true
+first in-flight read failed after 14.98 s: Timeout
+new request after that returned in 0.000 s: Ok(Err("sender dropped"))
+--- server sends keepalive@openssh.com every 1 s; 2 misses end the session; client idle 15 s
+send_ping (keepalive@openssh.com, want reply): n=20 min=0.30 p50=0.34 p95=0.36 max=0.41 ms
+idle for 15 s, sending nothing...
+still connected; stat after idle ok
+--- control: replies from the server dropped, so its probes get no answer
+trigger blackhole took 337 ms; busy=false, keepalive=0 s, request timeout=3 s
+disconnected() NOT called within 8 s
+is_closed() now: false
+new request after that returned in 3.014 s: Ok(Err("Timeout"))
+--- sshd log, last 2 minutes
+Timeout, client not responding from user keyonly 172.23.96.1 port 54027

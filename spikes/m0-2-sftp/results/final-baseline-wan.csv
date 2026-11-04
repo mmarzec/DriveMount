@@ -1,0 +1,7 @@
+profile,op,rep,secs,mib_s
+wan,get-nul,1,28.84,35.5
+wan,get-nul,2,28.99,35.3
+wan,get-nul,3,28.92,35.4
+wan,put,1,29.50,34.7
+wan,put,2,29.13,35.1
+wan,put,3,29.29,35.0

@@ -1,0 +1,19 @@
+[package]
+name = "m0-2-sftp"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Spike M0-2: SFTP throughput with russh (throw-away)"
+
+# Spikes stay outside the main workspace.
+[workspace]
+
+[dependencies]
+# ring, not the default aws-lc-rs: aws-lc-sys needs NASM on Windows.
+russh = { version = "0.65", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "3"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+futures = "0.3"
+sha2 = "0.10"

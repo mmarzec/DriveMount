@@ -1,0 +1,13 @@
+profile,op,rep,secs,mib_s
+lan-aes256-gcm@openssh.com,get-nul,1,4.56,224.6
+lan-aes256-gcm@openssh.com,get-nul,2,4.71,217.2
+lan-aes256-gcm@openssh.com,get-nul,3,4.81,213.0
+lan-aes256-gcm@openssh.com,put,1,5.40,189.7
+lan-aes256-gcm@openssh.com,put,2,5.69,179.9
+lan-aes256-gcm@openssh.com,put,3,5.29,193.5
+lan-aes128-gcm@openssh.com,get-nul,1,4.91,208.4
+lan-aes128-gcm@openssh.com,get-nul,2,4.64,220.7
+lan-aes128-gcm@openssh.com,get-nul,3,4.53,226.0
+lan-aes128-gcm@openssh.com,put,1,5.41,189.3
+lan-aes128-gcm@openssh.com,put,2,5.21,196.4
+lan-aes128-gcm@openssh.com,put,3,5.83,175.7

@@ -21,3 +21,4 @@ All values are throw-away test credentials.
 
 - `keys/` is created by `gen-keys.sh` and is git-ignored. Existing keys are kept, so the host key stays stable.
 - The TOTP file has no `DISALLOW_REUSE`, so tests can log in more than once per 30 s window.
+- **Performance tests must connect to the WSL VM's IP (`wsl hostname -I`, port 2222), not `localhost`.** The Windows port-forward relay stalls single writes of 16–64 KiB by about 44 ms each (see `docs/spikes/m0-2-sftp.md`).

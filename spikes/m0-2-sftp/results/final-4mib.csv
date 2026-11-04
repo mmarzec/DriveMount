@@ -1,0 +1,13 @@
+profile,op,chunk,inflight,window_mib,cipher,bytes,secs,mib_s,complete,short_reads,verified
+lan,download,261120,16,16,chacha20,1073741824,5.45,187.8,true,0,bytes
+lan,upload-free,261120,16,16,chacha20,1073741824,4.53,226.2,true,0,sha256
+lan,download,261120,16,16,chacha20,1073741824,5.68,180.4,true,0,bytes
+lan,upload-free,261120,16,16,chacha20,1073741824,4.85,211.1,true,0,sha256
+lan,download,261120,16,16,chacha20,1073741824,5.09,201.3,true,0,bytes
+lan,upload-free,261120,16,16,chacha20,1073741824,4.63,221.1,true,0,sha256
+wan,download,261120,16,16,chacha20,1073741824,20.38,50.2,true,0,bytes
+wan,upload-free,261120,16,16,chacha20,1073741824,28.94,35.4,true,0,sha256
+wan,download,261120,16,16,chacha20,1073741824,20.66,49.6,true,0,bytes
+wan,upload-free,261120,16,16,chacha20,1073741824,28.74,35.6,true,0,sha256
+wan,download,261120,16,16,chacha20,1073741824,21.75,47.1,true,0,bytes
+wan,upload-free,261120,16,16,chacha20,1073741824,28.69,35.7,true,0,sha256

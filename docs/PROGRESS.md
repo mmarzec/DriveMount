@@ -2,6 +2,19 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M0-2 SFTP spike (branch `spike/m0-2-sftp`)
+
+**Status: done, go.** At the SFTP layer, reads and free-running writes reach 102–261% of `sftp.exe` on LAN and WAN (50 ms). Report: `docs/spikes/m0-2-sftp.md`; raw data in `spikes/m0-2-sftp/results/`. Spec §5.6, §5.7, OD-4 and plan M1-10 updated.
+
+- **Decided:** OD-4 write-behind on, because per-call writes reach only 49% on WAN. Bound changed from the spec's 8 MiB to 4 MiB: same rate, half the metadata delay. Built in M2-08; the spike only measured an equivalent pipeline. The owner has not reviewed the 8 → 4 MiB change or the AES-GCM-first preference yet.
+- **Decided:** `ring` backend (default `aws-lc-rs` needs NASM), 16 MiB window, at most 4 MiB in flight per handle, one SFTP channel.
+- **Gotcha: use the WSL VM's IP for performance tests.** The `localhost:2222` relay (`wslrelay`) stalls single writes of 16–64 KiB by about 44 ms each. `bench.ps1` does this by default.
+- **Open:** downloads at 64 × largest chunk intermittently run at half speed; cause not found (not the channel window). Not seen at 16 in flight.
+- **Open for M1:** a hung server is detected at 58–60 s, right on FR-SSH-12's limit (`keepalive_max` = 2 should fix it; untested). Rekey during transfer untested. `cargo deny` must accept `ring`'s licence.
+- Run: `cargo build --release`, `target\release\m0-2-sftp.exe prepare`, then `bench.ps1` (actions at the top of the file). `tests\docker\servers.ps1 check` first, for the key copy `sftp.exe` needs.
+- PowerShell 5.1 traps met: `Tee-Object` has no `-Encoding`; `{0:F2}` uses the Polish decimal comma unless given InvariantCulture; `R` is an alias, and aliases beat functions.
+- **Next:** M0-3 (UI spike), then G1.
+
 ## 2026-11-03: M0-1 WinFsp spike (branch `spike/m0-1-winfsp`)
 
 **Status: done, go.** Scripted checks 32/32, owner's H-04 checks 6/6. Report: `docs/spikes/m0-1-winfsp.md`. Spec §5.8, FR-MNT-05/06 and plan M1-12c updated.
