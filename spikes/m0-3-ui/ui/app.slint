@@ -1,0 +1,47 @@
+import { Button, HorizontalBox, StandardListView, VerticalBox } from "std-widgets.slint";
+
+export component MainWindow inherits Window {
+    title: "FS Manager (M0-3 spike)";
+    preferred-width: 640px;
+    preferred-height: 420px;
+    min-width: 480px;
+    min-height: 320px;
+
+    in property <[StandardListViewItem]> rows;
+    in property <string> status: "Close this window: it goes to the tray.";
+    in-out property <int> selected-row: -1;
+
+    callback show-toast();
+    callback quit();
+
+    VerticalBox {
+        Text {
+            text: root.status;
+        }
+
+        StandardListView {
+            vertical-stretch: 1;
+            model: root.rows;
+            current-item <=> root.selected-row;
+        }
+
+        HorizontalBox {
+            alignment: end;
+            padding: 0;
+
+            Button {
+                text: "Show test toast";
+                clicked => {
+                    root.show-toast();
+                }
+            }
+
+            Button {
+                text: "Quit";
+                clicked => {
+                    root.quit();
+                }
+            }
+        }
+    }
+}

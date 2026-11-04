@@ -1,0 +1,15 @@
+      18.1 main start tray=false aumid=Some("FsManager.M03Spike")
+      34.3 ui created
+      55.1 tray added rect=None
+      59.2 hidden window created
+      60.7 entering event loop
+     141.7 redraw 1 requested
+     142.9 first frame
+     168.6 redraw 1 done colours=Some(53)
+    1069.1 tray after 1 s rect=None
+   60060.7 cmd Memory
+   60060.9 memory visible: working_set=17.5MB peak=17.6MB private=4.5MB
+  190547.4 cmd Quit
+  190547.7 quit requested
+  190547.9 event loop ended: Ok(())
+  190558.9 exit

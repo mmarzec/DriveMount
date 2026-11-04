@@ -1,0 +1,16 @@
+      19.1 main start tray=true aumid=Some("FsManager.M03Spike.Both")
+      33.3 ui created
+     108.5 tray added rect=Some((2320.0, 1379.0))
+     113.7 hidden window created
+     114.0 entering event loop
+     647.6 cmd Toast
+     664.3 toast notifier setting error: Nie można odnaleźć elementu. (0x80070490)
+     685.9 toast 1 shown aumid=FsManager.M03Spike.Both
+    1115.6 tray after 1 s rect=Some((2320.0, 1379.0))
+    2707.3 cmd History
+    2729.0 toast history count=1
+    6978.4 toast 1 dismissed reason=Some(2)
+    6990.4 cmd Quit
+    6990.5 quit requested
+    6990.8 event loop ended: Ok(())
+    7049.8 exit

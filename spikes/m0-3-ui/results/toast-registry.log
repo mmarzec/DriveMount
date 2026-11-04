@@ -1,0 +1,16 @@
+      19.9 main start tray=true aumid=Some("FsManager.M03Spike.Registry")
+      34.8 ui created
+      52.4 tray added rect=None
+      56.3 hidden window created
+      56.5 entering event loop
+     581.3 cmd Toast
+     602.7 toast notifier setting=0
+     619.4 toast 1 shown aumid=FsManager.M03Spike.Registry
+    1058.1 tray after 1 s rect=None
+    2659.0 cmd History
+    2687.8 toast history count=1
+    6916.0 toast 1 dismissed reason=Some(2)
+    6924.9 cmd Quit
+    6925.2 quit requested
+    6925.7 event loop ended: Ok(())
+    6936.5 exit
