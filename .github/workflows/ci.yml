@@ -1,0 +1,73 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Runs on GitHub Actions and on Gitea Actions, which also reads .github/workflows.
+# Gitea runners (act_runner) must be registered with the labels ubuntu-latest and windows-latest.
+# Each needs rustup, git and Node (for actions/checkout); the Windows one also needs the MSVC build
+# tools. rust-toolchain.toml selects the toolchain.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  licence-headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check SPDX headers (NFR-LIC-01)
+        run: sh scripts/check-spdx.sh
+
+  lint:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Install cargo-deny and cargo-audit
+        run: |
+          cargo install --locked --version 0.20.2 cargo-deny
+          cargo install --locked --version 0.22.2 cargo-audit
+      - name: fmt
+        run: cargo fmt --all --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: deny
+        run: cargo deny --locked check
+      - name: audit
+        run: cargo audit
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: build
+        run: cargo build --workspace --locked
+      - name: test
+        run: cargo test --workspace --locked
+
+  exe-size:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Build release fsm.exe
+        run: cargo build --release -p fsm --locked
+      - name: Check size (NFR-PERF-03)
+        shell: powershell
+        run: scripts\check-exe-size.ps1

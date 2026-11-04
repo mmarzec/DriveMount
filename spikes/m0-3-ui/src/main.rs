@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Spike M0-3: Slint window + tray icon + Windows messages + toasts. Throw-away code.
 #![windows_subsystem = "windows"]
 

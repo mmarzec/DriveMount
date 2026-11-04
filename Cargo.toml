@@ -1,0 +1,106 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[workspace]
+resolver = "3"
+members = ["apps/*", "crates/*"]
+# Spikes are throw-away code with their own workspaces.
+exclude = ["spikes"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+publish = false
+
+# Exact versions: a change is a deliberate edit, checked by `cargo deny` in CI.
+# A crate takes what it needs with `foo = { workspace = true }`, adding per-crate features there.
+[workspace.dependencies]
+# Our crates
+fsm-core = { path = "crates/fsm-core" }
+fsm-nfs = { path = "crates/fsm-nfs" }
+fsm-sftp = { path = "crates/fsm-sftp" }
+fsm-smb = { path = "crates/fsm-smb" }
+fsm-vfs = { path = "crates/fsm-vfs" }
+fsm-win = { path = "crates/fsm-win" }
+fsm-winfsp = { path = "crates/fsm-winfsp" }
+
+# Async and utilities
+arc-swap = "=1.9.3"
+bytes = "=1.12.1"
+futures = "=0.3.34"
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
+tokio-util = "=0.7.20"
+
+# SSH / SFTP. ring, not the default aws-lc-rs: aws-lc-sys needs NASM on Windows (spike M0-2).
+russh = { version = "=0.65.1", default-features = false, features = ["ring", "rsa"] }
+russh-sftp = "=3.0.1"
+
+# WinFsp. The system feature finds the installed DLL through the registry; bundled mode fails at
+# runtime with error 1285 (spike M0-1). A crate using it also needs winfsp_link_delayload() in
+# its build.rs.
+winfsp = { version = "=0.13.2", default-features = false, features = ["system", "delayload"] }
+winfsp-sys = "=0.12.1"
+
+# Windows API. Not the latest (0.62): 0.61 is what winfsp's error conversions were tested with in
+# spike M0-1, and the UI spike uses it too. Each crate lists the API features it needs.
+windows = "=0.61.3"
+
+# UI: the winit back-end and software renderer only, with accessibility for NFR-UX-04 (spike M0-3).
+slint = { version = "=1.18.1", default-features = false, features = [
+    "std",
+    "compat-1-2",
+    "backend-winit",
+    "renderer-software",
+    "software-renderer-systemfonts",
+    "accessibility",
+    "raw-window-handle-06",
+    "unstable-winit-030",
+] }
+slint-build = "=1.18.1"
+tray-icon = "=0.26.1"
+
+# Config and data
+serde = { version = "=1.0.229", features = ["derive"] }
+tempfile = "=3.27.0"
+toml = "=1.2.0"
+uuid = { version = "=1.29.0", features = ["v4", "serde"] }
+
+# Crypto helpers
+base64 = "=0.23.1"
+hmac = "=0.13.0"
+sha1 = "=0.11.0"
+sha2 = "=0.11.1"
+zeroize = "=1.9.1"
+
+# Logging
+tracing = "=0.1.44"
+tracing-appender = "=0.2.5"
+tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+
+# Errors. anyhow is for apps/fsm only; async-trait depends on ADR-0001 (M1-02).
+anyhow = "=1.0.104"
+async-trait = "=0.1.92"
+thiserror = "=2.0.21"
+
+# Dev and test
+criterion = "=0.8.2"
+proptest = "=1.12.0"
+
+[workspace.lints.rust]
+# fsm-win and fsm-winfsp opt out with #![allow(unsafe_code)]; all others use #![forbid(unsafe_code)].
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# Allowed inside tests by clippy.toml.
+expect_used = "deny"
+unwrap_used = "deny"
+# Every unsafe block needs a // SAFETY: comment.
+undocumented_unsafe_blocks = "deny"
+
+# Spec section 9. panic = "abort" takes effect after the crash hook (M2-06) has run.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true

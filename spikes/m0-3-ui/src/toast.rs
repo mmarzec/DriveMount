@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Toasts from an unpackaged exe, using the `windows` crate directly, and the Start-menu shortcut
 //! with an AppUserModelID that the checks turn on and off.
 

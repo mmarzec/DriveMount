@@ -333,14 +333,19 @@ FS Manager is open source under **GPL-3.0-or-later**, with WinFsp used through t
 
 ```
 fs-manager/
-  Cargo.toml                 workspace
-  rust-toolchain.toml
+  Cargo.toml                 workspace: pinned dependencies, lints, release profile
+  rust-toolchain.toml  rustfmt.toml  clippy.toml  .cargo/config.toml
   deny.toml                  cargo-deny config (licences, advisories)
+  LICENSE                    GPLv3 text
+  .github/workflows/ci.yml   CI (GitHub-Actions-compatible; run by Gitea Actions)
+  scripts/                   CI checks: SPDX headers, exe size
   crates/
-    fsm-core/                Profile model, ConfigStore (TOML), SecretStore (Cred API), MountManager,
-                             state machine, letter allocator, event bus, Prompter trait
-    fsm-vfs/                 RemoteFs trait, Attr/DirEntry types, caches, read-ahead, name and
+    fsm-vfs/                 Shared traits and types, at the bottom of the graph: RemoteFs, Connector,
+                             MountBackend, Prompter, Secret, Attr/DirEntry; caches, read-ahead, name and
                              permission mapping, operation deadlines, error model     (no Windows deps)
+    fsm-core/                Profile model, ConfigStore (TOML), SecretStore trait, MountManager, state
+                             machine, letter allocator, event bus. Gets its backends from a factory
+                             supplied by the app                                      (no Windows deps)
     fsm-sftp/                RemoteFs over russh + russh-sftp; connector (auth, jump host, host keys,
                              keep-alive)                                                (no Windows deps)
     fsm-winfsp/              Adapter RemoteFs → winfsp::FileSystemContext; volume params; mount/unmount
@@ -349,11 +354,21 @@ fs-manager/
     fsm-win/                 Small Windows helpers: Credential Manager, Run key, SHChangeNotify, power,
                              session and network notifications, single-instance mutex, toasts
   apps/
-    fsm/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring
+    fsm/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring,
+                             BackendFactory (Profile → Box<dyn MountBackend>)
   docs/
-    ANALYSIS.md  SPECIFICATION.md  spikes/
+    ANALYSIS.md  SPECIFICATION.md  IMPLEMENTATION_PLAN.md  TRACEABILITY.md  PROGRESS.md  adr/  spikes/
   installer/                 WiX sources for the MSI
   tests/                     cross-crate integration tests, Docker compose files for test servers
+```
+
+Dependencies between the crates. Only `fsm-vfs` is shared, so there is no cycle, and `fsm-core` stays platform-independent, with its tests running on Linux:
+
+```
+fsm-vfs ◀── fsm-sftp, fsm-nfs                 (portable)
+fsm-vfs ◀── fsm-core                          (portable)
+fsm-vfs ◀── fsm-winfsp, fsm-smb, fsm-win      (Windows; empty crates on other platforms)
+apps/fsm ──▶ all of the above
 ```
 
 ### 5.3 Process and threading model

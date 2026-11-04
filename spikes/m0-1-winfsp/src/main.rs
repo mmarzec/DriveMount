@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Spike M0-1: a minimal in-memory WinFsp file system mounted from an unelevated process.
 //!
 //! Usage: m0-1-winfsp [--mount Z:] [--prefix \fsm\spike] [--label "FSM Spike"]

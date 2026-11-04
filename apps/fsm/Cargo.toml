@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "fsm"
+description = "FS Manager: mount remote file systems as Windows drives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+fsm-core = { workspace = true }
+fsm-nfs = { workspace = true }
+fsm-sftp = { workspace = true }
+fsm-vfs = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+fsm-smb = { workspace = true }
+fsm-win = { workspace = true }
+fsm-winfsp = { workspace = true }

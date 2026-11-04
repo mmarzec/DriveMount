@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The log the scripted checks read: one line per event, stamped in ms since process creation.
 
 use std::fs::File;
