@@ -2,6 +2,30 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-06 `DeadlineFs` and `ReadAhead` (branch `feat/m1-06-deadline-readahead`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-vfs` in a `rust:1.99.1` container. The size check was not run: nothing in `fsm.exe` uses this yet. `fsm-vfs` now has 229 tests (78 unit, 60 cache, 41 read-ahead, 31 contract, 12 deadline, 3 `dyn` trait, 4 doc). `Cargo.lock` did not change.
+
+- **Added:** `DeadlineFs::new(inner, op_timeout)` and `ReadAhead::new(fs, handle)` in `fsm_vfs`. Nothing uses them yet.
+- **Order settled:** the M1-05 note said the plan leaves this open, but M1-12a says `CachedFs<DeadlineFs<…>>`. A test covers that order: a `mkdir` that timed out after the server acted shows in the next listing.
+- **Suspect signal:** `DeadlineFs::suspect()` gives a `watch::Receiver<u64>` counting timeouts. A count, so nobody has to clear it. A `Timeout` from the backend counts too, since M1-10 will produce its own. **M2-01:** probe on each change.
+- **`ReadAhead` owns the handle.** Its requests are tasks that outlive the read, and `RemoteHandle` cannot be cloned. Other calls use `reader.handle()`; `reader.close()` stops the tasks and closes the handle. It must run inside the runtime, which `block_on` on the dispatcher threads provides.
+- **For M1-12a/b:**
+  - **Call `discard()` after any change to the file**, however the change ended. That includes changes through **another handle** on the same file: the reader cannot see those, and until then it can return data up to 5 s old. M1-12b needs a way to reach the other readers of a path.
+  - `ReadAhead::read` returns the full length unless the file ends, unlike `RemoteFs::read`, so the adapter does not need its own loop.
+  - **A read fails as a whole**, even if part of its range arrived.
+- **Choices the plan left open** (now in spec §5.6): the first read does not fetch ahead, so reading a header costs nothing; the window doubles per window consumed, not per read; chunks never exceed 4 MiB; speculative requests wait until a chunk or half a window is due, or small reads become small requests.
+- **Added beyond the plan: a 5 s limit on data and errors fetched ahead.** Without it, a reader that pauses would later get bytes or an error from any time in the past. A reader that hits the limit returns to a 128 KiB window, so a slow consumer does not keep refetching 4 MiB.
+- **Known limits:**
+  - An `open` dropped by the deadline can leave a handle open on the server until the session ends.
+  - **Small files cost a second round trip:** a short answer must be asked for again under the `RemoteFs::read` contract, so a read past the end of a small file takes two. **M2-08:** measure; the adapter's known size could avoid it.
+  - Only an exact continuation counts as sequential. Slightly out-of-order reads from the kernel would reset the window. **M1-12a/M2-08:** check real traces.
+  - `Arc<dyn RemoteFs>` does not implement `RemoteFs`, so `DeadlineFs<Arc<dyn RemoteFs>>` as M1-12a describes needs a small impl. `ReadAhead<dyn RemoteFs>` works.
+- **The tests are checked too:** 31 faults injected by hand. 25 of the first 30 were caught at once. Of the other 5, 3 were test gaps, now closed and re-run (retrying at the same offset after an error, over-long answers, top-ups in a small window); one showed a redundant condition, now removed, and its replacement fault is caught; one remains uncaught and is harmless: `>` for `>=` at exactly 5 s. The script was not kept.
+- **Gotcha for fault runs on Windows:** killing a shell does not kill its children. The first run hung for 40 minutes on one fault because the hung test binary kept the output pipe open; use `taskkill /T` and write output to a file. A test that waits on a signal needs its own time limit, or a broken signal hangs it instead of failing it.
+- **Not measured:** real throughput and memory. NFR-PERF rows stay open until M1-10 and M2-08. Spike M0-2's rates were for a free-running pipeline, not this reader.
+- **Next:** M1-07.
+
 ## 2026-11-04: M1-05 `CachedFs` (branch `feat/m1-05-cachedfs`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-vfs` in a `rust:1.99.1` container. The size check was not run: nothing in `fsm.exe` uses this yet. `fsm-vfs` now has 176 tests (78 unit, 60 cache, 31 contract, 3 `dyn` trait, 4 doc).

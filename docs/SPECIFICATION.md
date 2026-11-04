@@ -479,7 +479,10 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 
 **Reads.**
 - Each open handle tracks sequential access. On sequential reads, read-ahead grows from 128 KiB to 4 MiB.
-- Requests are split into chunks of the server's maximum read size (from `limits@openssh.com`, else 32 KiB) and sent in parallel, with up to 64 chunks and at most 4 MiB in flight per handle. More does not raise the rate and delays metadata on the shared channel (spike M0-2).
+- Requests are split into chunks of the server's maximum read size (from `limits@openssh.com`, else 32 KiB; never above 4 MiB) and sent in parallel, with up to 64 chunks and at most 4 MiB in flight per handle. More does not raise the rate and delays metadata on the shared channel (spike M0-2).
+- **What counts as sequential.** A read that starts where the last one ended. The first read on a handle and any other jump fetch only what was asked for, so reading a file's header costs no extra traffic. So does the read after an end of file or an error.
+- **Growth.** The window doubles each time the caller has consumed a window's worth, not on every read, so what is fetched stays in proportion to what is used. Beyond the range a read needs, requests wait until a chunk's worth or half a window is due, so small reads do not become small requests.
+- **Freshness.** Data and errors fetched ahead are kept for at most 5 s from when they were asked for, the default `cache_ttl_secs`. A reader that takes longer goes back to a 128 KiB window, since its window was larger than it could use. A change through the drive drops what the reader holds. A speculative request that fails matters only if a read reaches it.
 
 **Writes (v1).**
 - Each WinFsp `Write` call is split into chunks of the maximum write size, sent in parallel, and **acknowledged before the call returns**. There is no write-back cache.
@@ -490,6 +493,8 @@ Every transition is emitted as a `MountEvent` and logged at Info level.
 - the call returns `STATUS_IO_TIMEOUT`;
 - the connector runs a keep-alive probe;
 - if the probe also fails, the mount becomes *Reconnecting*.
+
+A timeout reported by the backend itself counts the same as an expired deadline. The deadline layer sits below the caches (`CachedFs<DeadlineFs<…>>`), so a call that timed out still invalidates them.
 
 **Name mapping.**
 - Characters invalid in Windows names (`\ : * ? " < > |` and 0x01–0x1F) and trailing dots or spaces are shown as the Unicode private-use character U+F000 + code. This is the same scheme as Cygwin and SSHFS-Win, so names look the same as in NEO.

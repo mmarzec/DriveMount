@@ -15,6 +15,7 @@
 mod cache;
 #[cfg(feature = "testing")]
 pub mod contract;
+mod deadline;
 mod error;
 #[cfg(feature = "testing")]
 mod memfs;
@@ -22,11 +23,13 @@ mod mount;
 mod names;
 mod path;
 mod prompt;
+mod readahead;
 mod remote;
 mod secret;
 mod types;
 
 pub use cache::CachedFs;
+pub use deadline::DeadlineFs;
 pub use error::{ChangedHostKey, ConnectError, FsError, FsResult, MountError};
 #[cfg(feature = "testing")]
 pub use memfs::MemFs;
@@ -37,6 +40,7 @@ pub use prompt::{
     HostKeyDecision, HostKeyRequest, KbdIntPrompt, KbdIntRequest, Prompter, Remember, SecretKind,
     SecretRequest,
 };
+pub use readahead::ReadAhead;
 pub use remote::{Connector, RemoteFs};
 pub use secret::Secret;
 pub use types::{

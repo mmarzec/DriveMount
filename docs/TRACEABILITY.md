@@ -163,7 +163,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `fsm_vfs::contract` round-trips the listed sizes on `MemFs`. Through the drive: M1-12b | – |
 | NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through the drive: M1-12b | – |
-| NFR-REL-03 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
+| NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | So far only below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive: M1-12a | – |
 | NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-05 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-06 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
