@@ -135,7 +135,7 @@ The owner ran the checks on 2026-11-04, and the AI compared them with the logs (
 
 ## 9. Go / no-go
 
-**Go**, by the AI's assessment, although the plan's "all items work" is not fully met. The owner has not yet reviewed this verdict.
+**Go**, although the plan's "all items work" is not fully met. The owner accepted this on 2026-11-04 and considers the open items very minor, to be dealt with later.
 
 - **Works:** Slint and `tray-icon` on one event loop with no polling, close-to-tray, a toast from an unpackaged exe, a toast click reaching the right row. No fallback (raw `Shell_NotifyIcon`, another renderer) is needed.
 - **Budgets met:** start, working set and exe size, with the size margin in §6 to watch.

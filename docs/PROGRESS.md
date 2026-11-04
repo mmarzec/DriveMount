@@ -10,7 +10,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Open for M2-04:** a toast clicked in Action Center does nothing, whether or not the app runs, so FR-NOT-04 is unmet on that path. COM activator and protocol activation not tried.
 - **Open for M2-02/H-08:** real sleep/resume not tested; the owner deferred it. Only sent messages reached the hidden window. Do it first in M2-02.
 - **Open for M2-08:** idle CPU with the window visible bursts past 0.1% in some 60 s windows, sometimes with no redraw; cause not found. Hidden: 0.000% every time.
-- **Owner has not reviewed:** the go verdict with these open items, and the HKCU key decision.
+- **Owner accepted** the go verdict on 2026-11-04 and considers the open items very minor, to be dealt with later.
 - **Exe size:** UI + SFTP spikes total 12.13 MiB, leaving about 2.2 MiB under 15 MB. `opt-level = "s"` saves 1.3 MiB (speed not measured). M1-01 gets a CI size check.
 - **Don't trust:** `Show()`, `History` and `Setting` for whether a toast appeared, `tray.rect()` (flaky), `tray-icon`'s `build()` (ignores `NIM_ADD` failure). Screen captures of the corner gave the toast results.
 - **Compare manual results with the logs:** the first H-05 report and the logs disagreed on toast clicks and sleep; a short retest cleared it up.
