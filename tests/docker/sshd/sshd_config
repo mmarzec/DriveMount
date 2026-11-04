@@ -3,6 +3,8 @@ HostKey /etc/ssh/ssh_host_ed25519_key
 LogLevel VERBOSE
 PermitRootLogin no
 UsePAM yes
+# The default drops connections at random above 10 at once, and tests run in parallel.
+MaxStartups 100
 
 PubkeyAuthentication yes
 PasswordAuthentication yes

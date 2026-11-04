@@ -4,6 +4,7 @@ set -eu
 
 install -m 600 /keys/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
 install -m 644 /keys/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ed25519_key.pub
+install -m 600 /keys/ssh_host_rsa_key /etc/ssh/ssh_host_rsa_key
 install -m 644 /keys/user_ca.pub /etc/ssh/user_ca.pub
 
 for u in tester keyonly; do
@@ -13,4 +14,4 @@ for u in tester keyonly; do
     chmod 600 "/home/$u/.ssh/authorized_keys"
 done
 
-exec /usr/sbin/sshd -D -e
+exec /usr/sbin/sshd -D -e "$@"

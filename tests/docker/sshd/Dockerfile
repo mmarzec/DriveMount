@@ -19,6 +19,7 @@ RUN chown totpuser:totpuser /home/totpuser/.google_authenticator \
  && sed -i 's/^@include common-auth$/@include common-auth\nauth required pam_google_authenticator.so nullok/' /etc/pam.d/sshd
 
 COPY sshd_config /etc/ssh/sshd_config
+RUN sed '/^Subsystem/d' /etc/ssh/sshd_config > /etc/ssh/sshd_config_nosftp
 COPY entrypoint.sh check-auth.sh check-auth.exp /usr/local/bin/
 RUN chmod 755 /usr/local/bin/entrypoint.sh /usr/local/bin/check-auth.sh /usr/local/bin/check-auth.exp \
  && mkdir -p /run/sshd

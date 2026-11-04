@@ -10,6 +10,7 @@ cd "$dir"
 gen() { [ -f "$1" ] || ssh-keygen -q -t ed25519 -N "$2" -C "$3" -f "$1"; }
 
 gen ssh_host_ed25519_key "" fsm-test-host
+[ -f ssh_host_rsa_key ] || ssh-keygen -q -t rsa -b 3072 -N "" -C fsm-test-host-rsa -f ssh_host_rsa_key
 gen user_ca "" fsm-test-user-ca
 gen id_ed25519 "" fsm-test-key
 gen id_ed25519_pass "test-passphrase" fsm-test-key-pass

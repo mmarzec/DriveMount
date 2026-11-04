@@ -1,11 +1,46 @@
 # Test servers for backend integration tests (spec §10.2).
 # Keys come from docker/gen-keys.sh; start everything with docker/servers.ps1 up.
 name: fsm-test
+
+x-sshd: &sshd
+  build: ./docker/sshd
+  image: fsm-test-sshd
+  volumes:
+    - ./docker/keys:/keys:ro
+
 services:
   sshd:
-    build: ./docker/sshd
-    image: fsm-test-sshd
+    <<: *sshd
     ports:
       - "2222:22"
-    volumes:
-      - ./docker/keys:/keys:ro
+
+  # The variants below exist to make a connection fail in one way each (see docker/README.md).
+  sshd-nosftp:
+    <<: *sshd
+    command: ["-f", "/etc/ssh/sshd_config_nosftp"]
+    ports:
+      - "2223:22"
+
+  sshd-twokeys:
+    <<: *sshd
+    command: ["-h", "/etc/ssh/ssh_host_rsa_key"]
+    ports:
+      - "2224:22"
+
+  sshd-legacy:
+    <<: *sshd
+    command: ["-h", "/etc/ssh/ssh_host_rsa_key", "-o", "HostKeyAlgorithms=ssh-rsa"]
+    ports:
+      - "2225:22"
+
+  sshd-brokensftp:
+    <<: *sshd
+    command: ["-f", "/etc/ssh/sshd_config_nosftp", "-o", "Subsystem=sftp /bin/false"]
+    ports:
+      - "2226:22"
+
+  sshd-hungsftp:
+    <<: *sshd
+    command: ["-f", "/etc/ssh/sshd_config_nosftp", "-o", "Subsystem=sftp /bin/sleep 3600"]
+    ports:
+      - "2227:22"

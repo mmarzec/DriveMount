@@ -2,6 +2,43 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-08a SFTP connector: transport and host keys (branch `feat/m1-08a-sftp-connector`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the server tests also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. The script checks ran under WSL. `fsm-sftp` now has 78 tests (12 unit, 35 connector, 22 `known_hosts`, 9 against OpenSSH), of which 28 need the S-03 servers and are `#[ignore]`d. The server tests passed 4 runs of 4 in a row on Windows. The size check says nothing yet: `fsm.exe` is still empty (0.20 MB). `Cargo.lock` gained `russh`, `russh-sftp` and about 150 crates they need.
+
+- **Added:** `fsm_sftp::connector`: `SftpConnector::new(SftpProfile)`, `connect_session(&dyn Prompter)` and `SftpSession` (`root`, `limits`, `has_extension`, `sftp`, `is_closed`). Also `ConnectError::NoCommonAlgorithm` and code E-ALGORITHMS, because spec §8 wants a clear message and §7.8 had none; **the owner may want to reword its text.**
+- **Decided by the owner: RUSTSEC-2023-0071 is ignored, with a record** ([ADR-0004](adr/0004-rustsec-2023-0071.md)), in `deny.toml` and `.cargo/audit.toml`. Revisit at each `russh` or `rsa` upgrade. The `paste` and Linux-only advisories in the M1-01 notes still arrive with `winfsp` and `slint`.
+- **Differs from the plan:**
+  - **`Connector` is not implemented yet.** It must return an `Arc<dyn RemoteFs>`, and `SftpFs` is M1-10. **M1-10:** implement it, with `probe`, around `connect_session`.
+  - **Logging in supports a given password only** (`Auth::Password`), since nothing past the login can be tested without one. **M1-08b:** add to `Auth`; `log_in` is the one place to change. Prompting and *Remember* are not there. `russh` takes the password as a plain `String`, so its copy is not zeroed.
+- **Found in `russh`, none of it visible from the spike:**
+  - **The handler must be `'static`, so it cannot hold the `&dyn Prompter`.** It sends the key over a channel to the future that holds the prompter. This also keeps dialog time out of the timeout, and dropping that future answers "no".
+  - **`request_subsystem` does not wait for the reply**, though it takes `want_reply`. The spike's code would hang on a refused subsystem until the request timeout. The connector waits for `Success` or `Failure`.
+  - **The default host key list includes SHA-1 `ssh-rsa`**, against spec §8, so the list is set here. An RSA key on file is still called `ssh-rsa` in `known_hosts`, and maps to `rsa-sha2-512` and `-256`.
+  - **`check_server_key` runs for the first key exchange only**, so a rekey is not checked against the key that was trusted.
+- **Certificate branch settled:** host certificates are not requested, and one that arrived anyway would be refused. That path cannot be reached with a test.
+- **Choices the plan left open (now in spec §5.7):** each stage gets `op_timeout_secs`, since the spec gave no connect timeout. No TCP in time is E-HOST-UNREACHABLE and silence after TCP is E-TIMEOUT. *Trust once* also reads the file again, like *Trust and save*.
+- **Verified on the wire, once by hand:** `curve25519-sha256`, `aes256-gcm@openssh.com`, and `ssh-ed25519`, or `rsa-sha2-512` with an RSA key on file. The test suite checks only the preference lists. The negotiated names are logged at Debug.
+- **For later tasks:**
+  - **M1-09:** `handshake` is generic over the stream, so it can run over a `direct-tcpip` channel. `connect_session` still needs splitting for that, and each hop needs its own key check.
+  - **M1-10:** **M0-2's 60 s is confirmed in code and by test:** `russh` closes when the count passes `keepalive_max`, so a dead link is noticed 4 intervals after the last reply (`unanswered_keep_alives_close_the_connection`: about 4 s at 1 s). That is on FR-SSH-12's limit at the default 15 s. `keepalive_max = 2` means 3 intervals, but only 2 keep-alives are actually sent, which reads differently from "three unanswered". Decide there.
+  - **M1-10:** `request_timeout_secs` is set to the connect timeout and stays for the session; choose the value for file operations. Windows path normalisation is not here: `C:/data` is E-PATH-NOT-FOUND for now, and FR-SSH-13's Windows case is untested. Non-UTF-8 names are still open.
+  - **M1-10:** add ProFTPD: **the path for a server without `limits@openssh.com` has never run**, because every S-03 server has it.
+  - **M1-17:** the dialogs can use `ChangedHostKey` and `RevokedHostKey` as they are. Set `known_hosts` to `%USERPROFILE%\.ssh\known_hosts`.
+- **S-03 changes:** five more services from the same image, on ports 2223 to 2227 (see `tests/docker/README.md`): no subsystem, two host keys, SHA-1 only, a subsystem that exits and one that hangs. A new RSA host key comes from `gen-keys.sh`. `MaxStartups 100`, because parallel tests could otherwise be dropped at random. **CI:** a new `integration` job runs the `#[ignore]`d `fsm-sftp` tests, including those from M1-07; its runner needs Docker Engine and Compose v2.
+- **Known limits:**
+  - **A long trust dialog can outlast the server's `LoginGraceTime`** (120 s by default). The user then gets E-CONN-LOST, but a *Trust and save* answer is already on file, so mounting again works. A retry could hide this; none was added.
+  - A web server that answers with an error page and closes gives E-CONN-LOST, not E-SFTP-UNAVAILABLE: the two cannot be told apart without reading the stream ourselves.
+  - A folder this user may not look at gives E-PATH-NOT-FOUND; §7.8 has no permission code.
+  - `localhost` is the only name tried with two addresses, so the time-sharing between addresses is not tested with a dead first address that stays silent, only with one that refuses.
+  - That no data follows a refused key rests on `russh` ending the session when the check says no. Tests check only the error; nobody captured the traffic.
+- **The tests are checked too:** 42 faults injected by script (kept out of the repository). 37 failed a test. 3 of those were found only on the first pass as gaps and closed: a dead first address, a clean close rather than a reset, and a hung subsystem (new server variant). 5 stay uncaught:
+  - Three are one redundancy: the setup limit and the SFTP request limit cover for each other. Removing **both** fails `a_subsystem_that_never_answers_times_out`, checked.
+  - The limit after the dialog: the data that a stall could hold back has normally arrived already, so the login limit fires instead. Kept as a safety net.
+  - Treating an abandoned call as trusted changes nothing observable, as the connection ends anyway.
+- **Gotcha:** in PowerShell, `-match` ignores case, so `'0 failed' -match 'FAILED'` is true. It marked every fault as caught on the first pass; only the empty list of failing tests gave it away. Use `-cmatch`. Also, `2>&1` or `*>` on `servers.ps1` throws at the first line of `docker compose` output (the known 5.1 trap): run it in a child `powershell -File`.
+- **Next:** M1-08b.
+
 ## 2026-11-04: M1-07 `known_hosts` (branch `feat/m1-07-known-hosts`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and both script checks also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. `fsm-sftp` now has 38 tests (7 unit, 22 fixture and append, 9 against OpenSSH, of which 4 need the S-03 server and are `#[ignore]`d). `Cargo.lock` gained `base64`, `hmac`, `sha1`, `sha2` and what they need; `getrandom` is a new direct pin, at the version already locked.

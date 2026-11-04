@@ -141,6 +141,9 @@ pub enum ConnectError {
     /// E-SFTP-UNAVAILABLE.
     #[error("the server does not provide SFTP")]
     SftpUnavailable,
+    /// E-ALGORITHMS: the server offers only algorithms that spec §8 leaves out.
+    #[error("no encryption method in common with the server")]
+    NoCommonAlgorithm,
     /// E-KEY-FORMAT.
     #[error("unsupported key file format")]
     KeyFormat,

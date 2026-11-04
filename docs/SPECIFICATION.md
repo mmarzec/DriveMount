@@ -521,10 +521,21 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 ### 5.7 SFTP backend (fsm-sftp)
 
 - **Transport:** `russh` client over TCP with the `ring` crypto backend (its default, `aws-lc-rs`, needs NASM to build on Windows). The default algorithm preferences are curve25519 key exchange, Ed25519 host keys, and AES-256-GCM then chacha20-poly1305 ciphers (AES-GCM was 20–35% faster in spike M0-2). Compression is off.
+- **Setting up a connection:** each stage has `op_timeout_secs` to finish: name lookup and TCP, the SSH handshake, the login, and the SFTP setup. Time in the trust dialog (§7.4.2) does not count, and the handshake's limit starts again after it. Dropping the connect call at any point, including during the dialog, abandons the connection (FR-MNT-11).
+- **How failures map to §7.8:**
+  - A failed name lookup, including a slow one, is E-DNS.
+  - No TCP connection in time, or a refused one, is E-HOST-UNREACHABLE: its hint to check the network fits a firewall that drops packets. E-TIMEOUT is for a server that accepted TCP and then went silent.
+  - A connection that closes during setup is E-CONN-LOST. That includes an HTTP server answering with an error page and closing, which cannot be told apart from it.
+  - A peer that keeps sending something other than an SSH banner is E-SFTP-UNAVAILABLE, like a subsystem that is refused, exits at once or speaks something else.
+  - No algorithm in common is E-ALGORITHMS, with both lists in the log.
+  - A `known_hosts` file that cannot be read, or a key that cannot be saved after *Trust and save*, refuses the connection with E-INTERNAL.
+  - A remote path the server will not let this user see is E-PATH-NOT-FOUND: the server does not say whether it exists.
+- **Remote path:** `~`, `~/below/home` or an absolute path. Anything else is E-PATH-NOT-FOUND. Windows-style paths come with M1-10.
+- **Host certificates** are not requested, so a server cannot present one. If one arrived anyway, it would be refused.
 - **Jump host:** connect to the jump host, open a `direct-tcpip` channel to the target, and run the target SSH session over that channel. Each host is verified separately.
 - **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. Spike M0-2 measured head-of-line blocking that grows with bytes in flight; the 4 MiB limit (§5.6) keeps it to about one extra round trip. A second SFTP channel for bulk transfers removes it and stays an option if M2-08 finds browsing during a copy too slow.
 - **Window sizes:** the SSH channel window is 16 MiB (spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing).
-- **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. The connection is lost after 3 misses.
+- **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. The connection is lost after 3 misses. `russh` decides that at the next interval, so a dead link is noticed 4 intervals after the last reply: at the default 15 s, that is on FR-SSH-12's 60 s limit (M1-10 decides whether to lower it).
 - **Free space:** `statvfs@openssh.com`. Without it, total and free are reported as 1 PiB, so Windows' copy pre-checks never fail.
 - **Rename:** `posix-rename@openssh.com` for rename-with-replace. Without it, the target is removed and then the source renamed; this non-atomic fallback is logged at Debug level.
 - **Windows OpenSSH servers:** detected from the server version string or a `/C:/` style `realpath`. Paths are normalised (FR-SSH-13).
@@ -883,6 +894,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 | E-PATH-NOT-FOUND | "Remote path {path} not found." | "Edit the connection and check the remote path." |
 | E-PATH-NOT-DIR | "Remote path {path} is not a folder." | |
 | E-SFTP-UNAVAILABLE | "The server does not provide SFTP." | "Ask the administrator to enable the SFTP subsystem." |
+| E-ALGORITHMS | "No encryption method in common with the server." | "The server may offer only outdated algorithms. Ask its administrator to update its SSH settings." |
 | E-LETTER-TAKEN | "Drive {L}: is already in use." | "Choose another letter or set Drive to Auto." |
 | E-NO-FREE-LETTER | "No free drive letter." | |
 | E-WINFSP-MISSING | "WinFsp 2.1 or later is required." | Download button |
@@ -906,7 +918,7 @@ This page replaces the list area inside the main window; a ← back arrow return
   - Unelevated process and per-session mounts (NFR-SEC-05).
   - No external processes are started with credentials. SMB uses the API (FR-SMB-03).
   - Crash reports contain a backtrace and the app version only; no memory dump and no config.
-- **SSH algorithms.** russh's secure defaults; `ssh-rsa` (SHA-1) signatures are disabled. A server that only offers legacy algorithms fails with a clear message.
+- **SSH algorithms.** russh's secure defaults; `ssh-rsa` (SHA-1) signatures are disabled, for host keys here and for login keys in M1-08b. An RSA key on file is still used, through `rsa-sha2-512` or `rsa-sha2-256`. A server that only offers legacy algorithms fails with a clear message (E-ALGORITHMS). The `rsa` crate's timing advisory is accepted for a client: [ADR-0004](adr/0004-rustsec-2023-0071.md).
 - **NFS caveat.** AUTH_SYS trusts the UID/GID the client sends, so NFSv3 security is enforced by the server's export list (client IP). The NFS profile dialog says this in one line.
 
 ---
@@ -943,7 +955,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 ### 10.2 Backend integration tests (Linux CI, Docker)
 
 `tests/docker-compose.yml` starts:
-- an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host;
+- an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host. Further instances each differ in one way, to produce one failure: no SFTP subsystem, one that exits at once, one that never answers, only SHA-1 host key signatures, and two host keys;
 - an SFTP server without OpenSSH extensions (ProFTPD `mod_sftp`);
 - *(M4)* an NFSv3 server (`erichough/nfs-server` or Ganesha).
 

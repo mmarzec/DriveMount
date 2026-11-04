@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[advisories]
+# rsa: Marvin timing attack, no fixed version. Accepted in docs/adr/0004-rustsec-2023-0071.md.
+ignore = ["RUSTSEC-2023-0071"]

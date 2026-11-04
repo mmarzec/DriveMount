@@ -3,7 +3,8 @@
 # Runs on GitHub Actions and on Gitea Actions, which also reads .github/workflows.
 # Gitea runners (act_runner) must be registered with the labels ubuntu-latest and windows-latest.
 # Each needs rustup, git, Node (for actions/checkout) and ssh-keygen (known_hosts tests); the Windows
-# one also needs the MSVC build tools. rust-toolchain.toml selects the toolchain.
+# one also needs the MSVC build tools. rust-toolchain.toml selects the toolchain. The Ubuntu one also
+# needs Docker Engine with Compose v2.
 
 name: CI
 
@@ -66,6 +67,22 @@ jobs:
         run: cargo build --workspace --locked
       - name: test
         run: cargo test --workspace --locked
+
+  # The tests marked #[ignore]: they need the S-03 servers, which this job starts with Docker Engine.
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Build the tests
+        run: cargo test -p fsm-sftp --locked --no-run
+      - name: Start the test servers
+        run: |
+          bash tests/docker/gen-keys.sh
+          docker compose -f tests/docker-compose.yml up -d --build --wait
+      - name: test
+        run: cargo test -p fsm-sftp --locked -- --ignored
 
   exe-size:
     runs-on: windows-latest

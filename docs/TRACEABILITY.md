@@ -39,14 +39,14 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SSH-05 | M1-08b, M1-17 | – | – |
 | FR-SSH-06 | M1-08b, M1-17 | – | – |
 | FR-SSH-07 | M1-08b, M1-17 | – | – |
-| FR-SSH-08 | M1-07, M1-08a, M1-17 | So far only the file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: M1-08a | – |
-| FR-SSH-09 | M1-07, M1-08a, M1-17 | So far only the file: `ssh_accepts_what_was_saved` shows `ssh.exe` accepts a saved line without asking (needs S-03). Dialog and second mount: M1-08a, M1-17 | – |
-| FR-SSH-10 | M1-07, M1-08a, M1-17 | So far only detection, with the line and fingerprints: `the_fixture_gives_the_expected_answers`. Refusal and dialog: M1-08a, M1-17 | – |
+| FR-SSH-08 | M1-07, M1-08a, M1-17 | The file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: `tests/connector.rs` (needs S-03), such as `a_revoked_key_is_refused_without_asking` and `a_key_type_on_file_is_asked_for_first`. Dialogs: M1-17 | – |
+| FR-SSH-09 | M1-07, M1-08a, M1-17 | Below the UI: `trust_and_save_is_asked_once_and_real_ssh_agrees`, `trust_once_connects_and_saves_nothing`, `cancel_refuses_and_saves_nothing` (`tests/connector.rs`, need S-03). Dialog: M1-17 | – |
+| FR-SSH-10 | M1-07, M1-08a, M1-17 | Refusal below the UI, with the line and both fingerprints: `a_changed_key_is_refused_without_asking` (needs S-03). Simulated by editing the file, not by replacing the server's key. Traffic after key exchange was not captured. Dialog: M1-17 | – |
 | FR-SSH-11 | M1-09 | – | – |
-| FR-SSH-12 | M1-08a, M2-01 | – | – |
-| FR-SSH-13 | M1-08a, M1-10 | – | – |
-| FR-SSH-14 | M1-08a, M1-10 | – | – |
-| FR-SSH-15 | M1-08a, M1-10 | – | – |
+| FR-SSH-12 | M1-08a, M2-01 | So far the SSH layer: `unanswered_keep_alives_close_the_connection` and its two companions (`tests/connector.rs`, need S-03). State change to *Reconnecting*: M2-01 | – |
+| FR-SSH-13 | M1-08a, M1-10 | So far `~` on OpenSSH: `remote_paths_are_resolved_and_checked` (needs S-03). Windows OpenSSH: M1-10 | – |
+| FR-SSH-14 | M1-08a, M1-10 | So far `limits@openssh.com` and reading the list on OpenSSH: `the_session_works_and_knows_the_servers_limits_and_extensions` (needs S-03). Servers without them: M1-10 | – |
+| FR-SSH-15 | M1-08a, M1-10 | So far setup against OpenSSH 9.2 only. Test matrix: M1-10, §10.4 | – |
 
 ## Mounting
 
