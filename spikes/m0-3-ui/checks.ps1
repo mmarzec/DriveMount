@@ -7,11 +7,11 @@
 #   checks.ps1 idle        idle CPU with the window visible: 3 x 60 s after a settle
 #   checks.ps1 toast       toast with no shortcut, a registry AUMID, a shortcut, and both
 #   checks.ps1 toast-wait  toast with a shortcut, at growing delays after creating the shortcut
-#   checks.ps1 h05-start   register the AUMID and start the spike for the manual checks (H-05)
+#   checks.ps1 h05-start [both]   register the AUMID (and add the shortcut) and start the spike for H-05
 #   checks.ps1 h05-log     show the H-05 log
 #   checks.ps1 cleanup     remove the shortcut, registry keys and any running spike
 #
-param([Parameter(Position = 0)][string]$Action = 'all')
+param([Parameter(Position = 0)][string]$Action = 'all', [Parameter(Position = 1)][string]$Variant = 'registry')
 
 $ErrorActionPreference = 'Stop'
 $Exe = Join-Path $PSScriptRoot 'target\release\m0-3-ui.exe'
@@ -411,10 +411,14 @@ function Do-H05Start {
     Stop-Spike
     Remove-ToastSetup
     Set-RegistryAumid $BaseAumid
+    if ($Variant -eq 'both') {
+        Install-Shortcut $BaseAumid
+        Start-Sleep -Seconds 15
+    }
     $log = Join-Path $Results 'h05.log'
     Remove-Item $log -ErrorAction SilentlyContinue
     Start-Process -FilePath $Exe -ArgumentList @('--log', "`"$log`"")
-    Write-Output "Spike running. Log: $log"
+    Write-Output "Spike running ($Variant). Log: $log"
 }
 
 switch ($Action) {

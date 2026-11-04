@@ -1,0 +1,49 @@
+      18.9 main start tray=false aumid=Some("FsManager.M03Spike")
+      36.6 ui created
+      98.2 tray added rect=Some((2320.0, 1379.0))
+     102.0 hidden window created
+     103.3 entering event loop
+     224.5 redraw 1 requested
+     226.4 first frame
+     278.9 redraw 1 done colours=Some(53)
+    1103.6 tray after 1 s rect=Some((2320.0, 1379.0))
+   39338.1 close requested: hiding to tray
+   52013.1 tray click Right Down
+   52144.5 tray click Right Up
+   53112.7 tray menu click id=toast
+   53112.9 cmd Toast
+   53131.1 toast notifier setting=0
+   53145.4 toast 1 shown aumid=FsManager.M03Spike
+   54716.8 toast 1 activated args="row=3"
+   54717.1 cmd ShowRow(3)
+   54754.6 window shown visible=true set_foreground=true is_foreground=true
+   54757.0 redraw 2 requested
+   54795.4 redraw 2 done colours=Some(53)
+   54795.5 redraw 3 requested
+   54832.1 redraw 3 done colours=Some(53)
+   54832.3 redraw 4 requested
+   54866.9 redraw 4 done colours=Some(53)
+   54867.0 redraw 5 requested
+   54899.5 redraw 5 done colours=Some(53)
+   60103.0 cmd Memory
+   60103.1 memory visible: working_set=25.7MB peak=25.7MB private=5.6MB
+   78726.4 tray click Right Down
+   78836.6 tray click Right Up
+   79586.4 tray menu click id=toast
+   79586.5 cmd Toast
+   79597.3 toast notifier setting=0
+   79607.0 toast 2 shown aumid=FsManager.M03Spike
+   81724.8 toast 2 activated args="row=6"
+   81725.0 cmd ShowRow(6)
+   81736.1 window shown visible=true set_foreground=true is_foreground=true
+  105121.3 tray click Right Down
+  105240.7 tray click Right Up
+  106707.2 tray menu click id=toast
+  106707.3 cmd Toast
+  106719.9 toast notifier setting=0
+  106730.2 toast 3 shown aumid=FsManager.M03Spike
+  114042.7 toast 3 dismissed reason=Some(2)
+  206055.6 cmd Quit
+  206055.7 quit requested
+  206055.7 event loop ended: Ok(())
+  206062.6 exit

@@ -6,7 +6,7 @@
 | Code | `spikes/m0-3-ui/` (throw-away): `src/main.rs` (window, tray, commands), `src/hidden.rs` (hidden window), `src/toast.rs` (toasts, shortcut), `checks.ps1` (scripted checks) |
 | Machine | Windows 10 Home 22H2, 96 dpi, Rust 1.99.1, `slint` 1.18.1, `tray-icon` 0.26.1, `windows` 0.61.3 |
 | Date | 2026-11-04 |
-| Result | **Pending H-05.** Scripted checks pass, with the idle-CPU exception in §4. Toasts go a different way from the plan (§5). |
+| Result | **Go, with open items.** Budgets pass. Tray, close-to-tray and toast click work. Open: a toast clicked in Action Center does nothing (§7), real sleep/resume was deferred by the owner (§7), and idle CPU has unexplained bursts with the window visible (§4). |
 
 ## 1. What was built
 
@@ -21,7 +21,7 @@ Run the checks with `checks.ps1 all` after `cargo build --release`, unelevated. 
 
 ## 2. Scripted checks (AI)
 
-Final build: 30 checks in `checks.ps1 all`, 29 pass. The failure is idle CPU with the window visible (§4).
+Final build: 30 checks in `checks.ps1 all`, 29 pass. The failure is idle CPU with the window visible (§4). `checks.txt` also holds the later `idle` run.
 
 | Check | Result |
 |---|---|
@@ -49,6 +49,7 @@ The first-frame time comes from the winit `RedrawRequested` hook, because the so
 - An earlier run of nearly the same build gave medians of 135 ms warm and 146 ms cold, so the desktop's load moves these by about 30 ms. That run's output was not kept.
 - "Exe not in cache" means a fresh unbuffered copy (`robocopy /J`) for each run. System DLLs stay cached, as they are on any logged-in desktop. A first start after a reboot was not measured.
 - Time goes to: process creation to `main` about 20 ms, `main` to event loop about 40–55 ms, winit window creation about 80–130 ms, first render 1–3 ms.
+- **Showing a toast raises the working set:** 25.7 MiB (private 5.6 MiB) at 60 s, in the one run where a toast had been shown by then, presumably from loading WinRT. Still under budget, but it is the realistic figure for an app that has shown a toast.
 - Hiding the window saves no memory, because Slint keeps the native window and its buffer. `SLINT_DESTROY_WINDOW_ON_HIDE` exists; there is no need for it.
 
 ## 4. Idle CPU: not a clean pass
@@ -80,6 +81,8 @@ Tested by capturing the screen's bottom-right corner 2 s after sending each toas
 - **Nothing in the API reports the failure.** `Show()` succeeds, the toast appears in `History`, and `Setting` returns `Enabled` for toasts that never reach the screen, or fails with `0x80070490` for ones that do. `Dismissed(TimedOut)` matched the pictures in every run, but a toast that is still showing has not fired it yet, so it is not a test for M2-04.
 - **Decided: use the `windows` crate directly** instead of `tauri-winrt-notification`. It took about 60 lines, and `windows` is a dependency already. `tauri-winrt-notification` was not built or compared.
 
+- **For the product:** the app writes the HKCU key itself at start. That is what was tested, and it covers the MSI and the zip alike. The MSI's shortcut can stay: the combination works. Per-machine registration (HKLM) was not tested.
+
 Toast clicks: see §7.
 
 ## 6. Exe size
@@ -99,7 +102,28 @@ With the spec §9 profile:
 
 ## 7. Manual checks (H-05)
 
-*Pending the owner's run.*
+The owner ran the checks on 2026-11-04, and the AI compared them with the logs (`spikes/m0-3-ui/results/h05-run1.log` and `h05.log`). Both runs used the registry key with no shortcut.
+
+| # | Check | Owner | Log |
+|---|---|---|---|
+| 1 | Icon behind the `^` chevron, tooltip | ✅ | tray events arrive (tooltip not logged) |
+| 2 | Left-click toggles the window | ✅ | `tray click Left`, then hide and show, 5 times; `is_foreground=true` |
+| 3 | Right-click menu | ✅ | `tray menu click` for `open`, `toast`, `quit` |
+| 4 | X hides to tray; *Open* brings it back in front | ✅ | `close requested`; `is_foreground=true` |
+| 5 | Click a toast on screen: window opens in front, row selected | ✅ on retest | `toast 1 activated args="row=3"`, then `is_foreground=true`; again for toast 2 |
+| 6 | Click a toast in Action Center, spike running | ❌ nothing happens | no event after the toast timed out |
+| 7 | Sleep and resume | **Not run** | deferred by the owner |
+| 8 | Click a toast in Action Center, spike closed | ❌ toast disappears, nothing happens | no process running to log |
+| – | Quit from the tray | ✅ | `exit` logged |
+
+**The first run needed a retest.** The owner first reported all 8 as passing, but `h05-run1.log` had no activation for items 5 and 6, and the Windows event log showed no sleep during the run. In that run toast 1 ended with `Dismissed(UserCanceled)` 2 s after it appeared; why is not known. The retest confirmed item 5 with a log line and showed item 6 failing. The owner then chose to skip sleep.
+
+**A toast click only works while the toast is on screen.** Once it has moved to Action Center, the click removes it and nothing else happens, whether or not the app is running. FR-NOT-04 is not met on that path. It matters because a mount can fail while the user is away, and they then find the toast in Action Center.
+
+- The likely fixes are a COM activator (`ToastActivatorCLSID` on a shortcut, plus a registered server) or `activationType="protocol"` with a registered URL scheme. **Neither was tried.** The first needs a shortcut, which the portable zip lacks. M2-04 settles this.
+- The fallback is to accept it, since the error is also shown in the row. That changes FR-NOT-04, so it is the owner's decision.
+
+**Sleep/resume is unproven.** Only sent messages reached the hidden window (§2), never a real `PBT_APMSUSPEND` or `PBT_APMRESUMEAUTOMATIC`. A real `WM_QUERYENDSESSION` was not tried either. M2-02 and H-08 already require the real test, so it moves there. Reconnect after resume depends on it, so do it first in M2-02.
 
 ## 8. Other findings
 
@@ -111,4 +135,14 @@ With the spec §9 profile:
 
 ## 9. Go / no-go
 
-*Pending H-05.*
+**Go**, by the AI's assessment, although the plan's "all items work" is not fully met. The owner has not yet reviewed this verdict.
+
+- **Works:** Slint and `tray-icon` on one event loop with no polling, close-to-tray, a toast from an unpackaged exe, a toast click reaching the right row. No fallback (raw `Shell_NotifyIcon`, another renderer) is needed.
+- **Budgets met:** start, working set and exe size, with the size margin in §6 to watch.
+- **Not met:** Action Center clicks (→ M2-04), real sleep/resume not run (→ M2-02, H-08), idle-CPU bursts unexplained (→ M2-08). None of these threatens the choice of Slint or `tray-icon`, which is the risk this spike was for.
+
+Carried into M1 and M2 (plan and spec updated):
+- toasts through `windows` directly, with the app writing the HKCU AUMID key at start;
+- a size check in CI from M1-01;
+- M2-03 compares Slint's own `SystemTrayIcon` with `tray-icon` before building the tray;
+- M2-04 settles Action Center clicks.
