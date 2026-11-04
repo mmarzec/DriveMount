@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! The hidden top-level window. Message-only windows do not get broadcasts, so this is an ordinary
 //! window that is never shown. It logs the power and session messages M2-02 will act on, and takes
 //! test commands from `checks.ps1`.

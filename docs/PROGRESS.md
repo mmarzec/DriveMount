@@ -2,6 +2,25 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-01 workspace skeleton (branch `feat/m1-01-workspace`)
+
+**Status: done locally; the CI workflow has never run.** It needs the Gitea runners (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and the header check pass on Windows and in a `rust:1.99.1` container; the size check passes on Windows (empty `fsm.exe`: 0.20 MB).
+
+- **Open, blocks M1-08a:** adding `russh` makes `cargo deny` and `cargo audit` fail. Its `rsa` feature pulls in `rsa` 0.10.0-rc.18, RUSTSEC-2023-0071 (Marvin timing attack, medium, no fixed version). FR-SSH-02 requires RSA keys, so dropping the feature would mean changing that requirement; the likely answer is a documented ignore in `deny.toml` and for `cargo audit`. Decide there, with the owner. Nothing is ignored yet. The workspace is clean today only because its crates have no third-party dependencies.
+- **Open, blocks M1-12a:** `winfsp` pulls in `paste`, unmaintained (RUSTSEC-2024-0436). That also fails `cargo deny`. Add an ignore there, or set `unmaintained = "workspace"`, which only checks direct dependencies.
+- **`deny.toml` targets take a union.** With both targets listed, Linux-only crates under Windows-gated `slint` and `tray-icon` are still checked: `ttf-parser`, `zvariant*` and `zbus_names` (via winit and accesskit), `proc-macro-error` (via gtk). Those five advisories fail too, though with `--target x86_64-pc-windows-msvc` only `rsa` and `paste` remain. Settle this when `slint` arrives (M1-16). `cargo audit` reads the whole `Cargo.lock` and ignores targets, but fails only on the `rsa` vulnerability.
+- **Checked on the full pinned set in a scratch crate:** it resolves (772 crates) and compiles on Windows; the ADR-0003 licence list accepts all of it, including `ring`, Slint and `winfsp`. `winfsp` and `winfsp-sys` declare the deprecated id `GPL-3.0`: a warning only, accepted by the allow-list.
+- **Pins:** the latest stable of everything, except `windows` =0.61.3, which is the version spike M0-1 tested with `winfsp`. Slint and winfsp feature sets come from the spikes. `sha2`, `hmac` and `sha1` are one major version newer than the spikes used; they compile, but M1-07 is their first real use.
+- **Negative tests run (scratch copy):** `unwrap`/`expect` outside tests fail clippy and pass inside `#[cfg(test)]`; `unsafe` fails outside `fsm-win`/`fsm-winfsp`, and without a `// SAFETY:` comment inside them; a missing header fails, including on new untracked files; an exe over the limit fails; a `GPL-2.0-only` crate fails `deny`.
+- **For later tasks:**
+  - Linux needs the Windows-only crates to stay empty: keep their third-party dependencies under `[target.'cfg(windows)'.dependencies]`. `fsm-win`, `fsm-winfsp` and `fsm-smb` start with `#![cfg(windows)]`.
+  - `clippy.toml`'s test exemption covers `#[test]` and `#[cfg(test)]` code. Helper functions in `tests/*.rs` may need `#![allow(clippy::unwrap_used, clippy::expect_used)]`.
+  - When `winfsp` is added, CI runners need LLVM/libclang and the WinFsp MSI with `ADDLOCAL=ALL` (M0-1), and `fsm` needs a `build.rs` calling `winfsp_link_delayload()`.
+  - `Secret` arrives in M1-02; add the CI grep check for `format!` of its contents (plan §11) there.
+  - The workflow is in `.github/workflows/`, which Gitea also reads. It has no Docker or WinFsp steps yet (plan §9.1 adds them with M1-10 and M1-12c).
+- The root `.cargo/config.toml` and `rust-toolchain.toml` also apply to `spikes/*` when built from there. Spikes now get `+crt-static`, so old size numbers may not reproduce exactly. Spike sources gained SPDX headers, so the check has no exclusions.
+- **Next:** M1-02.
+
 ## 2026-11-04: M0-3 UI spike (branch `spike/m0-3-ui`)
 
 **Status: done, go with open items.** Report: `docs/spikes/m0-3-ui.md`; logs and screenshots in `spikes/m0-3-ui/results/`. Start 160 ms, `--tray` 50 ms, working set 17.6 MiB (25.7 after a toast), exe 9.31 MiB. Plan, spec and analysis updated.

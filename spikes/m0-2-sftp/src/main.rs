@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 //! Spike M0-2: SFTP throughput, metadata cost and failure detection with russh + russh-sftp.
 //! Throw-away code; see docs/spikes/m0-2-sftp.md. Subcommands are driven by bench.ps1.
 //!
