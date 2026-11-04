@@ -19,7 +19,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fsm_sftp::connector::{AgentSource, Auth, SftpConnector, SftpProfile, SftpSession};
+use fsm_sftp::connector::{AgentSource, Auth, JumpHost, SftpConnector, SftpProfile, SftpSession};
 use fsm_vfs::{
     ConnectError, HostKeyDecision, HostKeyRequest, KbdIntPrompt, KbdIntRequest, LoginAnswer,
     LoginRequest, Prompter, Remember, Secret, SecretKind, SecretRequest, async_trait,
@@ -169,6 +169,7 @@ fn connector(user: &str, auth: Auth) -> (tempfile::TempDir, SftpConnector) {
         keepalive_secs: 0,
         timeout: TIMEOUT,
         known_hosts: dir.path().join("known_hosts"),
+        jump: None,
     };
     (dir, SftpConnector::new(profile))
 }
@@ -330,6 +331,7 @@ async fn time_in_a_dialog_does_not_count() {
         keepalive_secs: 0,
         timeout: Duration::from_secs(2),
         known_hosts: dir.path().join("known_hosts"),
+        jump: None,
     });
     let mut dialogs = Dialogs::typing("tester", Remember::No);
     dialogs.thinking = Duration::from_secs(4);
@@ -687,6 +689,51 @@ async fn no_agent_running_is_an_auth_error() {
     let dir = tempfile::tempdir().unwrap();
     let path = agent_path(dir.path(), usize::MAX);
     let (_known_hosts, connector) = connector("keyonly", Auth::Agent(AgentSource::At(path)));
+    assert_eq!(
+        error(&connector, &Dialogs::nothing()).await,
+        auth_error("keyonly")
+    );
+}
+
+/// FR-SSH-11: the target itself is reached with a password. See `tests/jump.rs` for the rest.
+fn through_a_jump_host_with(agent: PathBuf) -> (tempfile::TempDir, SftpConnector) {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = SftpProfile {
+        host: "sshd-target".to_owned(),
+        port: 22,
+        user: "tester".to_owned(),
+        auth: Auth::Password(Some(secret("tester"))),
+        remote_path: "~".to_owned(),
+        keepalive_secs: 0,
+        timeout: TIMEOUT,
+        known_hosts: dir.path().join("known_hosts"),
+        jump: Some(JumpHost {
+            host: HOST.to_owned(),
+            port: 2228,
+            user: "keyonly".to_owned(),
+            auth: Auth::Agent(AgentSource::At(agent)),
+        }),
+    };
+    (dir, SftpConnector::new(profile))
+}
+
+#[tokio::test]
+#[ignore = "needs the S-03 servers"]
+async fn a_jump_host_can_log_in_with_the_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let agent = agent_with(dir.path(), &["id_ed25519"]).await;
+    let (_known_hosts, connector) = through_a_jump_host_with(agent);
+    let dialogs = Dialogs::nothing();
+    assert_logs_in(&connector, &dialogs, "tester").await;
+    dialogs.assert_silent();
+}
+
+#[tokio::test]
+#[ignore = "needs the S-03 servers"]
+async fn no_agent_for_the_jump_host_is_an_auth_error_about_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = agent_path(dir.path(), usize::MAX - 1);
+    let (_known_hosts, connector) = through_a_jump_host_with(path);
     assert_eq!(
         error(&connector, &Dialogs::nothing()).await,
         auth_error("keyonly")

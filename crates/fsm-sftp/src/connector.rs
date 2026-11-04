@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Sets up an SFTP session: DNS, TCP, the SSH transport, the host key check, a login and the SFTP
-//! subsystem (spec §5.7, FR-SSH-08 to FR-SSH-10). Every failure becomes a [`ConnectError`], and so
-//! one of the codes of spec §7.8.
+//! subsystem, optionally through a jump host (spec §5.7, FR-SSH-08 to FR-SSH-11). Every failure
+//! becomes a [`ConnectError`], and so one of the codes of spec §7.8.
 //!
 //! [`SftpConnector`] will implement `Connector` once `SftpFs` exists (M1-10). Logging in is in
 //! the `auth` submodule (FR-SSH-01 to FR-SSH-07).
@@ -20,11 +20,11 @@ use std::time::Duration;
 
 use fsm_vfs::{
     ChangedHostKey, ConnectError, HostKeyDecision, HostKeyRequest, Prompter, RemotePath,
-    RevokedHostKey,
+    RevokedHostKey, Secret,
 };
-use russh::client::{self, Handle};
+use russh::client::{self, Handle, Msg};
 use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKeyOrCertificate};
-use russh::{ChannelMsg, Preferred, cipher, compression};
+use russh::{ChannelMsg, ChannelStream, Preferred, cipher, compression};
 use russh_sftp::client::error::Error as SftpError;
 use russh_sftp::client::rawsession::Limits;
 use russh_sftp::client::{Config as SftpConfig, RawSftpSession};
@@ -65,6 +65,22 @@ pub struct SftpProfile {
     pub timeout: Duration,
     /// The `known_hosts` file, normally `%USERPROFILE%\.ssh\known_hosts`.
     pub known_hosts: PathBuf,
+    /// The host to go through, if any (FR-SSH-11).
+    pub jump: Option<JumpHost>,
+}
+
+/// A host to reach the server through (FR-SSH-11). It shares the profile's timeout, keep-alive and
+/// `known_hosts` file, and there is only ever one.
+pub struct JumpHost {
+    /// The host name or address, as this PC resolves it.
+    pub host: String,
+    /// The TCP port.
+    pub port: u16,
+    /// The user to log in as.
+    pub user: String,
+    /// How to log in: agent, key file or password. Only a password can be stored
+    /// (`FsManager:<uuid>:jump-password`), so a key's passphrase is asked for without *Remember*.
+    pub auth: Auth,
 }
 
 /// Opens SFTP sessions for one profile.
@@ -72,6 +88,10 @@ pub struct SftpConnector {
     profile: SftpProfile,
     /// What a login learned, for the next connection of this mount.
     memory: LoginMemory,
+    /// The jump host has the same steps as any server: its own key check, login and memory.
+    jump: Option<Box<SftpConnector>>,
+    /// Whether this is the connector of a jump host.
+    is_jump: bool,
 }
 
 /// A logged-in SSH connection with its SFTP channel, ready for use.
@@ -108,7 +128,8 @@ impl SftpSession {
         &self.sftp
     }
 
-    /// Whether the SSH connection has ended, including through unanswered keep-alives.
+    /// Whether the SSH connection has ended, including through unanswered keep-alives. Losing a
+    /// jump host ends it too.
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.handle.is_closed()
@@ -170,38 +191,123 @@ impl client::Handler for Client {
 impl SftpConnector {
     /// A connector for one profile.
     #[must_use]
-    pub fn new(profile: SftpProfile) -> Self {
+    pub fn new(mut profile: SftpProfile) -> Self {
+        let jump = profile.jump.take().map(|jump| {
+            Box::new(Self {
+                profile: SftpProfile {
+                    host: jump.host,
+                    port: jump.port,
+                    user: jump.user,
+                    auth: jump.auth,
+                    // Only used for the SFTP channel, which a jump host does not open.
+                    remote_path: String::new(),
+                    keepalive_secs: profile.keepalive_secs,
+                    timeout: profile.timeout,
+                    known_hosts: profile.known_hosts.clone(),
+                    jump: None,
+                },
+                memory: LoginMemory::default(),
+                jump: None,
+                is_jump: true,
+            })
+        });
         Self {
             profile,
             memory: LoginMemory::default(),
+            jump,
+            is_jump: false,
         }
     }
 
-    /// Connects, checks the host key, logs in and opens the SFTP channel.
+    /// Connects, checks the host key, logs in and opens the SFTP channel. With a jump host, it gets
+    /// all of that but the SFTP channel first, and each host gets its own key check and login.
     ///
     /// # Errors
     ///
-    /// See [`ConnectError`]. Nothing is sent to a server whose key was refused.
+    /// See [`ConnectError`]. Each error names the host it is about. Nothing is sent to a server
+    /// whose key was refused, and a refused jump host means the server is never contacted.
     pub async fn connect_session(
         &self,
         prompter: &dyn Prompter,
     ) -> Result<SftpSession, ConnectError> {
         let p = &self.profile;
-        info!(host = %p.host, port = p.port, "connecting");
-
-        let known_hosts = self.load_known_hosts().await?;
-        let stream = self.open_tcp().await?;
-        let key_types = known_hosts.known_key_types(&p.host, p.port);
-        let config = client_config(p.keepalive_secs, &key_types);
-        let mut handle = self
-            .handshake(stream, config, &known_hosts, prompter)
-            .await?;
-        self.log_in(&mut handle, prompter).await?;
+        let jump = match &self.jump {
+            Some(jump) => Some(jump.connect_ssh(None, prompter).await?),
+            None => None,
+        };
+        let handle = self.connect_ssh(jump.as_ref(), prompter).await?;
+        // The channel keeps the jump host's connection going, until the session using it ends.
+        drop(jump);
 
         let session = time::timeout(p.timeout, self.open_sftp(handle)).await;
         let session = session.map_err(|_| self.timed_out())??;
         info!(host = %p.host, root = session.root.as_str(), "connected");
         Ok(session)
+    }
+
+    /// As [`take_remembered`](Self::take_remembered), for the jump host's password, to be stored as
+    /// `FsManager:<uuid>:jump-password`.
+    pub fn take_remembered_jump(&self) -> Option<Secret<String>> {
+        self.jump.as_ref()?.take_remembered()
+    }
+
+    /// Everything up to and including the login, over TCP or through `jump`.
+    async fn connect_ssh(
+        &self,
+        jump: Option<&Handle<Client>>,
+        prompter: &dyn Prompter,
+    ) -> Result<Handle<Client>, ConnectError> {
+        let p = &self.profile;
+        info!(host = %p.host, port = p.port, is_jump = self.is_jump, "connecting");
+
+        let known_hosts = self.load_known_hosts().await?;
+        let key_types = known_hosts.known_key_types(&p.host, p.port);
+        let config = client_config(p.keepalive_secs, &key_types);
+        let mut handle = match jump {
+            Some(jump) => {
+                let stream = self.open_tunnel(jump).await?;
+                self.handshake(stream, config, &known_hosts, prompter)
+                    .await?
+            }
+            None => {
+                let stream = self.open_tcp().await?;
+                self.handshake(stream, config, &known_hosts, prompter)
+                    .await?
+            }
+        };
+        self.log_in(&mut handle, prompter).await?;
+        Ok(handle)
+    }
+
+    /// Asks the jump host to connect to this server. Its TCP connection is the jump host's business,
+    /// so the same rule as [`open_tcp`](Self::open_tcp) applies: not getting through in time, or at
+    /// all, is *cannot reach*. OpenSSH gives one answer for a bad name and a refused port, and
+    /// another if it does not allow forwarding, and §7.8 has no code of its own for either.
+    async fn open_tunnel(&self, jump: &Handle<Client>) -> Result<ChannelStream<Msg>, ConnectError> {
+        let (host, port) = (self.profile.host.as_str(), self.profile.port);
+        let unreachable = || ConnectError::HostUnreachable {
+            host: host.to_owned(),
+            port,
+        };
+        // The originator is only for the jump host's log, and this PC's address is no use there.
+        let open = jump.channel_open_direct_tcpip(host, u32::from(port), "127.0.0.1", 0);
+        match time::timeout(self.profile.timeout, open).await {
+            Ok(Ok(channel)) => Ok(channel.into_stream()),
+            Ok(Err(russh::Error::ChannelOpenFailure(reason))) => {
+                warn!(
+                    host,
+                    port,
+                    ?reason,
+                    "the jump host could not open a channel"
+                );
+                Err(unreachable())
+            }
+            Ok(Err(error)) => Err(self.classify(error)),
+            Err(_) => {
+                debug!(host, port, "the jump host did not answer in time");
+                Err(unreachable())
+            }
+        }
     }
 
     fn timed_out(&self) -> ConnectError {

@@ -44,6 +44,9 @@ The same users and image also run with one difference each, for testing failures
 | 2225 | `sshd-legacy` | Only `ssh-rsa` (SHA-1) host key signatures |
 | 2226 | `sshd-brokensftp` | The SFTP subsystem is accepted, then exits at once |
 | 2227 | `sshd-hungsftp` | The SFTP subsystem is accepted, then never answers |
+| 2228 | `sshd-bastion` | None: the jump host for `sshd-target` |
+| none | `sshd-target` | Host key: RSA only. Reachable only through a jump host, as `sshd-target:22` |
+| 2229 | `sshd-noforward` | `AllowTcpForwarding no`: a jump host that refuses the channel |
 
 - `keys/` is created by `gen-keys.sh` and is git-ignored. Existing keys are kept, so the host key stays stable.
 - The TOTP file has no `DISALLOW_REUSE`, so tests can log in more than once per 30 s window.

@@ -1,15 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Keys and helpers shared by the `known_hosts` test files.
+//! Keys and helpers shared by the test files.
 
 #![allow(dead_code, reason = "each test file uses only part of this")]
 #![allow(clippy::unwrap_used)]
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use fsm_sftp::known_hosts::HostKey;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::watch;
 
 /// The key most lines of the fixture hold.
 pub const ED: &str =
@@ -42,4 +46,77 @@ pub fn fixture_path() -> PathBuf {
 
 pub fn fixture() -> Vec<u8> {
     std::fs::read(fixture_path()).unwrap()
+}
+
+// ---- A TCP proxy that can stop forwarding. ----
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Link {
+    Forward,
+    /// Holds all data back, keeping TCP open: a pulled cable, as the client sees it.
+    Stall,
+    Cut,
+}
+
+pub struct Proxy {
+    pub port: u16,
+    link: watch::Sender<Link>,
+    /// One clone per direction of each connection still open, and one held by the accepting task.
+    open: Arc<()>,
+}
+
+impl Proxy {
+    pub async fn to(server_port: u16) -> Self {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (link, state) = watch::channel(Link::Forward);
+        let open = Arc::new(());
+        let counted = Arc::clone(&open);
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let server = TcpStream::connect(("localhost", server_port))
+                    .await
+                    .unwrap();
+                let (from_client, to_client) = client.into_split();
+                let (from_server, to_server) = server.into_split();
+                let (one, other) = (Arc::clone(&counted), Arc::clone(&counted));
+                tokio::spawn(forward(from_client, to_server, state.clone(), one));
+                tokio::spawn(forward(from_server, to_client, state.clone(), other));
+            }
+        });
+        Self { port, link, open }
+    }
+
+    pub fn set(&self, state: Link) {
+        self.link.send_replace(state);
+    }
+
+    /// Whether any connection through this proxy is still open, in at least one direction.
+    pub fn has_connections(&self) -> bool {
+        Arc::strong_count(&self.open) > 2
+    }
+}
+
+async fn forward(
+    mut from: tokio::net::tcp::OwnedReadHalf,
+    mut to: tokio::net::tcp::OwnedWriteHalf,
+    state: watch::Receiver<Link>,
+    _open: Arc<()>,
+) {
+    let mut cut = state.clone();
+    let copy = async move {
+        let mut state = state;
+        let mut buffer = vec![0; 64 * 1024];
+        while let Ok(count @ 1..) = from.read(&mut buffer).await {
+            if state.wait_for(|link| *link == Link::Forward).await.is_err()
+                || to.write_all(&buffer[..count]).await.is_err()
+            {
+                return;
+            }
+        }
+    };
+    tokio::select! {
+        () = copy => {}
+        _ = cut.wait_for(|link| *link == Link::Cut) => {}
+    }
 }

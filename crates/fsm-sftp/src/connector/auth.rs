@@ -289,7 +289,11 @@ impl<'a> Login<'a> {
             Auth::Agent(source) => Ok(Credential::Agent(source)),
             Auth::KeyFile { path, passphrase } => {
                 let stored = passphrase.as_ref().map(copy);
-                self.open_key(path, stored, true).await.map(Credential::Key)
+                // NFR-SEC-01 has no place for a jump host's passphrase.
+                let allow_remember = !connector.is_jump;
+                self.open_key(path, stored, allow_remember)
+                    .await
+                    .map(Credential::Key)
             }
             Auth::Ask => {
                 if let Some(key) = lock(&connector.memory.key).clone() {

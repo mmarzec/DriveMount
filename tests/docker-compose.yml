@@ -44,3 +44,20 @@ services:
     command: ["-f", "/etc/ssh/sshd_config_nosftp", "-o", "Subsystem=sftp /bin/sleep 3600"]
     ports:
       - "2227:22"
+
+  # FR-SSH-11. The target publishes no port and has a host key of its own, so only the jump host can
+  # reach it, under a name only the jump host can resolve.
+  sshd-bastion:
+    <<: *sshd
+    ports:
+      - "2228:22"
+
+  sshd-target:
+    <<: *sshd
+    command: ["-f", "/etc/ssh/sshd_config_rsa"]
+
+  sshd-noforward:
+    <<: *sshd
+    command: ["-o", "AllowTcpForwarding=no"]
+    ports:
+      - "2229:22"

@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{ED, ED_FP, ED2, ED2_FP, RSA, RSA_FP, host_key};
+use common::{ED, ED_FP, ED2, ED2_FP, Link, Proxy, RSA, RSA_FP, host_key};
 use fsm_sftp::connector::{Auth, SftpConnector, SftpProfile, SftpSession};
 use fsm_vfs::{
     ConnectError, HostKeyDecision, HostKeyRequest, KbdIntRequest, LoginAnswer, LoginRequest,
@@ -29,7 +29,6 @@ use fsm_vfs::{
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
 use tokio::time;
 
 const HOST: &str = "localhost";
@@ -122,6 +121,7 @@ fn profile(host: &str, port: u16, known_hosts: &Path) -> SftpProfile {
         keepalive_secs: 0,
         timeout: Duration::from_secs(15),
         known_hosts: known_hosts.to_owned(),
+        jump: None,
     }
 }
 
@@ -190,66 +190,6 @@ fn ssh_accepts(file: &Path) -> bool {
         .expect("ssh must be on PATH");
     // Offering no credentials, passing the check ends in this message.
     String::from_utf8_lossy(&output.stderr).contains("Permission denied")
-}
-
-// ---- A TCP proxy that can stop forwarding. ----
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Link {
-    Forward,
-    /// Holds all data back, keeping TCP open: a pulled cable, as the client sees it.
-    Stall,
-    Cut,
-}
-
-struct Proxy {
-    port: u16,
-    link: watch::Sender<Link>,
-}
-
-impl Proxy {
-    async fn to(server_port: u16) -> Self {
-        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (link, state) = watch::channel(Link::Forward);
-        tokio::spawn(async move {
-            while let Ok((client, _)) = listener.accept().await {
-                let server = TcpStream::connect((HOST, server_port)).await.unwrap();
-                let (from_client, to_client) = client.into_split();
-                let (from_server, to_server) = server.into_split();
-                tokio::spawn(forward(from_client, to_server, state.clone()));
-                tokio::spawn(forward(from_server, to_client, state.clone()));
-            }
-        });
-        Self { port, link }
-    }
-
-    fn set(&self, state: Link) {
-        self.link.send_replace(state);
-    }
-}
-
-async fn forward(
-    mut from: tokio::net::tcp::OwnedReadHalf,
-    mut to: tokio::net::tcp::OwnedWriteHalf,
-    state: watch::Receiver<Link>,
-) {
-    let mut cut = state.clone();
-    let copy = async move {
-        let mut state = state;
-        let mut buffer = vec![0; 64 * 1024];
-        while let Ok(count @ 1..) = from.read(&mut buffer).await {
-            if state.wait_for(|link| *link == Link::Forward).await.is_err()
-                || to.write_all(&buffer[..count]).await.is_err()
-            {
-                return;
-            }
-        }
-    };
-    tokio::select! {
-        () = copy => {}
-        _ = cut.wait_for(|link| *link == Link::Cut) => {}
-    }
 }
 
 // ---- Failures before SSH starts, or from a peer that is not an SSH server. No server needed. ----

@@ -2,6 +2,27 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-09 jump host (branch `feat/m1-09-jump-host`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, the server tests and both script checks also pass for `fsm-sftp` in a `rust:1.99.1` container. `fsm-sftp` now has 173 tests on Windows (27 unit, 45 `auth`, 7 `auth_script`, 35 connector, 28 `jump`, 22 `known_hosts`, 9 against OpenSSH). The server tests passed 3 runs of 3 in a row on Windows. `Cargo.lock` did not change.
+
+- **Added:** `SftpProfile::jump` with `JumpHost`, and `SftpConnector::take_remembered_jump`. The jump host is a second `SftpConnector` inside the first, so it gets the same key check and login. The rules are in spec §5.7.
+- **For the owner to check:**
+  - **A jump host's key passphrase cannot be remembered.** NFR-SEC-01 has `jump-password` but no `jump-passphrase`, so it is asked for once per mount, without *Remember*. Adding a target would be a small change if that is wrong.
+  - **A jump host that does not allow forwarding reads as E-HOST-UNREACHABLE for the target**, and its hint to check the network does not fit that case. The reason is in the log. §7.8 has no better code; a new one could be added.
+  - **`Auth::Ask` works on a jump host**, although FR-SSH-11 lists only agent, key file and password. Nothing prevents it at this level; the profile format (`agent | key | password`) and M1-17 do not offer it.
+- **Found in `russh`:** a channel holds its own sender to the session, so dropping the jump host's `Handle` does not end the connection. The tunnel keeps it going until the target's session ends. `SftpSession` needs no field for it; `the_jump_connection_stays_for_the_session_and_ends_with_it` shows if that changes at a `russh` upgrade.
+- **For later tasks:**
+  - **M1-15:** after a successful connect, also call `take_remembered_jump` and store the result as `FsManager:<uuid>:jump-password`. Pass a stored one as the `JumpHost`'s `Auth::Password`.
+  - **M1-17:** the password dialog names the host, so it already shows which of the two is asked for. `known_hosts` dialogs arrive in order: jump host, then target.
+  - **M2-08:** throughput through a jump host was not measured, and data is encrypted twice. It does pass: 40 MiB both ways in `more_than_a_channel_window_of_data_passes_both_ways`.
+- **S-03 changes (run `servers.ps1 up`; existing keys are kept):** `sshd-bastion` on 2228, `sshd-target` with no published port and an RSA host key, `sshd-noforward` on 2229. All are in the existing compose file rather than a separate one, so CI's `integration` job needs no change.
+- **Known limits:**
+  - **A target that accepts TCP and then stays silent is untested through a jump host**, since no test server behaves that way on the Docker network. It uses the same handshake limit as a direct connection, tested in `tests/connector.rs`.
+  - A jump host that hangs while opening the channel reads as E-HOST-UNREACHABLE for the target, not E-TIMEOUT for the jump host: the two cannot be told apart.
+- **The tests are checked too:** 15 faults injected by script (kept out of the repository). 11 failed a test. Of the other 4, 2 showed that a `jump` field on `SftpSession` did nothing, so it was removed, and that led to the two tests that the jump connection ends with the session or a failed login. 1 was a test gap, now closed and re-run: the jump host's own timeout. The last stays uncaught and is harmless: turning off the jump host's keep-alive, because the target's keep-alives cross the same link and notice the same stall.
+- **Next:** M1-10.
+
 ## 2026-11-04: M1-08b SFTP connector: authentication (branch `feat/m1-08b-sftp-auth`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the server tests also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. `fsm-sftp` now has 143 tests on Windows (27 unit, 43 `auth`, 7 `auth_script`, 35 connector, 22 `known_hosts`, 9 against OpenSSH), of which 70 need the S-03 servers. Two more run on Linux only. The server tests passed 3 runs of 3 in a row on Windows.

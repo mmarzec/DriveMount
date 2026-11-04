@@ -170,6 +170,7 @@ async fn log_in(dir: &Path, port: u16, typing: &Typing) -> ConnectError {
         keepalive_secs: 0,
         timeout: Duration::from_secs(5),
         known_hosts: dir.join("known_hosts"),
+        jump: None,
     });
     let attempt = time::timeout(TEST_LIMIT, connector.connect_session(typing)).await;
     match attempt.expect("connect_session must end by itself") {
