@@ -32,13 +32,13 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SSH-01 | M1-08b, M1-17 | – | – |
-| FR-SSH-02 | M1-08b, M1-17 | – | – |
-| FR-SSH-03 | M1-08b, M1-17 | – | – |
-| FR-SSH-04 | M1-08b, M1-17 | – | – |
-| FR-SSH-05 | M1-08b, M1-17 | – | – |
-| FR-SSH-06 | M1-08b, M1-17 | – | – |
-| FR-SSH-07 | M1-08b, M1-17 | – | – |
+| FR-SSH-01 | M1-08b, M1-17 | Below the UI: `tests/auth.rs` (needs S-03), such as `a_stored_password_logs_in_without_asking`, `a_missing_password_is_asked_for_once_and_not_on_reconnect`, `a_remembered_password_is_handed_over_after_the_login`. Storing in Credential Manager: M1-11, M1-15. Dialog: M1-17 | – |
+| FR-SSH-02 | M1-08b, M1-17 | Below the UI: `each_key_format_logs_in_without_asking`, `each_encrypted_key_format_asks_once_and_not_on_reconnect` (need S-03), and the key-loading unit tests in `connector/auth.rs`. Dialog: M1-17 | – |
+| FR-SSH-03 | M1-08b, M1-17 | Refused at connect: `ppk_files_are_refused_whatever_their_name`, `a_ppk_file_is_a_format_error` (needs S-03). Hint and disabled Save: M1-13, M1-17 | – |
+| FR-SSH-04 | M1-08b, M1-17 | `a_key_in_the_agent_logs_in_without_asking` and its companions (need S-03), with an in-process agent on a named pipe. Real `ssh-agent`, Unix socket: `a_key_in_real_ssh_agent_logs_in`. **Not run:** the Windows OpenSSH agent itself, and Pageant. M1-19 | – |
+| FR-SSH-05 | M1-08b, M1-17 | Below the UI: `ask_with_a_password_stores_nothing_and_reconnects_without_asking` and its companions (need S-03). Dialog and no credential entries: M1-17 | – |
+| FR-SSH-06 | M1-08b, M1-17 | `a_certificate_next_to_the_key_is_offered` (Ed25519 and RSA), `without_its_certificate_the_key_is_refused`, `a_certificate_that_cannot_be_used_leaves_the_plain_key` (need S-03) | – |
+| FR-SSH-07 | M1-08b, M1-17 | Below the UI: `a_stored_password_answers_the_password_prompt_and_only_the_code_is_asked`, `a_key_can_be_the_first_factor_and_the_server_asks_the_rest` and companions (need S-03). Dialog: M1-17 | – |
 | FR-SSH-08 | M1-07, M1-08a, M1-17 | The file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: `tests/connector.rs` (needs S-03), such as `a_revoked_key_is_refused_without_asking` and `a_key_type_on_file_is_asked_for_first`. Dialogs: M1-17 | – |
 | FR-SSH-09 | M1-07, M1-08a, M1-17 | Below the UI: `trust_and_save_is_asked_once_and_real_ssh_agrees`, `trust_once_connects_and_saves_nothing`, `cancel_refuses_and_saves_nothing` (`tests/connector.rs`, need S-03). Dialog: M1-17 | – |
 | FR-SSH-10 | M1-07, M1-08a, M1-17 | Refusal below the UI, with the line and both fingerprints: `a_changed_key_is_refused_without_asking` (needs S-03). Simulated by editing the file, not by replacing the server's key. Traffic after key exchange was not captured. Dialog: M1-17 | – |

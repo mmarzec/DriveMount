@@ -634,6 +634,7 @@ version = "0.1.0"
 dependencies = [
  "base64",
  "fsm-vfs",
+ "futures",
  "getrandom 0.4.3",
  "hmac",
  "proptest",

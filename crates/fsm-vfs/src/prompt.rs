@@ -4,6 +4,8 @@
 //! which the GUI implements with the dialogs of spec §7.4. Requests hold data, not display text, so
 //! the GUI can translate the wording.
 
+use std::path::PathBuf;
+
 use async_trait::async_trait;
 
 use crate::Secret;
@@ -42,6 +44,31 @@ pub enum Remember {
     Yes,
     /// Use it for this mount only.
     No,
+}
+
+/// The prompt of an *Ask each time* profile: a password, or a key file and its passphrase
+/// (FR-SSH-05). It stores nothing, so it has no *Remember*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginRequest {
+    /// The user name.
+    pub user: String,
+    /// The host.
+    pub host: String,
+}
+
+/// The user's answer to a [`LoginRequest`].
+#[derive(Debug)]
+pub enum LoginAnswer {
+    /// Log in with this password.
+    Password(Secret<String>),
+    /// Log in with this key file.
+    KeyFile {
+        /// The private key file.
+        path: PathBuf,
+        /// The passphrase, if the user gave one. If the key needs one and this is `None`, the
+        /// backend asks with [`Prompter::secret`].
+        passphrase: Option<Secret<String>>,
+    },
 }
 
 /// One question from a keyboard-interactive server.
@@ -101,6 +128,9 @@ pub enum HostKeyDecision {
 pub trait Prompter: Send + Sync {
     /// Asks for a password or passphrase. `None` means the user cancelled.
     async fn secret(&self, req: SecretRequest) -> Option<(Secret<String>, Remember)>;
+
+    /// Asks how to log in, for an *Ask each time* profile. `None` means the user cancelled.
+    async fn login(&self, req: LoginRequest) -> Option<LoginAnswer>;
 
     /// Asks a round of keyboard-interactive questions. On success there is one answer per prompt,
     /// in order. `None` means the user cancelled.

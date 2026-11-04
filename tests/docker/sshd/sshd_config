@@ -21,3 +21,7 @@ Match User certuser
     AuthenticationMethods publickey
 Match User totpuser
     AuthenticationMethods keyboard-interactive
+Match User keytotp
+    AuthenticationMethods publickey,keyboard-interactive
+Match User kbdpass
+    AuthenticationMethods keyboard-interactive,password

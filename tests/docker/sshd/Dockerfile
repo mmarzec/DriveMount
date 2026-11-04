@@ -6,15 +6,18 @@ RUN apt-get update \
       openssh-server libpam-google-authenticator expect oathtool \
  && rm -rf /var/lib/apt/lists/* /etc/ssh/ssh_host_*
 
-RUN for u in tester keyonly certuser totpuser; do useradd -m -s /bin/bash "$u"; done \
+RUN for u in tester keyonly certuser totpuser keytotp kbdpass; do useradd -m -s /bin/bash "$u"; done \
  && echo 'tester:tester' | chpasswd \
  && echo 'totpuser:totp-pass' | chpasswd \
+ && echo 'keytotp:totp-pass' | chpasswd \
+ && echo 'kbdpass:totp-pass' | chpasswd \
  && usermod -p '*' keyonly \
  && usermod -p '*' certuser
 
 # TOTP second factor; nullok lets users without a secret file skip it.
 COPY google_authenticator /home/totpuser/.google_authenticator
-RUN chown totpuser:totpuser /home/totpuser/.google_authenticator \
+RUN install -m 400 -o keytotp -g keytotp /home/totpuser/.google_authenticator /home/keytotp/.google_authenticator \
+ && chown totpuser:totpuser /home/totpuser/.google_authenticator \
  && chmod 400 /home/totpuser/.google_authenticator \
  && sed -i 's/^@include common-auth$/@include common-auth\nauth required pam_google_authenticator.so nullok/' /etc/pam.d/sshd
 

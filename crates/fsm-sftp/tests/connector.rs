@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 use common::{ED, ED_FP, ED2, ED2_FP, RSA, RSA_FP, host_key};
 use fsm_sftp::connector::{Auth, SftpConnector, SftpProfile, SftpSession};
 use fsm_vfs::{
-    ConnectError, HostKeyDecision, HostKeyRequest, KbdIntRequest, Prompter, Remember, Secret,
-    SecretRequest, async_trait,
+    ConnectError, HostKeyDecision, HostKeyRequest, KbdIntRequest, LoginAnswer, LoginRequest,
+    Prompter, Remember, Secret, SecretRequest, async_trait,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
@@ -71,6 +71,10 @@ impl Prompter for Answers {
         panic!("no secret should be asked for")
     }
 
+    async fn login(&self, _: LoginRequest) -> Option<LoginAnswer> {
+        panic!("no login should be asked for")
+    }
+
     async fn keyboard_interactive(&self, _: KbdIntRequest) -> Option<Vec<Secret<String>>> {
         panic!("no keyboard-interactive round should be asked for")
     }
@@ -94,6 +98,10 @@ impl Prompter for OpenDialog {
         None
     }
 
+    async fn login(&self, _: LoginRequest) -> Option<LoginAnswer> {
+        None
+    }
+
     async fn keyboard_interactive(&self, _: KbdIntRequest) -> Option<Vec<Secret<String>>> {
         None
     }
@@ -109,7 +117,7 @@ fn profile(host: &str, port: u16, known_hosts: &Path) -> SftpProfile {
         host: host.to_owned(),
         port,
         user: "tester".to_owned(),
-        auth: Auth::Password(Secret::new("tester".to_owned())),
+        auth: Auth::Password(Some(Secret::new("tester".to_owned()))),
         remote_path: "~".to_owned(),
         keepalive_secs: 0,
         timeout: Duration::from_secs(15),
@@ -667,7 +675,7 @@ async fn silence_after_the_dialog_times_out() {
 async fn a_wrong_password_is_an_auth_error() {
     let (_dir, path) = empty_dir();
     let mut profile = profile(HOST, PORT, &path);
-    profile.auth = Auth::Password(Secret::new("wrong".to_owned()));
+    profile.auth = Auth::Password(Some(Secret::new("wrong".to_owned())));
     let answers = Answers::with(HostKeyDecision::TrustOnce);
     let error = expect_error(connect_with(profile, &answers).await);
     assert_eq!(

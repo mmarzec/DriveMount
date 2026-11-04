@@ -9,8 +9,9 @@ use std::time::Duration;
 use fsm_vfs::{
     Attr, AttrChanges, AttrTarget, Bytes, Capabilities, ConnectError, Connector, DirEntry,
     Disposition, DriveLetter, FileKind, FsError, FsResult, FsStats, Health, HostKeyDecision,
-    HostKeyRequest, KbdIntRequest, MountBackend, MountError, OpenMode, Prompter, Remember,
-    RemoteFs, RemoteHandle, RemotePath, Secret, SecretKind, SecretRequest, async_trait,
+    HostKeyRequest, KbdIntRequest, LoginAnswer, LoginRequest, MountBackend, MountError, OpenMode,
+    Prompter, Remember, RemoteFs, RemoteHandle, RemotePath, Secret, SecretKind, SecretRequest,
+    async_trait,
 };
 use tokio::sync::watch;
 
@@ -96,6 +97,9 @@ struct StubPrompter;
 impl Prompter for StubPrompter {
     async fn secret(&self, _req: SecretRequest) -> Option<(Secret<String>, Remember)> {
         Some((Secret::new("answer".to_owned()), Remember::No))
+    }
+    async fn login(&self, _req: LoginRequest) -> Option<LoginAnswer> {
+        None
     }
     async fn keyboard_interactive(&self, _req: KbdIntRequest) -> Option<Vec<Secret<String>>> {
         None

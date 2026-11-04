@@ -2,6 +2,38 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-04: M1-08b SFTP connector: authentication (branch `feat/m1-08b-sftp-auth`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the server tests also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. `fsm-sftp` now has 143 tests on Windows (27 unit, 43 `auth`, 7 `auth_script`, 35 connector, 22 `known_hosts`, 9 against OpenSSH), of which 70 need the S-03 servers. Two more run on Linux only. The server tests passed 3 runs of 3 in a row on Windows.
+
+- **Added:** `fsm_sftp::connector::auth`, behind `log_in`: `Auth::{Password, KeyFile, Agent, Ask}` and `AgentSource`. `SftpConnector::take_remembered`. `Prompter::login`, with `LoginRequest` and `LoginAnswer`, for FR-SSH-05's prompt, which `secret` could not express. The rules are in spec §5.7.
+- **Not run: Pageant and the real Windows OpenSSH agent.** **The owner should try both at M1-19.**
+  - The Windows agent's service is disabled on this PC. `ssh-agent -d` needs admin rights (`cannot create agent root reg key`), and enabling the service is a system setting, so nothing was changed.
+  - PuTTY is not installed. Pageant's pipe name comes from a private function of the `pageant` crate, so it cannot be faked.
+  - What did run: an in-process `russh` agent on a real named pipe on Windows; real `ssh-agent` on a Unix socket on Linux, with keys and certificates; `AgentSource::System` once on this PC with neither running (E-AUTH in 0.1 s, test not kept); and a unit test of the order.
+- **Differs from the plan or the spec, for the owner to check:**
+  - **Two kinds of key file are E-KEY-FORMAT, though FR-SSH-02 says PEM:** encrypted legacy `EC PRIVATE KEY` PEM (`russh` decrypts it, then reads it as RSA), and encrypted PKCS#8 with PBKDF2-HMAC-SHA1, which is what `ssh-keygen -m PKCS8` writes **on Windows** (LibreSSL). `ssh-keygen`'s defaults are unaffected, and PKCS#8 from OpenSSL works. Both would otherwise show a right passphrase as wrong. RSA PEM with AES-256 (`openssl rsa -aes256`) should land in the same place, by reading the code; not tried. Supporting them means crypto dependencies of our own.
+  - **`.ppk` is recognised by content, not by file name** here. A real OpenSSH key that happens to be named `.ppk` works. M1-13 and M1-17 can still look at the name for FR-SSH-03's hint.
+  - **The first `password` prompt of a *Password* profile with nothing stored uses the password dialog, not the server's text**, as FR-SSH-07 reads, so that §7.4.1's *Remember* can be offered.
+  - **A wrong passphrase is E-AUTH with no second prompt**, like a wrong password. `ssh` asks three times. The spec does not say.
+- **Choices the plan left open (now in spec §5.7):** the server's method list decides what is tried. A refused key never leads to a password prompt, and a refused password is not sent again through keyboard-interactive, because a second failure can count against a lockout. After a partial success, a profile continues with the password method or keyboard-interactive.
+- **Found in `russh`, none of it visible from the spike:**
+  - **`authenticate_openssh_cert` names an RSA certificate with SHA-1**, so OpenSSH refuses it. `authenticate_certificate_with` and a small local signer (`KeySigner`) do it properly.
+  - **Encrypted PKCS#8 without a passphrase is not `KeyIsEncrypted`**, but a parse error. The header is checked first.
+  - **The unsupported PKCS#8 algorithm's error type is out of reach** without a direct dependency on its crate, so it is matched in the `Debug` text. **At each `russh` upgrade:** the fixture test `pkcs8_with_a_sha1_key_derivation_…` shows if that stops working. The failure would be E-AUTH instead of E-KEY-FORMAT, not a security problem.
+- **For later tasks:**
+  - **M1-15:** after a successful connect, call `take_remembered` and store the result (`FsManager:<uuid>:password` or `:passphrase`, by the profile's method). Keep one `SftpConnector` for a whole mount: its memory is what makes a reconnect silent, and dropping it is what clears the key (NFR-SEC-03). A secret that has already been stored is not reported again.
+  - **M1-09:** the jump host needs `Auth` for its own login. `log_in` takes a `Handle` and reads the connector's profile, so the jump host will need its own connector or a split.
+  - **M1-17:** `allow_remember` is decided here, so the dialog only follows it. `Prompter::login` is new and needs its dialog.
+- **S-03 changes (run `servers.ps1 up`; existing keys are kept):** five more login keys, of which two have a passphrase; an RSA certificate; a key whose certificate has the wrong principal; a 1024-bit RSA key; users `keytotp` (key, then keyboard-interactive) and `kbdpass` (keyboard-interactive, then password). See `tests/docker/README.md`.
+- **Known limits:**
+  - **A long dialog can outlast the server's `LoginGraceTime`**, as with the trust dialog. A passphrase is kept once it has opened the key, so mounting again does not ask for it. A typed password is not kept, so it is asked again.
+  - **An agent holding more keys than `MaxAuthTries` (6 by default) can get the connection closed before the right key is tried, which reads as E-CONN-LOST**, not E-AUTH, so a reconnect would keep retrying. `IdentitiesOnly` has no counterpart here.
+  - Passwords and keyboard-interactive answers pass through `russh` as plain `String`s, whose copies are not zeroed. Decrypted keys rely on `ssh-key` zeroing them on drop; that was not checked.
+  - **That RSA logins avoid SHA-1 rests on the server:** OpenSSH 9.2 refuses `ssh-rsa` by default, so a login proves it. The traffic was not captured.
+- **The tests are checked too:** 49 faults injected by script (kept out of the repository). 37 failed a test on the first pass. Of the other 12, 11 were test gaps, now closed and re-run, and all fail a test. The last one was the `.ppk` file name check, which nothing depended on: removed. Closing the gaps needed `auth_script.rs`, an in-process `russh` server that follows a script, because OpenSSH will not ask a question before the password, or ask for ever. Before that, the tests found two real bugs: *Ask each time* stored a passphrase if the dialog said *Remember* anyway, and encrypted PKCS#8 was reported as a bad format.
+- **Next:** M1-09.
+
 ## 2026-11-04: M1-08a SFTP connector: transport and host keys (branch `feat/m1-08a-sftp-connector`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test`, the size check and both script checks pass on Windows; `fmt`, `clippy`, `test` and the server tests also pass for `fsm-sftp` and `fsm-vfs` in a `rust:1.99.1` container. The script checks ran under WSL. `fsm-sftp` now has 78 tests (12 unit, 35 connector, 22 `known_hosts`, 9 against OpenSSH), of which 28 need the S-03 servers and are `#[ignore]`d. The server tests passed 4 runs of 4 in a row on Windows. The size check says nothing yet: `fsm.exe` is still empty (0.20 MB). `Cargo.lock` gained `russh`, `russh-sftp` and about 150 crates they need.

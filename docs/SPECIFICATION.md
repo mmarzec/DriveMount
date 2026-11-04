@@ -427,6 +427,7 @@ pub trait MountBackend: Send + Sync + 'static {
 #[async_trait]
 pub trait Prompter: Send + Sync {
     async fn secret(&self, req: SecretRequest) -> Option<(Secret<String>, Remember)>;
+    async fn login(&self, req: LoginRequest) -> Option<LoginAnswer>;   // Ask each time: password, or key file + passphrase
     async fn keyboard_interactive(&self, req: KbdIntRequest) -> Option<Vec<Secret<String>>>;
     async fn host_key(&self, req: HostKeyRequest) -> HostKeyDecision;   // TrustSave | TrustOnce | Reject
 }
@@ -532,6 +533,17 @@ A timeout reported by the backend itself counts the same as an expired deadline.
   - A remote path the server will not let this user see is E-PATH-NOT-FOUND: the server does not say whether it exists.
 - **Remote path:** `~`, `~/below/home` or an absolute path. Anything else is E-PATH-NOT-FOUND. Windows-style paths come with M1-10.
 - **Host certificates** are not requested, so a server cannot present one. If one arrived anyway, it would be refused.
+- **Logging in:**
+  - The client first asks the server which methods it takes, and only uses those, so a method it does not take costs neither a dialog nor a failed attempt.
+  - The profile's method is tried once. A refusal is E-AUTH, without falling back to another method: a refused key does not lead to a password prompt, and a refused password is not sent again through keyboard-interactive, so one wrong password counts as one failure on the server.
+  - A *Password* or *Ask each time* profile uses keyboard-interactive when the server does not take the password method. After a partial success, any profile continues with the password method or keyboard-interactive (a key plus TOTP, for example).
+  - In keyboard-interactive, the first prompt matching `password` (any case) in a login is answered from the known password. A *Password* profile with none yet asks through the password dialog, so *Remember* is offered (§7.4.1). A later matching prompt, and every other prompt, goes to the user in the keyboard-interactive dialog, and those answers are never kept.
+  - A password or decrypted key stays in memory for the rest of the mount, so a reconnect asks nothing. A refused login clears it. A password goes to Credential Manager only after the server has accepted it; a passphrase, once it has opened the key.
+  - A key file that has gone or cannot be read is E-AUTH (FR-REC-06), and so is a wrong passphrase. Asking again after a wrong passphrase is left to mounting again, like a wrong password.
+  - A file that is not a supported private key is E-KEY-FORMAT: `.ppk` by its content, `.pub`, RSA under 2048 bits, DSA, and hardware keys. So are two kinds `russh` cannot read: an encrypted legacy `EC PRIVATE KEY` PEM file, and encrypted PKCS#8 using PBKDF2 with HMAC-SHA1, which `ssh-keygen -m PKCS8` on Windows writes.
+  - RSA signatures use the best of rsa-sha2-512 and rsa-sha2-256 that the server names, and rsa-sha2-512 if it names neither. SHA-1 is never used, for keys or for certificates.
+  - `<key>-cert.pub` is read at each login, and offered before the plain key if it belongs to that key. One that cannot be read or belongs to another key is logged and skipped.
+  - The agent method tries each key of the Windows OpenSSH agent, then of Pageant. An agent that is not running or has no accepted key leaves E-AUTH.
 - **Jump host:** connect to the jump host, open a `direct-tcpip` channel to the target, and run the target SSH session over that channel. Each host is verified separately.
 - **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. Spike M0-2 measured head-of-line blocking that grows with bytes in flight; the 4 MiB limit (§5.6) keeps it to about one extra round trip. A second SFTP channel for bulk transfers removes it and stays an option if M2-08 finds browsing during a copy too slow.
 - **Window sizes:** the SSH channel window is 16 MiB (spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing).
@@ -818,6 +830,8 @@ A modal dialog, about 460 × 520.
 - **Title:** "Password for deploy@10.0.4.21", or "Passphrase for id_ed25519", or the keyboard-interactive server text.
 - **Controls:** a masked field with a show toggle and a Caps Lock hint; a *Remember* checkbox (not shown for keyboard-interactive prompts other than the password); *OK* / *Cancel*.
 - **Window behaviour:** brings the main window to the front if it is hidden.
+
+An *Ask each time* profile first shows a prompt offering a password, or a key file plus passphrase (FR-SSH-05). It has no *Remember*, and neither has a passphrase prompt that follows it.
 
 #### 7.4.2 Host key trust prompt
 

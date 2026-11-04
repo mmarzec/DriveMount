@@ -4,11 +4,13 @@
 //! subsystem (spec §5.7, FR-SSH-08 to FR-SSH-10). Every failure becomes a [`ConnectError`], and so
 //! one of the codes of spec §7.8.
 //!
-//! [`SftpConnector`] will implement `Connector` once `SftpFs` exists (M1-10). Logging in supports a
-//! given password only, enough to reach the subsystem; the other methods are M1-08b.
+//! [`SftpConnector`] will implement `Connector` once `SftpFs` exists (M1-10). Logging in is in
+//! the `auth` submodule (FR-SSH-01 to FR-SSH-07).
 //!
-//! Each stage has [`SftpProfile::timeout`] to finish. Time in the trust dialog does not count.
-//! Dropping the future at any point, including during the dialog, abandons the connection.
+//! Each stage has [`SftpProfile::timeout`] to finish. Time in a dialog does not count. Dropping the
+//! future at any point, including during the dialog, abandons the connection.
+
+mod auth;
 
 use std::borrow::Cow;
 use std::net::SocketAddr;
@@ -18,7 +20,7 @@ use std::time::Duration;
 
 use fsm_vfs::{
     ChangedHostKey, ConnectError, HostKeyDecision, HostKeyRequest, Prompter, RemotePath,
-    RevokedHostKey, Secret,
+    RevokedHostKey,
 };
 use russh::client::{self, Handle};
 use russh::keys::{Algorithm, EcdsaCurve, HashAlg, PublicKeyOrCertificate};
@@ -34,6 +36,8 @@ use tokio::task;
 use tokio::time::{self, Instant};
 use tracing::{debug, info, warn};
 
+use self::auth::LoginMemory;
+pub use self::auth::{AgentSource, Auth};
 use crate::known_hosts::{self, HostKey, HostKeyStatus, KnownHosts, KnownHostsError};
 
 /// Spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing.
@@ -42,12 +46,6 @@ const LIMITS_EXTENSION: &str = "limits@openssh.com";
 const HOME: &str = "~";
 const S_IFMT: u32 = 0o170_000;
 const S_IFDIR: u32 = 0o040_000;
-
-/// How to log in.
-pub enum Auth {
-    /// A password known in advance.
-    Password(Secret<String>),
-}
 
 /// What a connection needs from a profile, and the paths and limits around it.
 pub struct SftpProfile {
@@ -72,6 +70,8 @@ pub struct SftpProfile {
 /// Opens SFTP sessions for one profile.
 pub struct SftpConnector {
     profile: SftpProfile,
+    /// What a login learned, for the next connection of this mount.
+    memory: LoginMemory,
 }
 
 /// A logged-in SSH connection with its SFTP channel, ready for use.
@@ -170,8 +170,11 @@ impl client::Handler for Client {
 impl SftpConnector {
     /// A connector for one profile.
     #[must_use]
-    pub const fn new(profile: SftpProfile) -> Self {
-        Self { profile }
+    pub fn new(profile: SftpProfile) -> Self {
+        Self {
+            profile,
+            memory: LoginMemory::default(),
+        }
     }
 
     /// Connects, checks the host key, logs in and opens the SFTP channel.
@@ -193,7 +196,7 @@ impl SftpConnector {
         let mut handle = self
             .handshake(stream, config, &known_hosts, prompter)
             .await?;
-        self.log_in(&mut handle).await?;
+        self.log_in(&mut handle, prompter).await?;
 
         let session = time::timeout(p.timeout, self.open_sftp(handle)).await;
         let session = session.map_err(|_| self.timed_out())??;
@@ -360,24 +363,6 @@ impl SftpConnector {
                     line,
                 })))
             }
-        }
-    }
-
-    async fn log_in(&self, handle: &mut Handle<Client>) -> Result<(), ConnectError> {
-        let p = &self.profile;
-        let Auth::Password(password) = &p.auth;
-        let attempt = handle.authenticate_password(&p.user, password.expose_secret());
-        let result = time::timeout(p.timeout, attempt)
-            .await
-            .map_err(|_| self.timed_out())?
-            .map_err(|error| self.classify(error))?;
-        if result.success() {
-            Ok(())
-        } else {
-            Err(ConnectError::Auth {
-                user: p.user.clone(),
-                host: p.host.clone(),
-            })
         }
     }
 

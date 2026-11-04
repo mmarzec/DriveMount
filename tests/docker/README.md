@@ -14,10 +14,26 @@ All values are throw-away test credentials.
 
 | User | Auth method | Secret |
 |---|---|---|
-| `tester` | password, or public key | password `tester`; keys `keys/id_ed25519`, `keys/id_ed25519_pass` |
-| `keyonly` | public key only | `keys/id_ed25519`, or `keys/id_ed25519_pass` with passphrase `test-passphrase` |
-| `certuser` | OpenSSH certificate only | `keys/id_cert` + `keys/id_cert-cert.pub`, signed by `keys/user_ca` for principal `certuser` |
+| `tester` | password, or public key | password `tester`; any login key below |
+| `keyonly` | public key only | any login key below |
+| `certuser` | OpenSSH certificate only | `keys/id_cert` + `keys/id_cert-cert.pub`, or `keys/id_cert_rsa` + `keys/id_cert_rsa-cert.pub`, signed by `keys/user_ca` for principal `certuser` |
 | `totpuser` | keyboard-interactive: password, then TOTP | password `totp-pass`; TOTP secret `JBSWY3DPEHPK3PXP` (`oathtool --totp -b JBSWY3DPEHPK3PXP`) |
+| `keytotp` | public key, then keyboard-interactive | any login key below, then as `totpuser` |
+| `kbdpass` | keyboard-interactive, then password | password `totp-pass` for both; no TOTP |
+
+Login keys, all in `keys/`. Those with a passphrase use `test-passphrase`.
+
+| File | Type | Format | Passphrase |
+|---|---|---|---|
+| `id_ed25519` | Ed25519 | OpenSSH | – |
+| `id_ed25519_pass` | Ed25519 | OpenSSH | yes |
+| `id_ecdsa` | ECDSA P-256 | OpenSSH | – |
+| `id_rsa` | RSA 3072 | OpenSSH | – |
+| `id_rsa_pem` | RSA 3072 | PEM (PKCS#1) | – |
+| `id_rsa_pem_pass` | RSA 3072 | PEM (PKCS#1) | yes |
+| `id_rsa_pkcs8_pass` | RSA 3072 | PEM (PKCS#8) | yes |
+| `id_rsa_small` | RSA 1024, too small for FR-SSH-02 | OpenSSH | – |
+| `id_wrongcert` | Ed25519, with a certificate for principal `nobody` | OpenSSH | – |
 
 The same users and image also run with one difference each, for testing failures:
 

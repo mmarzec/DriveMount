@@ -37,8 +37,8 @@ pub use mount::{DriveLetter, Health, MountBackend};
 pub use names::{NameError, Resolved, remote_to_windows, resolve_name, windows_to_remote};
 pub use path::{PathError, RemotePath};
 pub use prompt::{
-    HostKeyDecision, HostKeyRequest, KbdIntPrompt, KbdIntRequest, Prompter, Remember, SecretKind,
-    SecretRequest,
+    HostKeyDecision, HostKeyRequest, KbdIntPrompt, KbdIntRequest, LoginAnswer, LoginRequest,
+    Prompter, Remember, SecretKind, SecretRequest,
 };
 pub use readahead::ReadAhead;
 pub use remote::{Connector, RemoteFs};
