@@ -67,6 +67,34 @@ impl Profile {
             auto_reconnect: true,
         }
     }
+
+    /// The last part of the drive's volume prefix `\fsm\<slug>` (FR-MNT-05): the name in lower-case
+    /// ASCII, for reading it in `net use`, and the start of the id, which is what keeps it unique.
+    /// "a b" and "a-b" are different names, and two drives cannot share a prefix.
+    ///
+    /// It has no backslash and no trailing dot, which Windows would drop from a path, and its length
+    /// does not grow with Unicode. It changes with the name, at the next mount.
+    #[must_use]
+    pub fn slug(&self) -> String {
+        const MOST_OF_THE_NAME: usize = 32;
+
+        let mut name = String::new();
+        for character in self.name.chars() {
+            if name.len() == MOST_OF_THE_NAME {
+                break;
+            }
+            if character.is_ascii_alphanumeric() {
+                name.push(character.to_ascii_lowercase());
+            } else if !name.is_empty() && !name.ends_with('-') {
+                name.push('-');
+            }
+        }
+        let id = self.id.as_fields().0;
+        match name.trim_end_matches('-') {
+            "" => format!("{id:08x}"),
+            name => format!("{name}-{id:08x}"),
+        }
+    }
 }
 
 /// The fields that depend on the protocol. SMB arrives in M3 and NFS in M4.
@@ -169,4 +197,63 @@ pub enum DriveChoice {
     Auto,
     /// This letter: D to Z, by [`check_drive`].
     Letter(DriveLetter),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn slug_of(name: &str) -> String {
+        let auth = SftpProfile::new("example.com", "me", SftpAuth::Agent);
+        let mut profile = Profile::new(name, Protocol::Sftp(auth));
+        profile.id = Uuid::from_u128(0x6f1c_2c1e_4d0b_4c55_9a51_7d8a_1c3b_2e10);
+        profile.slug()
+    }
+
+    #[test]
+    fn a_slug_is_the_name_in_lower_case_and_the_start_of_the_id() {
+        assert_eq!(slug_of("Production"), "production-6f1c2c1e");
+        assert_eq!(slug_of("NAS backup #2"), "nas-backup-2-6f1c2c1e");
+    }
+
+    #[test]
+    fn a_name_with_nothing_usable_leaves_the_id() {
+        assert_eq!(slug_of("😀"), "6f1c2c1e");
+        assert_eq!(slug_of("   "), "6f1c2c1e");
+        assert_eq!(slug_of(""), "6f1c2c1e");
+    }
+
+    #[test]
+    fn a_slug_holds_nothing_a_path_could_trip_over() {
+        for name in [
+            "a.",
+            "a b ",
+            "a\\b",
+            "..",
+            "Zażółć gęślą jaźń",
+            "😀😀",
+            "a/b:c",
+        ] {
+            let slug = slug_of(name);
+            let plain = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-';
+            assert!(slug.chars().all(plain), "{slug}");
+            assert!(!slug.starts_with('-'), "{slug}");
+        }
+    }
+
+    #[test]
+    fn the_longest_name_stays_short_enough_for_the_prefix() {
+        assert_eq!(slug_of(&"a".repeat(64)).len(), 32 + 1 + 8);
+        assert_eq!(slug_of(&"😀".repeat(64)).len(), 8);
+        let cut_at_a_separator = format!("{} tail", "a".repeat(31));
+        assert_eq!(slug_of(&cut_at_a_separator).len(), 31 + 1 + 8);
+    }
+
+    /// The reason the id is there: these would otherwise fight over one prefix.
+    #[test]
+    fn two_names_that_look_the_same_have_different_slugs() {
+        let auth = || Protocol::Sftp(SftpProfile::new("example.com", "me", SftpAuth::Agent));
+        let (one, two) = (Profile::new("a b", auth()), Profile::new("a-b", auth()));
+        assert_ne!(one.slug(), two.slug());
+    }
 }

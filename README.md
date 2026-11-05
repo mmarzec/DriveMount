@@ -47,7 +47,7 @@ cargo install --locked --version 0.22.2 cargo-audit
 
 | Path | Contents |
 |---|---|
-| `apps/fsm` | The GUI binary, `fsm.exe` |
+| `apps/fsm` | The GUI binary, `fsm.exe`, and the library behind it that makes real drives |
 | `crates/fsm-vfs` | Shared traits and types (`RemoteFs`, `Connector`, `MountBackend`), caches, read-ahead, deadlines |
 | `crates/fsm-core` | Profiles, configuration and the mount manager |
 | `crates/fsm-sftp` | `RemoteFs` over SFTP, and its connector |
@@ -124,6 +124,12 @@ tests\docker\servers.ps1 down
 ```
 
 The tests look for the servers on `localhost`. `tests/sftpfs.rs` alone can use another host, through `FSM_TEST_HOST`.
+
+The mount manager with the real factory, through real drives, needs those servers and WinFsp together. Secrets go to a store in memory, and Explorer is told about the drives:
+
+```powershell
+cargo test -p fsm --test real_drive -- --ignored --test-threads=1
+```
 
 For throughput measurements, connect to the WSL VM's IP (`wsl hostname -I`) rather than `localhost`, because the Windows port-forward relay distorts the results:
 

@@ -18,31 +18,31 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-PROF-01 | M1-13, M1-14, M1-15, M1-17 | Surviving a restart and being gone after a delete, in the file: `each_kind_of_login_comes_back`, `any_profile_comes_back`, `a_deleted_profile_is_gone_and_the_others_keep_their_keys` (`crates/fsm-core/src/config/tests.rs`). The dialog: M1-17 | – |
-| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | So far the model: a new id in `Profile::new`, and no rule looks at it but to tell a profile from itself (`the_defaults_of_a_new_profile_are_valid_and_each_gets_its_own_id`, `a_profile_does_not_clash_with_itself`). In the file: `a_rename_keeps_the_id_and_the_unknown_keys`, `the_second_profile_with_an_id_is_unreadable`. The credentials following it: M1-15 | – |
-| FR-PROF-03 | M1-13, M1-14, M1-15, M1-17 | The rule: `a_name_is_unique_ignoring_case`, `a_second_profile_cannot_take_the_name_of_another` (`fsm-core`). Inline error: M1-17 | – |
-| FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | Each rule of §7.3 has unit tests in `crates/fsm-core/src/profile/validate.rs`, and `each_bad_field_is_reported_against_its_own_box` for the marks. Marking fields and disabling Save: M1-17 | – |
+| FR-PROF-01 | M1-13, M1-14, M1-15, M1-17 | Surviving a restart and being gone after a delete, in the file: `each_kind_of_login_comes_back`, `any_profile_comes_back`, `a_deleted_profile_is_gone_and_the_others_keep_their_keys` (`crates/fsm-core/src/config/tests.rs`). Through the commands: `a_new_profile_is_saved_and_can_be_mounted`, `delete_takes_the_profile_and_its_secrets_and_leaves_the_others` (`crates/fsm-core/src/manager/tests.rs`). The dialog: M1-17 | – |
+| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | So far the model: a new id in `Profile::new`, and no rule looks at it but to tell a profile from itself (`the_defaults_of_a_new_profile_are_valid_and_each_gets_its_own_id`, `a_profile_does_not_clash_with_itself`). In the file: `a_rename_keeps_the_id_and_the_unknown_keys`, `the_second_profile_with_an_id_is_unreadable`. The credentials following it: `a_rename_keeps_the_secrets` | – |
+| FR-PROF-03 | M1-13, M1-14, M1-15, M1-17 | The rule: `a_name_is_unique_ignoring_case`, `a_second_profile_cannot_take_the_name_of_another` (`fsm-core`). In the Save command: `a_second_profile_cannot_take_a_name_ignoring_case`, `two_saves_at_once_cannot_both_take_a_name`. Inline error: M1-17 | – |
+| FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | Each rule of §7.3 has unit tests in `crates/fsm-core/src/profile/validate.rs`, and `each_bad_field_is_reported_against_its_own_box` for the marks. Save refusing them: `save_checks_the_fields_and_changes_nothing_if_they_are_wrong`. Marking fields and disabling Save: M1-17 | – |
 | FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | Splitting: `the_acceptance_case_fills_all_four_fields`, `a_url_fills_all_four_fields` and the rest of `crates/fsm-core/src/profile/paste.rs`. Filling the boxes: M1-17 | – |
-| FR-PROF-06 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | So far only the removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: M1-15 | – |
-| FR-PROF-08 | M1-13, M1-14, M1-15, M1-17 | – | – |
+| FR-PROF-06 | M1-13, M1-14, M1-15, M1-17 | Below the UI, wrong password and missing path included: `test_connection_reports_a_good_login_a_bad_one_and_a_missing_path` (`apps/fsm/tests/real_drive.rs`, needs S-03). The command: `test_reports_the_round_trip_and_touches_nothing` and its companions. The dialog: M1-17 | – |
+| FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | The removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: `delete_takes_the_profile_and_its_secrets_and_leaves_the_others`, `deleting_a_mounted_profile_unmounts_it_first`, `a_secret_that_cannot_be_deleted_keeps_the_profile_so_it_can_be_tried_again`. Asking first: M1-16 | – |
+| FR-PROF-08 | M1-13, M1-14, M1-15, M1-17 | The rule, field by field: `connection_fields_are_locked_while_mounted_and_free_after`, `what_is_not_a_connection_field_can_change_while_mounted`. Read-only boxes and the hint: M1-17 | – |
 | FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | So far the field and its limit: `a_group_is_at_most_32_characters`. The headers: M1-16 | – |
 
 ## SSH/SFTP backend
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SSH-01 | M1-08b, M1-17 | Below the UI: `tests/auth.rs` (needs S-03), such as `a_stored_password_logs_in_without_asking`, `a_missing_password_is_asked_for_once_and_not_on_reconnect`, `a_remembered_password_is_handed_over_after_the_login`. Storing in Credential Manager: M1-11, M1-15. Dialog: M1-17 | – |
+| FR-SSH-01 | M1-08b, M1-17 | Below the UI: `tests/auth.rs` (needs S-03), such as `a_stored_password_logs_in_without_asking`, `a_missing_password_is_asked_for_once_and_not_on_reconnect`, `a_remembered_password_is_handed_over_after_the_login`. Storing in Credential Manager: M1-11, and `a_password_ticked_in_the_prompt_is_stored_and_the_profile_marked`, `the_password_in_the_dialog_is_stored_if_remember_is_ticked`, `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/fsm/tests/real_drive.rs`, needs S-03). Dialog: M1-17 | – |
 | FR-SSH-02 | M1-08b, M1-17 | Below the UI: `each_key_format_logs_in_without_asking`, `each_encrypted_key_format_asks_once_and_not_on_reconnect` (need S-03), and the key-loading unit tests in `connector/auth.rs`. Dialog: M1-17 | – |
 | FR-SSH-03 | M1-08b, M1-13, M1-17 | Refused at connect: `ppk_files_are_refused_whatever_their_name`, `a_ppk_file_is_a_format_error` (needs S-03). Hint and no Save, below the UI: `a_ppk_file_gets_the_conversion_hint_and_blocks_saving` (`fsm-core`). Dialog: M1-17 | – |
 | FR-SSH-04 | M1-08b, M1-17 | `a_key_in_the_agent_logs_in_without_asking` and its companions (need S-03), with an in-process agent on a named pipe. Real `ssh-agent`, Unix socket: `a_key_in_real_ssh_agent_logs_in`. **Not run:** the Windows OpenSSH agent itself, and Pageant. M1-19 | – |
-| FR-SSH-05 | M1-08b, M1-17 | Below the UI: `ask_with_a_password_stores_nothing_and_reconnects_without_asking` and its companions (need S-03). Dialog and no credential entries: M1-17 | – |
+| FR-SSH-05 | M1-08b, M1-17 | Below the UI: `ask_with_a_password_stores_nothing_and_reconnects_without_asking` and its companions (need S-03). No credential entries: `ask_each_time_never_stores_anything`, `the_password_in_the_dialog_is_not_stored_if_it_is_not`, `agent_and_ask_look_for_no_secret`. Dialog: M1-17 | – |
 | FR-SSH-06 | M1-08b, M1-17 | `a_certificate_next_to_the_key_is_offered` (Ed25519 and RSA), `without_its_certificate_the_key_is_refused`, `a_certificate_that_cannot_be_used_leaves_the_plain_key` (need S-03) | – |
 | FR-SSH-07 | M1-08b, M1-17 | Below the UI: `a_stored_password_answers_the_password_prompt_and_only_the_code_is_asked`, `a_key_can_be_the_first_factor_and_the_server_asks_the_rest` and companions (need S-03). Dialog: M1-17 | – |
 | FR-SSH-08 | M1-07, M1-08a, M1-17 | The file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: `tests/connector.rs` (needs S-03), such as `a_revoked_key_is_refused_without_asking` and `a_key_type_on_file_is_asked_for_first`. Dialogs: M1-17 | – |
 | FR-SSH-09 | M1-07, M1-08a, M1-17 | Below the UI: `trust_and_save_is_asked_once_and_real_ssh_agrees`, `trust_once_connects_and_saves_nothing`, `cancel_refuses_and_saves_nothing` (`tests/connector.rs`, need S-03). Dialog: M1-17 | – |
 | FR-SSH-10 | M1-07, M1-08a, M1-17 | Refusal below the UI, with the line and both fingerprints: `a_changed_key_is_refused_without_asking` (needs S-03). Simulated by editing the file, not by replacing the server's key. Traffic after key exchange was not captured. Dialog: M1-17 | – |
-| FR-SSH-11 | M1-09, M1-13, M1-15, M1-17 | Below the UI: `crates/fsm-sftp/tests/jump.rs`, such as `each_host_key_is_asked_for_and_saved_for_its_own_host` (needs S-03), and `a_jump_host_can_log_in_with_the_agent` in `tests/auth.rs`. Storing `jump-password`: M1-15. The fields and their rule: `a_jump_host_is_host_with_optional_user_and_port` and its companions (`fsm-core`). Dialogs: M1-17 | – |
+| FR-SSH-11 | M1-09, M1-13, M1-15, M1-17 | Below the UI: `crates/fsm-sftp/tests/jump.rs`, such as `each_host_key_is_asked_for_and_saved_for_its_own_host` (needs S-03), and `a_jump_host_can_log_in_with_the_agent` in `tests/auth.rs`. Storing `jump-password`: `a_passphrase_and_a_jump_password_go_in_their_own_slots`, and reading it back: `a_jump_password_comes_from_its_own_slot`. Through the manager to a real bastion: not run. The fields and their rule: `a_jump_host_is_host_with_optional_user_and_port` and its companions (`fsm-core`). Dialogs: M1-17 | – |
 | FR-SSH-12 | M1-08a, M1-10, M2-01 | So far the SSH layer: `unanswered_keep_alives_close_the_connection` and its two companions (`tests/connector.rs`, need S-03), now 3 intervals. State change to *Reconnecting*: M2-01 | – |
 | FR-SSH-13 | M1-08a, M1-10 | `remote_paths_are_resolved_and_checked`, and `drive_letter_paths_work_where_the_server_uses_them` against a Linux server laid out like Windows (need S-03). **Real Windows OpenSSH has not run:** lab matrix, §10.4 | – |
 | FR-SSH-14 | M1-08a, M1-10 | `the_contract_holds_on_openssh` and `the_contract_holds_on_a_server_without_the_extensions` (`crates/fsm-sftp/tests/sftpfs.rs`, need S-03) | – |
@@ -52,17 +52,17 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `fsm-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: M1-15 | – |
-| FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | The name in Explorer's own window: `a_running_explorer_shows_the_name_and_hides_it_within_a_second` and `a_name_that_needs_unicode_is_shown_as_it_is` (`crates/fsm-winfsp/tests/explorer.rs`, `#[ignore]`d, need a desktop). In the registry: `tests/lifecycle.rs`. The name, the network-drive icon and *Network locations*: confirmed by the owner, 2026-11-05, on a test drive, up only for moments. In the app: H-07 | – |
+| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | The commands: `a_profile_starts_disconnected_and_mounts_through_connecting`, `unmounting_goes_back_to_disconnected`. On a real drive: `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/fsm/tests/real_drive.rs`). Buttons and tray: M1-16, M2-03 | – |
+| FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | `auto_takes_z_when_it_is_free`, `auto_goes_down_from_z_past_what_is_taken`, `a_free_letter_of_the_profile_is_used_under_either_policy` (`crates/fsm-core/src/manager/letters.rs`) | – |
+| FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `fsm-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: `a_b_and_c_are_never_used_or_even_asked_about`, `a_profile_cannot_ask_for_a_b_or_c` | – |
+| FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | Both behaviours, below the UI: `a_taken_letter_under_auto_mounts_on_another_and_says_so`, `a_taken_letter_under_fail_stops_before_any_backend_is_made`, `a_profiles_letter_taken_during_the_mount_goes_by_the_setting`. The row note and toast: M2-07 | – |
+| FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | The name in Explorer's own window: `a_running_explorer_shows_the_name_and_hides_it_within_a_second` and `a_name_that_needs_unicode_is_shown_as_it_is` (`crates/fsm-winfsp/tests/explorer.rs`, `#[ignore]`d, need a desktop). In the registry: `tests/lifecycle.rs`. The name, the network-drive icon and *Network locations*: confirmed by the owner, 2026-11-05, on a test drive, up only for moments. Told apart by their slugs on real drives: `two_names_that_look_alike_mount_together_on_their_own_letters` (`apps/fsm/tests/real_drive.rs`). In the app: H-07 | – |
 | FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Read from Explorer's own window through UI Automation: `tests/explorer.rs` (`#[ignore]`d). Showing about 850 ms, hiding about 1.2 s, as the criterion now says. The test allows 3 s, to catch Explorer not being told, and prints what it measured. Confirmed by the owner, 2026-11-05 | – |
-| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | Through a mounted drive, with `VolumeConfig::read_only`: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`), and `copying_into_a_read_only_drive_fails_cleanly` and `delete_on_close_does_nothing_on_a_read_only_drive` (`tests/write_path.rs`). The choice per profile: M1-15 | – |
+| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | Through a mounted drive, with `VolumeConfig::read_only`: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`), and `copying_into_a_read_only_drive_fails_cleanly` and `delete_on_close_does_nothing_on_a_read_only_drive` (`tests/write_path.rs`). The choice per profile: `a_read_only_profile_gets_a_read_only_drive` (`apps/fsm/tests/real_drive.rs`) | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | `files_left_open_do_not_hold_up_unmounting_and_are_closed`, `a_flush_that_fails_as_the_drive_stops_does_not_fail_the_unmount`, `a_server_that_stopped_answering_holds_up_unmounting_for_one_timeout_at_most` (`tests/lifecycle.rs`), through Win32 handles. Notepad itself: H-07 | – |
-| FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | Below the UI: `dropping_a_mount_in_progress_cancels_it_at_once` and `a_mount_dropped_just_as_the_drive_starts_leaves_no_drive`. The row's button: M1-15, M1-16 | – |
+| FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | Below the UI: `dropping_a_mount_in_progress_cancels_it_at_once` and `a_mount_dropped_just_as_the_drive_starts_leaves_no_drive`. Through the manager: `cancel_while_connecting_returns_to_disconnected_at_once`, and `cancel_at_a_real_dialog_is_back_within_a_second` (`apps/fsm/tests/real_drive.rs`). The row's button: M1-16 | – |
 | FR-MNT-12 | M1-11, M1-12a–c, M1-15, M2-07 | `fsm-win` `explorer_opens_at_the_root_of_the_drive` (`#[ignore]`): a real window at a `subst` drive's root. A mounted drive: M1-19 | – |
 
 ## Connection state and reconnect
@@ -75,7 +75,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-REC-04 | M2-01, M2-02 | – | – |
 | FR-REC-05 | M2-01, M2-02 | – | – |
 | FR-REC-06 | M2-01, M2-02 | – | – |
-| FR-REC-07 | M2-01, M2-02 | – | – |
+| FR-REC-07 | M2-01, M2-02 | Below the triggers: `a_lost_connection_without_auto_reconnect_unmounts_and_is_an_error`, on a mock's `Health`. What makes `Health` say so, and the toast: M2-01, M2-04 | – |
 
 ## Tray
 
@@ -174,7 +174,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | `fsm-win` `credentials::tests`: names, type and persistence as Windows reports them, round-trip, delete, limits. Behind `SecretStore`: `the_store_goes_through_to_credential_manager` | – |
 | NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config: `a_remembered_secret_is_not_in_the_file_or_its_backup` (`fsm-core`), and the profile model has no field for a secret. Logs: M1-18 | – |
-| NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | So far only zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Zeroed on unmount: M1-15 | – |
+| NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | Zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Held only while mounted: `the_backend_is_gone_by_the_time_disconnected_is_announced`, and for cancelling, failing and losing the connection in `crates/fsm-core/src/manager/tests.rs`. That each `Secret` in `russh` is zeroed is not shown (M1-08b's note) | – |
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-05 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-06 | M1-02, M1-07, M1-11, M2-11 | – | – |

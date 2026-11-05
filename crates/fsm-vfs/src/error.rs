@@ -167,6 +167,9 @@ pub enum MountError {
     /// E-LETTER-TAKEN: the letter was taken by the time the mount ran.
     #[error("drive {0} is already in use")]
     LetterTaken(DriveLetter),
+    /// E-NO-FREE-LETTER.
+    #[error("no free drive letter")]
+    NoFreeLetter,
     /// E-WINFSP-MISSING.
     #[error("WinFsp 2.1 or later is required")]
     WinFspMissing,

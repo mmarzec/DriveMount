@@ -4,5 +4,8 @@
 
 #![windows_subsystem = "windows"]
 #![forbid(unsafe_code)]
+// build.rs delay-loads WinFsp, and the linker points out that nothing here calls it yet. Remove this
+// at M1-18.
+#![allow(linker_messages)]
 
 fn main() {}

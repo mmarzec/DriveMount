@@ -673,6 +673,11 @@ dependencies = [
  "fsm-vfs",
  "fsm-win",
  "fsm-winfsp",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+ "winfsp",
 ]
 
 [[package]]
@@ -684,7 +689,10 @@ dependencies = [
  "serde",
  "tempfile",
  "thiserror",
+ "tokio",
+ "tokio-util",
  "toml",
+ "tracing",
  "uuid",
 ]
 

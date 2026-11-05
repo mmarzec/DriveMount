@@ -97,7 +97,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-PROF-05 | M | Pasting `user@host:port/path` or `sftp://user@host:port/path` into the Host field splits it into the matching fields. | Pasting `deploy@10.0.4.21:2222/var/www` fills user, host, port and path. |
 | FR-PROF-06 | M | **Test connection** connects, authenticates and checks that the remote path exists and is a directory, without mounting. It reports the result in the dialog: OK with round-trip time, or the error from §7.8. | Wrong password → "Authentication failed"; missing path → "Remote path not found". |
 | FR-PROF-07 | M | Deleting a profile also deletes its Credential Manager entries. A mounted profile is unmounted first, after confirmation. | After delete, no `FsManager:<uuid>:*` credentials remain. |
-| FR-PROF-08 | M | While a profile is mounted, connection fields are read-only, with the hint "Unmount to change". These fields are protocol, host, port, user, authentication, remote path, drive letter, jump host and read-only. Name, group and the start/reconnect flags stay editable. | Editing the host of a mounted profile is impossible; renaming is possible. |
+| FR-PROF-08 | M | While a profile is mounted, connection fields are read-only, with the hint "Unmount to change". These fields are protocol, host, port, user, authentication, remote path, drive letter, jump host and read-only. Name, group and the start/reconnect flags stay editable. The same goes for a mount in progress. Cache and keep-alive are locked too, as a drive takes them when it starts. | Editing the host of a mounted profile is impossible; renaming is possible. |
 | FR-PROF-09 | S | Optional **group** label; the list groups rows under collapsible headers. | Profiles with group "Web" are shown under a "Web" header. |
 
 ### 3.2 SSH/SFTP backend (FR-SSH), v1
@@ -354,8 +354,8 @@ fs-manager/
     fsm-win/                 Small Windows helpers: Credential Manager, Run key, SHChangeNotify, power,
                              session and network notifications, single-instance mutex, toasts
   apps/
-    fsm/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring,
-                             BackendFactory (Profile → Box<dyn MountBackend>)
+    fsm/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring.
+                             A library beside it holds BackendFactory (Profile → Box<dyn MountBackend>)
   docs/
     ANALYSIS.md  SPECIFICATION.md  IMPLEMENTATION_PLAN.md  TRACEABILITY.md  PROGRESS.md  adr/  spikes/
   installer/                 WiX sources for the MSI
@@ -422,6 +422,7 @@ pub trait MountBackend: Send + Sync + 'static {
     async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError>;
     async fn unmount(&self) -> Result<(), MountError>;
     fn health(&self) -> watch::Receiver<Health>;   // Ok | Lost(reason)
+    fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)>;   // what the user ticked Remember for
 }
 
 /// UI-mediated user interaction; implemented by the GUI.
@@ -459,6 +460,18 @@ States: `Disconnected`, `Connecting`, `Mounted`, `Reconnecting`, `Unmounting`, `
 | any | App quit / sign-out | Unmounting → (exit) | FR-APP-04/05 |
 
 Every transition is emitted as a `MountEvent` and logged at Info level.
+
+What the table leaves open (`fsm_core::manager`). The Reconnecting rows are M2-01's:
+
+- **A backend for each mount.** It is made when the mount starts and dropped when it ends, however it ends, and before the state is announced, so what the user typed goes with it (NFR-SEC-03). Going back to *Disconnected* or *Error* is what zeroes secrets.
+- **One task for each profile,** so a dialog holds up no other profile. Cancel is a `CancellationToken`, and reaches a mount at any point.
+- **A user cancelling a prompt** goes to *Disconnected*, as Cancel does. It is not an error.
+- **Commands that do not fit the state:** Mount on a profile connecting or mounted is refused, with no event. Unmount while *Connecting* is a cancel, as that is what *Unmount all* means. Unmount and Cancel otherwise do nothing where there is nothing to stop. While *Unmounting*, commands wait, so a Mount right after an Unmount works.
+- **A failed unmount** goes to *Error* with its reason, and lets go of the backend all the same.
+- **A lost connection with `auto_reconnect`** leaves the drive *Mounted* until M2-01, with calls failing. The flag is read when it happens, as it can change while mounted.
+- **Letters:** a letter is held from when it is chosen until the mount ends, because a drive only shows as taken once it is up, and profiles mounting together would otherwise all choose Z:. *auto*'s "next free letter" (FR-MNT-04) is the highest one free, as for *Auto*. A letter the backend finds taken after the check, as it may be after a long dialog, is dealt with the same way, without asking the user again. E-LETTER-TAKEN only comes from a profile's own letter under *fail*.
+- **What is not mounted:** a profile that breaks a rule of §7.3 (only a key file's name is looked at), and one the file holds but the model cannot (§6.1). Both are refused with no event.
+- **Test connection** has nothing to do with this table, and stores nothing, whatever the user ticks: the profile may never be saved.
 
 ### 5.6 VFS layer (fsm-vfs)
 
@@ -579,7 +592,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 | `CaseSensitiveSearch` / `CasePreservedNames` / `UnicodeOnDisk` | false / true / true |
 | `PersistentAcls` | false; fixed security descriptor giving the mounting user alone full control, and naming that user as owner and group: `O:<sid>G:<sid>D:P(A;;FA;;;<sid>)`. Not the Everyone descriptor of spike M0-1: `\\fsm\<slug>` is reachable by other users of the PC, and they would act with this user's server login. |
 | `ReadOnlyVolume` | `read_only`. This only tells programs: WinFsp's driver still passes changes down, so the adapter refuses them with `STATUS_MEDIA_WRITE_PROTECTED`. Opening a file with write access works, so that a program asking for `MAXIMUM_ALLOWED` is not turned away; the write itself fails. |
-| `VolumePrefix` | `\fsm\<profile-slug>` (network-drive mode) |
+| `VolumePrefix` | `\fsm\<profile-slug>` (network-drive mode). The slug is the name in lower-case ASCII, up to 32 characters, with anything else as `-`, then the first 8 hex digits of the id: `nas-backup-6f1c2c1e`. The id keeps it unique, since "a b" and "a-b" are different names, and it is taken at each mount. |
 | `FileSystemName` | `FSM-SFTP` / `FSM-NFS` |
 | Volume label | profile name, ≤ 32 chars |
 | `FileInfoTimeout` | 1000 ms (see §5.6) |
@@ -739,7 +752,7 @@ key_path = ""
 # nfs_port = 0             mount_port = 0             reserved_port = true
 ```
 
-- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager".
+- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager". Its profiles can still be mounted, read by this version's rules; Save and Delete are off.
 - **Unknown keys** are kept on save, for forward compatibility, at the top of the file, in `[settings]`, in a profile and in its `jump`. Comments are not kept, and known keys are written in the order above.
 - **A damaged file:** one that is not UTF-8 or TOML, has no `schema_version` (so an empty file too), or has `settings` or `profiles` of the wrong type. The app starts read-only with nothing loaded (NFR-REL-05). A save also refuses, and the app turns read-only, if the file has become like this since it was read.
 - **One bad value does not cost the whole file:**
@@ -752,6 +765,10 @@ key_path = ""
 ### 6.2 Secrets
 
 Windows Credential Manager entries (NFR-SEC-01) are created only when "Remember" is ticked. They are deleted on profile delete, and when "Remember" is unticked.
+
+- **On Save,** a profile keeps only what it says it has: the password if it is *Password* with "Remember", the passphrase if it is *Key file* with "Remember", and the jump password if the jump host uses one. Anything else is deleted. So is the passphrase when the key file changes, as it is of no use for another key, and a wrong one is E-AUTH with no second prompt. A change of host or user keeps them.
+- **Ticked in a prompt:** the secret is stored once the login has worked, before the row shows *Mounted*, and the profile's "Remember" is turned on, unless the file is read-only. A secret that cannot be stored costs a question at the next mount, not the drive.
+- **Order:** secrets go before the file changes. If the file then cannot be written, the worst that has happened is a question at the next mount, and the change can be tried again. The other way round, secrets could be left under a profile that no longer exists. A secret that cannot be deleted stops the Save or Delete. For an unreadable entry (§6.1), they go only if nothing else in the file uses that id.
 
 The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so a secret longer than 1280 UTF-16 code units cannot be remembered, and storing one fails without changing the existing entry.
 

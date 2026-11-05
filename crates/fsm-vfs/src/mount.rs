@@ -7,7 +7,7 @@ use std::fmt;
 use async_trait::async_trait;
 use tokio::sync::watch;
 
-use crate::{MountError, Prompter};
+use crate::{MountError, Prompter, Secret, SecretSlot};
 
 /// A Windows drive letter, always stored in upper case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -59,6 +59,12 @@ pub trait MountBackend: Send + Sync + 'static {
 
     /// Follows the connection's health.
     fn health(&self) -> watch::Receiver<Health>;
+
+    /// Takes what the user asked to remember during [`mount`](Self::mount), for the manager to store
+    /// (NFR-SEC-01). Each secret is handed over once. A backend that logs in some other way has none.
+    fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)> {
+        Vec::new()
+    }
 }
 
 #[cfg(test)]
