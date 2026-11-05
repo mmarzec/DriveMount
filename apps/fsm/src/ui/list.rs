@@ -3,9 +3,6 @@
 //! What the list shows (spec §7.1), from the file and the latest events: which rows, in which order,
 //! and what each may do. It knows nothing of Slint, and holds no text to translate, so all of it can
 //! be tested without a window.
-//!
-//! Search and groups are left out for now, by the owner's decision (`docs/PROGRESS.md`). A profile's
-//! `group` stays in the model and the file, and is not looked at here.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -260,10 +257,10 @@ impl ListState {
             .map_or(MountState::Disconnected, |(state, _)| state.clone())
     }
 
-    /// The list as it is now: rows by name, ignoring case, then what could not be read.
+    /// The list as it is now: rows by the drive letter they show, then by name, then what could not be read.
     pub(super) fn items(&self) -> Vec<Item> {
         let mut shown: Vec<&Profile> = self.config.profiles.iter().collect();
-        shown.sort_by_cached_key(|profile| sort_key(profile));
+        shown.sort_by_cached_key(|profile| self.sort_key(profile));
 
         let mut items = Vec::with_capacity(shown.len() + self.config.unreadable.len());
         for profile in shown {
@@ -283,6 +280,29 @@ impl ListState {
             });
         }
         items
+    }
+
+    /// By the letter the row shows, D to Z: the one a mounted profile holds, else the one it asks for,
+    /// with rows that have neither last. Then by name ignoring case, with the exact text breaking
+    /// ties, so that the order never depends on the file's. A row moves when it is mounted or
+    /// unmounted. Only case is ignored in names: `Ż` comes after `z`, as sorting by language needs
+    /// tables this program has no other use for.
+    fn sort_key(&self, profile: &Profile) -> (bool, Option<DriveLetter>, String, String) {
+        let live = self
+            .status
+            .get(&profile.id)
+            .and_then(|(state, detail)| live_letter(state, *detail));
+        let wanted = match profile.drive {
+            DriveChoice::Letter(letter) => Some(letter),
+            DriveChoice::Auto => None,
+        };
+        let letter = live.or(wanted);
+        (
+            letter.is_none(),
+            letter,
+            profile.name.to_lowercase(),
+            profile.name.clone(),
+        )
     }
 
     fn profile_item(&self, profile: &Profile) -> ProfileItem {
@@ -388,13 +408,6 @@ fn live_letter(state: &MountState, detail: Option<MountDetail>) -> Option<DriveL
     }
 }
 
-/// By name ignoring case, with the exact text breaking ties, so that the order never depends on the
-/// file's. Only case is ignored: `Ż` comes after `z`, as sorting by language needs tables this program
-/// has no other use for.
-fn sort_key(profile: &Profile) -> (String, String) {
-    (profile.name.to_lowercase(), profile.name.clone())
-}
-
 /// `user@host:path`, as in the mock-up, with a port other than 22 after the host.
 fn address_of(profile: &Profile) -> String {
     let Protocol::Sftp(sftp) = &profile.protocol;
@@ -479,16 +492,50 @@ mod tests {
     }
 
     #[test]
-    fn rows_are_by_name_ignoring_case_and_never_by_group() {
-        let mut grouped = profile("Zeta");
-        grouped.group = Some("Aardvark".to_owned());
+    fn rows_with_the_same_letter_are_by_name_ignoring_case() {
         let state = state_with(vec![
-            grouped,
+            profile("Zeta"),
             profile("beta"),
             profile("alpha"),
             profile("Alpha"),
         ]);
         assert_eq!(names(&state), ["Alpha", "alpha", "beta", "Zeta"]);
+    }
+
+    #[test]
+    fn rows_are_by_the_letter_they_ask_for_with_auto_last() {
+        let on = |name: &str, drive: DriveChoice| {
+            let mut profile = profile(name);
+            profile.drive = drive;
+            profile
+        };
+        let state = state_with(vec![
+            on("A-auto", DriveChoice::Auto),
+            on("Z-on-z", DriveChoice::Letter(letter('Z'))),
+            on("B-on-e", DriveChoice::Letter(letter('E'))),
+            on("C-on-e", DriveChoice::Letter(letter('e'))),
+            on("D-on-d", DriveChoice::Letter(letter('D'))),
+        ]);
+        assert_eq!(
+            names(&state),
+            ["D-on-d", "B-on-e", "C-on-e", "Z-on-z", "A-auto"]
+        );
+    }
+
+    #[test]
+    fn a_mounted_auto_row_is_where_its_letter_puts_it() {
+        let auto = profile("A-auto");
+        let id = auto.id;
+        let mut fixed = profile("B-on-e");
+        fixed.drive = DriveChoice::Letter(letter('E'));
+        let mut state = state_with(vec![auto, fixed]);
+        assert_eq!(names(&state), ["B-on-e", "A-auto"]);
+
+        state.apply(&mounted(id, 'W'));
+        assert_eq!(names(&state), ["B-on-e", "A-auto"]);
+
+        state.apply(&mounted(id, 'D'));
+        assert_eq!(names(&state), ["A-auto", "B-on-e"]);
     }
 
     #[test]
