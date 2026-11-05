@@ -51,7 +51,7 @@ const INBOX: usize = 16;
 
 /// Whether profiles may be mounted from a file this store will not write. Save stays off either way.
 ///
-/// **Decided at M1-15, and the owner has not confirmed it (`docs/PROGRESS.md`).** A newer version may
+/// **Decided at M1-15, and confirmed by the owner (`docs/PROGRESS.md`).** A newer version may
 /// have changed what a field means, but the alternative is an app that does nothing until it is
 /// upgraded. To reverse it, make `Newer` false: nothing else depends on this. The other reasons only
 /// matter for a file damaged while running, whose profiles were read when it was still good. A file
