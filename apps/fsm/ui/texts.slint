@@ -1,0 +1,148 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// Everything Rust has to show, as `slint` has no `tr!` for Rust code: `@tr` only exists here
+// (NFR-UX-05). `fsm_app::ui::errors` picks the function for each error.
+
+export global Texts {
+    // Spec 7.8, as "what happened" and "what to do".
+    public pure function auth(user: string, host: string) -> string {
+        return @tr("Authentication failed for {}@{}.", user, host);
+    }
+    public pure function auth-hint() -> string {
+        return @tr("Check the user name and password or key.");
+    }
+    public pure function host-key-changed() -> string {
+        return @tr("Server key has changed: connection refused.");
+    }
+    public pure function host-key-revoked() -> string {
+        return @tr("Server key has been revoked: connection refused.");
+    }
+    public pure function host-key-revoked-hint(line: int) -> string {
+        return @tr("known_hosts line {} marks this key as revoked. Ask the server's administrator for its current key.", line);
+    }
+    public pure function host-key-rejected() -> string {
+        return @tr("Server key not trusted.");
+    }
+    public pure function host-key-rejected-hint() -> string {
+        return @tr("Mount again to see the prompt.");
+    }
+    public pure function dns(host: string) -> string {
+        return @tr("Host {} not found.", host);
+    }
+    public pure function dns-hint() -> string {
+        return @tr("Check the host name.");
+    }
+    public pure function unreachable(host: string, port: int) -> string {
+        return @tr("Cannot reach {}:{}.", host, port);
+    }
+    public pure function unreachable-hint() -> string {
+        return @tr("Check the network, VPN or firewall.");
+    }
+    public pure function timeout(host: string) -> string {
+        return @tr("{} did not respond in time.", host);
+    }
+    public pure function path-not-found(path: string) -> string {
+        return @tr("Remote path {} not found.", path);
+    }
+    public pure function path-not-found-hint() -> string {
+        return @tr("Edit the connection and check the remote path.");
+    }
+    public pure function path-not-dir(path: string) -> string {
+        return @tr("Remote path {} is not a folder.", path);
+    }
+    public pure function sftp-unavailable() -> string {
+        return @tr("The server does not provide SFTP.");
+    }
+    public pure function sftp-unavailable-hint() -> string {
+        return @tr("Ask the administrator to enable the SFTP subsystem.");
+    }
+    public pure function algorithms() -> string {
+        return @tr("No encryption method in common with the server.");
+    }
+    public pure function algorithms-hint() -> string {
+        return @tr("The server may offer only outdated algorithms. Ask its administrator to update its SSH settings.");
+    }
+    public pure function letter-taken(letter: string) -> string {
+        return @tr("Drive {} is already in use.", letter);
+    }
+    public pure function letter-taken-hint() -> string {
+        return @tr("Choose another letter or set Drive to Auto.");
+    }
+    public pure function no-free-letter() -> string {
+        return @tr("No free drive letter.");
+    }
+    public pure function winfsp-missing() -> string {
+        return @tr("WinFsp 2.1 or later is required.");
+    }
+    public pure function key-format() -> string {
+        return @tr("Unsupported key file format.");
+    }
+    public pure function key-format-hint() -> string {
+        return @tr("Convert a PuTTY key to OpenSSH format with PuTTYgen.");
+    }
+    public pure function connection-lost() -> string {
+        return @tr("Connection lost.");
+    }
+    public pure function internal() -> string {
+        return @tr("Unexpected error.");
+    }
+    public pure function internal-hint() -> string {
+        return @tr("See the log for details.");
+    }
+
+    // The second line of a row.
+    public pure function letter-moved(letter: string, wanted: string) -> string {
+        return @tr("{} ({} was in use)", letter, wanted);
+    }
+    public pure function needs-correcting() -> string {
+        return @tr("This connection needs correcting. Choose Edit to see what is wrong.");
+    }
+    public pure function unreadable-problem(problem: string) -> string {
+        return @tr("This connection could not be read: {}", problem);
+    }
+    public pure function unnamed() -> string {
+        return @tr("Unnamed connection");
+    }
+
+    // The status bar.
+    public pure function count-mounted(count: int) -> string {
+        return @tr("{} mounted", count);
+    }
+    public pure function count-connecting(count: int) -> string {
+        return @tr("{} connecting", count);
+    }
+    public pure function count-failed(count: int) -> string {
+        return @tr("{} failed", count);
+    }
+    public pure function nothing-mounted() -> string {
+        return @tr("Nothing mounted");
+    }
+
+    // Banners (NFR-REL-05). What to do goes with what happened.
+    public pure function read-only-damaged(detail: string) -> string {
+        return @tr("The configuration file is damaged, so nothing can be saved: {} Correct the file, or restore config.toml.bak, and start FS Manager again.", detail);
+    }
+    public pure function read-only-cannot-read(detail: string) -> string {
+        return @tr("The configuration file could not be read, so nothing can be saved: {} Check the file and start FS Manager again.", detail);
+    }
+    public pure function read-only-newer() -> string {
+        return @tr("This configuration was written by a newer FS Manager, so nothing can be saved. Install the newer version to make changes.");
+    }
+    public pure function read-only-migration(from: int, detail: string) -> string {
+        return @tr("The configuration file could not be updated from version {}, so nothing can be saved: {} Report this, and keep the file.", from, detail);
+    }
+    public pure function setting-problems(problems: string) -> string {
+        return @tr("Some settings were not valid, so their defaults are in use: {}", problems);
+    }
+
+    // Asking first (FR-PROF-07).
+    public pure function delete-question(name: string) -> string {
+        return @tr("Delete \"{}\"? Its saved password is removed too.", name);
+    }
+    public pure function delete-mounted-question(name: string) -> string {
+        return @tr("Unmount and delete \"{}\"? Its saved password is removed too.", name);
+    }
+    public pure function delete-unreadable-question(name: string) -> string {
+        return @tr("Remove \"{}\" from the configuration file? It could not be read, and it cannot be brought back.", name);
+    }
+}

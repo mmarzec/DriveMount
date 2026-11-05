@@ -19,6 +19,7 @@ fsm-vfs = { workspace = true }
 uuid = { workspace = true }
 windows = { workspace = true, features = [
     "Win32_Foundation",
+    "Win32_Graphics_Gdi",
     "Win32_NetworkManagement_WNet",
     "Win32_Security_Credentials",
     "Win32_Storage_FileSystem",

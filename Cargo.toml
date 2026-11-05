@@ -58,6 +58,7 @@ slint = { version = "=1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 slint-build = "=1.18.1"
+i-slint-backend-testing = "=1.18.1"
 tray-icon = "=0.26.1"
 
 # Config and data

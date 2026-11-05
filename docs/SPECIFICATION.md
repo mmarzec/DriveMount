@@ -277,7 +277,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-UX-02 | The UI consists of the main window, one profile dialog, one settings page and small prompts. There are no other windows. |
 | NFR-UX-03 | Every error message says what happened and what to do (catalogue in §7.8). No raw error codes appear without explanation. |
 | NFR-UX-04 | Everything can be done with the keyboard (§7.7). Every control has an accessible name for screen readers. |
-| NFR-UX-05 | English only in v1. All strings are wrapped in Slint `@tr()` / `tr!` so translations can be added without code changes. |
+| NFR-UX-05 | English only in v1. All strings are wrapped in Slint `@tr()` so translations can be added without code changes. `slint` has no `tr!` for Rust, so what Rust has to show comes from the `Texts` global in `apps/fsm/ui/texts.slint`. |
 
 ### 4.5 Maintainability (NFR-MAINT)
 
@@ -752,6 +752,7 @@ key_path = ""
 # nfs_port = 0             mount_port = 0             reserved_port = true
 ```
 
+- **`ui-state.toml`,** beside this file, holds the window's size and position (§7.1). It is apart because moving a window should not rewrite and back up the profiles, and because it still works when this file is read-only. Anything wrong with it costs only what it held.
 - **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager". Its profiles can still be mounted, read by this version's rules; Save and Delete are off.
 - **Unknown keys** are kept on save, for forward compatibility, at the top of the file, in `[settings]`, in a profile and in its `jump`. Comments are not kept, and known keys are written in the order above.
 - **A damaged file:** one that is not UTF-8 or TOML, has no `schema_version` (so an empty file too), or has `settings` or `profiles` of the wrong type. The app starts read-only with nothing loaded (NFR-REL-05). A save also refuses, and the app turns read-only, if the file has become like this since it was read.
@@ -799,6 +800,8 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 
 ### 7.1 Main window (default 640 × 420, minimum 480 × 320; size and position remembered)
 
+> **Left out for now, by the owner's decision of 2026-11-05: search and groups.** This covers the search box and Ctrl+F in the mock-up and §7.7, the *Search and list* items about them below, the headers of FR-PROF-09, and "in the current filter" in FR-MNT-09, so *Mount all* takes every unmounted profile. Rows are one list, sorted by name, and a profile's `group` stays in the model and the file without being shown. The text below still describes them, for when they come back.
+
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  FS Manager                                           ─   □   ×  │
@@ -830,7 +833,12 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 | Error | ● red + one-line message | Retry |
 
 **Rows and menus**
-- **Drive letter:** the row shows it when mounted, and the preferred letter (dimmed) otherwise.
+- **Drive letter:** the row shows it when mounted, and the preferred letter (dimmed) otherwise. *Auto* has none to show until it is mounted.
+- **Toolbar:** *Unmount all* sits beside *Mount all*, as FR-MNT-09 has it there, though the mock-up does not. Each is disabled when it has nothing to act on.
+- **Status bar:** also counts failed profiles ("· 1 failed"), and says "Nothing mounted" when there is nothing to count.
+- **Unmounting** has no row in the table above: an amber half dot, with *Unmount* disabled.
+- **What else gets a line under the row:** "Y: (Z: was in use)" (FR-MNT-04), a profile that breaks a rule of §7.3, whose *Mount* is disabled until it is edited, and an entry of the file that cannot be read (§6.1), which can only be deleted.
+- **⋯ button:** drawn as `···`, as the character in the mock-up is in no font Slint falls back to on Windows 10.
 - **⋯ menu:** *Open in Explorer* (when mounted), *Edit…*, *Delete…*.
 - **Mouse:** double-clicking a row opens Explorer if mounted, otherwise mounts. The right-click menu is the same as ⋯.
 
@@ -965,6 +973,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 | Del | Delete selected (asks first) |
 | Ctrl+F | Focus search |
 | Esc | Close dialog / clear search / hide window to tray |
+| Del, in the question it asks | Focus starts on *Cancel*, so Enter keeps the profile; Esc does too |
 | ↑ ↓ | Move selection |
 
 ### 7.8 Error catalogue

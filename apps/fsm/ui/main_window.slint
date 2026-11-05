@@ -1,0 +1,391 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The main window (spec 7.1), and its keys (spec 7.7). `fsm_app::ui` holds what it means: this file
+// only draws what it is given, and reports what was pressed.
+
+import { Button, Palette, ScrollView } from "std-widgets.slint";
+import { EntryKind, ListEntry, PrimaryAction, ProfileRow, RowStatus } from "rows.slint";
+import { Texts } from "texts.slint";
+
+export { EntryKind, ListEntry, PrimaryAction, RowStatus, Texts }
+
+export enum ThemeChoice { system, light, dark }
+
+component Banner {
+    in property <string> text;
+    in property <string> button-text;
+    in property <bool> interactive: true;
+
+    callback clicked();
+
+    accessible-role: groupbox;
+    accessible-label: text;
+
+    Rectangle {
+        background: Palette.alternate-background;
+    }
+
+    HorizontalLayout {
+        padding: 8px;
+        padding-left: 12px;
+        spacing: 12px;
+
+        Text {
+            text: "⚠ " + root.text;
+            wrap: word-wrap;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            accessible-role: none;
+        }
+
+        if root.button-text != "": VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 0;
+
+            Button {
+                text: root.button-text;
+                enabled: root.interactive;
+                clicked => {
+                    root.clicked();
+                }
+            }
+        }
+    }
+}
+
+export component MainWindow inherits Window {
+    title: "FS Manager";
+    preferred-width: 640px;
+    preferred-height: 420px;
+    min-width: 480px;
+    min-height: 320px;
+
+    // The list.
+    in property <[ListEntry]> entries;
+    in property <length> list-height;
+    in property <int> selected-index: -1;
+    in property <length> selected-top;
+    in property <length> selected-height;
+    // Whether there is nothing to list at all.
+    in property <bool> no-connections;
+    in property <string> status-text;
+
+    // What is allowed.
+    in property <bool> can-add: true;
+    in property <bool> can-mount-all;
+    in property <bool> can-unmount-all;
+
+    // Banners.
+    in property <bool> winfsp-missing;
+    in property <string> read-only-text;
+    in property <string> settings-text;
+
+    // Asking first.
+    in property <string> question;
+
+    out property <length> list-scroll: -list.content-y;
+    out property <length> list-visible-height: list.visible-height;
+
+    callback add-pressed();
+    callback mount-all-pressed();
+    callback unmount-all-pressed();
+    callback settings-pressed();
+    callback download-winfsp-pressed();
+
+    callback row-pressed(index: int);
+    callback row-double-clicked(index: int);
+    callback row-primary(index: int);
+    callback row-open(index: int);
+    callback row-edit(index: int);
+    callback row-delete(index: int);
+
+    callback move-selection(delta: int);
+    callback activate-selected();
+    callback open-selected();
+    callback edit-selected();
+    callback delete-selected();
+    callback hide-pressed();
+
+    callback question-answered(yes: bool);
+
+    public function set-theme(choice: ThemeChoice) {
+        Palette.color-scheme = choice == ThemeChoice.dark ? ColorScheme.dark
+            : choice == ThemeChoice.light ? ColorScheme.light
+            : ColorScheme.unknown;
+    }
+
+    public function ensure-selected-visible() {
+        if (root.selected-index < 0) {
+            return;
+        }
+        if (root.selected-top < -list.content-y) {
+            list.content-y = -root.selected-top;
+        } else if (root.selected-top + root.selected-height > -list.content-y + list.visible-height) {
+            list.content-y = list.visible-height - root.selected-top - root.selected-height;
+        }
+    }
+
+    public function focus-list() {
+        keys.focus();
+    }
+
+    property <bool> asking: root.question != "";
+    property <bool> interactive: !root.asking;
+    out property <bool> is-dark: Palette.color-scheme == ColorScheme.dark;
+
+    init => {
+        keys.focus();
+    }
+
+    keys := FocusScope {
+        // Before anything focused sees them, so that they work wherever the focus is.
+        capture-key-pressed(event) => {
+            if (root.asking) {
+                if (event.text == Key.Escape) {
+                    root.question-answered(false);
+                    keys.focus();
+                    return accept;
+                }
+                return reject;
+            }
+            if (event.text == Key.Escape) {
+                root.hide-pressed();
+                return accept;
+            }
+            if (event.text == Key.UpArrow) {
+                root.move-selection(-1);
+                return accept;
+            }
+            if (event.text == Key.DownArrow) {
+                root.move-selection(1);
+                return accept;
+            }
+            if (event.modifiers.control) {
+                if (event.text == "n" || event.text == "N") {
+                    root.add-pressed();
+                    return accept;
+                }
+                if (event.text == "e" || event.text == "E") {
+                    root.edit-selected();
+                    return accept;
+                }
+                if (event.text == Key.Return) {
+                    root.open-selected();
+                    return accept;
+                }
+            }
+            return reject;
+        }
+
+        // What the focused control did not want, so that Enter stays a focused button's.
+        key-pressed(event) => {
+            if (root.asking) {
+                return reject;
+            }
+            if (event.text == Key.Return) {
+                root.activate-selected();
+                return accept;
+            }
+            if (event.text == Key.Delete) {
+                root.delete-selected();
+                return accept;
+            }
+            return reject;
+        }
+
+        VerticalLayout {
+            HorizontalLayout {
+                padding: 8px;
+                spacing: 8px;
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                Button {
+                    text: @tr("+ Add");
+                    enabled: root.interactive && root.can-add;
+                    accessible-label: @tr("Add connection");
+                    clicked => {
+                        root.add-pressed();
+                    }
+                }
+
+                Button {
+                    text: @tr("Mount all");
+                    enabled: root.interactive && root.can-mount-all;
+                    clicked => {
+                        root.mount-all-pressed();
+                    }
+                }
+
+                Button {
+                    text: @tr("Unmount all");
+                    enabled: root.interactive && root.can-unmount-all;
+                    clicked => {
+                        root.unmount-all-pressed();
+                    }
+                }
+
+                Button {
+                    text: "⚙";
+                    enabled: root.interactive;
+                    accessible-label: @tr("Settings");
+                    clicked => {
+                        root.settings-pressed();
+                    }
+                }
+            }
+
+            if root.winfsp-missing: Banner {
+                text: @tr("WinFsp 2.1 or later is required to mount SSH drives");
+                button-text: @tr("Download WinFsp");
+                interactive: root.interactive;
+                clicked => {
+                    root.download-winfsp-pressed();
+                }
+            }
+
+            if root.read-only-text != "": Banner {
+                text: root.read-only-text;
+            }
+
+            if root.settings-text != "": Banner {
+                text: root.settings-text;
+            }
+
+            Rectangle {
+                vertical-stretch: 1;
+
+                list := ScrollView {
+                    enabled: root.interactive;
+                    content-width: self.visible-width;
+                    content-height: root.list-height;
+
+                    for entry[index] in root.entries: Rectangle {
+                        y: entry.top;
+                        x: 4px;
+                        width: parent.width - 8px;
+                        height: entry.height;
+
+                        ProfileRow {
+                            width: parent.width;
+                            height: parent.height;
+                            entry: entry;
+                            selected: index == root.selected-index;
+                            interactive: root.interactive;
+                            position: index;
+                            total: root.entries.length;
+                            pressed => {
+                                root.row-pressed(index);
+                                keys.focus();
+                            }
+                            double-clicked => {
+                                root.row-double-clicked(index);
+                            }
+                            primary => {
+                                root.row-primary(index);
+                            }
+                            open => {
+                                root.row-open(index);
+                            }
+                            edit => {
+                                root.row-edit(index);
+                            }
+                            delete => {
+                                root.row-delete(index);
+                            }
+                        }
+                    }
+                }
+
+                if root.no-connections: VerticalLayout {
+                    alignment: center;
+                    spacing: 12px;
+
+                    Text {
+                        text: @tr("No connections yet.");
+                        horizontal-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+
+                        Button {
+                            text: @tr("Add connection");
+                            primary: true;
+                            enabled: root.interactive && root.can-add;
+                            clicked => {
+                                root.add-pressed();
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                height: 28px;
+                background: Palette.alternate-background;
+
+                Text {
+                    x: 12px;
+                    width: parent.width - 24px;
+                    text: root.status-text;
+                    overflow: elide;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        if root.asking: Rectangle {
+            background: #00000060;
+
+            // Nothing behind it can be reached by mouse, and everything there is disabled for Tab.
+            TouchArea { }
+
+            Rectangle {
+                width: min(parent.width - 48px, 400px);
+                height: panel.preferred-height;
+                border-radius: 8px;
+                border-width: 1px;
+                border-color: Palette.border;
+                background: Palette.background;
+
+                panel := VerticalLayout {
+                    padding: 16px;
+                    spacing: 16px;
+
+                    Text {
+                        text: root.question;
+                        wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        Button {
+                            text: @tr("Delete");
+                            clicked => {
+                                root.question-answered(true);
+                                keys.focus();
+                            }
+                        }
+
+                        // The safe answer is the one Enter gives.
+                        no := Button {
+                            text: @tr("Cancel");
+                            init => {
+                                self.focus();
+                            }
+                            clicked => {
+                                root.question-answered(false);
+                                keys.focus();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

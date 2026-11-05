@@ -1,0 +1,254 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// One line of the list: a profile, or an entry of the file that cannot be read
+// (spec 7.1). Rust decides what each shows and how high it is: see `fsm_app::ui::list`.
+
+import { Button, Palette } from "std-widgets.slint";
+
+export enum EntryKind { profile, unreadable }
+export enum RowStatus { disconnected, connecting, mounted, unmounting, error }
+export enum PrimaryAction { none, mount, cancel, unmount, retry }
+
+export struct ListEntry {
+    kind: EntryKind,
+    top: length,
+    height: length,
+    name: string,
+    address: string,
+    letter: string,
+    letter-is-live: bool,
+    status: RowStatus,
+    line: string,
+    line-is-problem: bool,
+    primary: PrimaryAction,
+    primary-enabled: bool,
+    can-open: bool,
+    can-edit: bool,
+    can-delete: bool,
+}
+
+global Colours {
+    out property <color> grey: #8a8a8a;
+    out property <color> amber: #d08a00;
+    out property <color> green: #2e9e4f;
+    out property <color> red: #d9363e;
+}
+
+// Drawn, rather than the mock-up's characters, as the software renderer has no paths and a font may
+// not have those. Only a connecting dot asks for frames, so nothing runs while idle (NFR-PERF-05).
+component StatusDot {
+    in property <RowStatus> status;
+    property <color> colour: status == RowStatus.mounted ? Colours.green
+        : status == RowStatus.error ? Colours.red
+        : status == RowStatus.disconnected ? Colours.grey
+        : Colours.amber;
+    property <bool> filled: status == RowStatus.mounted || status == RowStatus.error;
+    property <bool> half: status == RowStatus.connecting || status == RowStatus.unmounting;
+
+    width: 12px;
+    height: 12px;
+    accessible-role: none;
+
+    Rectangle {
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        border-width: 1.5px;
+        border-color: root.colour;
+        background: root.filled ? root.colour : transparent;
+    }
+
+    if root.half: Rectangle {
+        x: 6px;
+        width: 6px;
+        height: 12px;
+        clip: true;
+
+        Rectangle {
+            x: -6px;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            background: root.colour;
+        }
+    }
+
+    if root.status == RowStatus.connecting: Rectangle {
+        width: 12px;
+        height: 12px;
+        border-radius: 6px;
+        background: Palette.background;
+        opacity: 0.35 + 0.35 * Math.sin(360deg * animation-tick() / 1.2s);
+    }
+}
+
+export component ProfileRow {
+    in property <ListEntry> entry;
+    in property <bool> selected;
+    in property <bool> interactive: true;
+    in property <int> position;
+    in property <int> total;
+
+    callback pressed();
+    callback double-clicked();
+    callback primary();
+    callback open();
+    callback edit();
+    callback delete();
+
+    property <string> status-text: entry.kind == EntryKind.unreadable ? @tr("cannot be read")
+        : entry.status == RowStatus.mounted ? @tr("mounted")
+        : entry.status == RowStatus.connecting ? @tr("connecting")
+        : entry.status == RowStatus.unmounting ? @tr("unmounting")
+        : entry.status == RowStatus.error ? @tr("failed")
+        : @tr("not mounted");
+    property <string> primary-text: entry.primary == PrimaryAction.mount ? @tr("Mount")
+        : entry.primary == PrimaryAction.cancel ? @tr("Cancel")
+        : entry.primary == PrimaryAction.unmount ? @tr("Unmount")
+        : entry.primary == PrimaryAction.retry ? @tr("Retry")
+        : "";
+
+    accessible-role: list-item;
+    accessible-label: entry.name + ", " + status-text
+        + (entry.address != "" ? ", " + entry.address : "")
+        + (entry.letter != "" ? ", " + entry.letter : "")
+        + (entry.line != "" ? ", " + entry.line : "");
+    accessible-item-selectable: true;
+    accessible-item-selected: selected;
+    accessible-item-index: position;
+    accessible-item-count: total;
+    accessible-action-default => {
+        root.pressed();
+    }
+
+    menu := ContextMenuArea {
+        enabled: root.interactive;
+        Menu {
+            if root.entry.can-open: MenuItem {
+                title: @tr("Open in Explorer");
+                activated => {
+                    root.open();
+                }
+            }
+            MenuItem {
+                title: @tr("Edit…");
+                enabled: root.entry.can-edit;
+                activated => {
+                    root.edit();
+                }
+            }
+            MenuItem {
+                title: @tr("Delete…");
+                enabled: root.entry.can-delete;
+                activated => {
+                    root.delete();
+                }
+            }
+        }
+
+        Rectangle {
+            border-radius: 4px;
+            background: root.selected ? Palette.selection-background.with-alpha(0.22)
+                : touch.has-hover ? Palette.alternate-background
+                : transparent;
+        }
+
+        touch := TouchArea {
+            enabled: root.interactive;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    root.pressed();
+                }
+            }
+            double-clicked => {
+                root.double-clicked();
+            }
+        }
+
+        VerticalLayout {
+            padding-left: 8px;
+            padding-right: 4px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                height: 40px;
+
+                VerticalLayout {
+                    alignment: center;
+                    StatusDot {
+                        status: root.entry.status;
+                    }
+                }
+
+                Text {
+                    text: root.entry.name;
+                    preferred-width: 0;
+                    horizontal-stretch: 2;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+
+                Text {
+                    text: root.entry.address;
+                    preferred-width: 0;
+                    horizontal-stretch: 3;
+                    overflow: elide;
+                    vertical-alignment: center;
+                    opacity: 0.75;
+                    accessible-role: none;
+                }
+
+                Text {
+                    text: root.entry.letter;
+                    width: 24px;
+                    vertical-alignment: center;
+                    opacity: root.entry.letter-is-live ? 1 : 0.5;
+                    accessible-role: none;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    width: 84px;
+
+                    if root.entry.primary != PrimaryAction.none: Button {
+                        text: root.primary-text;
+                        enabled: root.interactive && root.entry.primary-enabled;
+                        accessible-label: root.primary-text + " " + root.entry.name;
+                        clicked => {
+                            root.primary();
+                        }
+                    }
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    width: 32px;
+
+                    more := Button {
+                        // The mock-up's character is in no font the system falls back to here.
+                        text: "···";
+                        enabled: root.interactive;
+                        accessible-label: @tr("More actions for {}", root.entry.name);
+                        clicked => {
+                            menu.show({
+                                x: self.absolute-position.x - root.absolute-position.x,
+                                y: self.absolute-position.y - root.absolute-position.y + self.height,
+                            });
+                        }
+                    }
+                }
+            }
+
+            if root.entry.line != "": Text {
+                text: (root.entry.line-is-problem ? "⚠ " : "") + root.entry.line;
+                height: 20px;
+                color: root.entry.line-is-problem ? Colours.red : Palette.foreground;
+                opacity: root.entry.line-is-problem ? 1 : 0.75;
+                overflow: elide;
+                vertical-alignment: top;
+                accessible-role: none;
+            }
+        }
+    }
+}

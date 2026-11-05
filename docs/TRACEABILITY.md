@@ -12,7 +12,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | PLAT-01 | M2-09, M2-13 | – | – |
 | PLAT-02 | M1-11, M2-10 | Detection: `fsm-win` `winfsp::tests`, with the installed 2.2 in `the_installed_winfsp_is_ready` (`#[ignore]`). Installer: M2-10 | – |
 | PLAT-03 | M0-1, M1-12c | Mounted unelevated by every test in `crates/fsm-winfsp/tests`, on this Windows 10 Home. M2-09, M2-13 for the rest | – |
-| PLAT-04 | M1-16, M1-17 | – | – |
+| PLAT-04 | M1-16, M1-17 | All sizes are logical pixels. The owner checked 100% and 150% (H-06). Two monitors with different scaling: not tried | – |
 
 ## Profiles
 
@@ -24,9 +24,9 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | Each rule of §7.3 has unit tests in `crates/fsm-core/src/profile/validate.rs`, and `each_bad_field_is_reported_against_its_own_box` for the marks. Save refusing them: `save_checks_the_fields_and_changes_nothing_if_they_are_wrong`. Marking fields and disabling Save: M1-17 | – |
 | FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | Splitting: `the_acceptance_case_fills_all_four_fields`, `a_url_fills_all_four_fields` and the rest of `crates/fsm-core/src/profile/paste.rs`. Filling the boxes: M1-17 | – |
 | FR-PROF-06 | M1-13, M1-14, M1-15, M1-17 | Below the UI, wrong password and missing path included: `test_connection_reports_a_good_login_a_bad_one_and_a_missing_path` (`apps/fsm/tests/real_drive.rs`, needs S-03). The command: `test_reports_the_round_trip_and_touches_nothing` and its companions. The dialog: M1-17 | – |
-| FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | The removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: `delete_takes_the_profile_and_its_secrets_and_leaves_the_others`, `deleting_a_mounted_profile_unmounts_it_first`, `a_secret_that_cannot_be_deleted_keeps_the_profile_so_it_can_be_tried_again`. Asking first: M1-16 | – |
+| FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | The removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: `delete_takes_the_profile_and_its_secrets_and_leaves_the_others`, `deleting_a_mounted_profile_unmounts_it_first`, `a_secret_that_cannot_be_deleted_keeps_the_profile_so_it_can_be_tried_again`. Asking first: `delete_asks_first_and_escape_or_cancel_keep_the_profile`, `deleting_a_mounted_profile_says_it_unmounts_first` (`apps/fsm/src/ui/tests.rs`) | – |
 | FR-PROF-08 | M1-13, M1-14, M1-15, M1-17 | The rule, field by field: `connection_fields_are_locked_while_mounted_and_free_after`, `what_is_not_a_connection_field_can_change_while_mounted`. Read-only boxes and the hint: M1-17 | – |
-| FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | So far the field and its limit: `a_group_is_at_most_32_characters`. The headers: M1-16 | – |
+| FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | So far the field and its limit: `a_group_is_at_most_32_characters`. The headers: left out for now by the owner (spec §7.1) | – |
 
 ## SSH/SFTP backend
 
@@ -52,7 +52,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | The commands: `a_profile_starts_disconnected_and_mounts_through_connecting`, `unmounting_goes_back_to_disconnected`. On a real drive: `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/fsm/tests/real_drive.rs`). Buttons and tray: M1-16, M2-03 | – |
+| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | The commands: `a_profile_starts_disconnected_and_mounts_through_connecting`, `unmounting_goes_back_to_disconnected`. On a real drive: `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/fsm/tests/real_drive.rs`). The row's button and Enter: `the_button_follows_the_state_and_sends_the_right_command`, `the_arrows_move_the_selection_and_enter_acts_on_it` (`apps/fsm/src/ui/tests.rs`). The ⋯ menu by real keys: looked at, in no test. Tray: M2-03 | – |
 | FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | `auto_takes_z_when_it_is_free`, `auto_goes_down_from_z_past_what_is_taken`, `a_free_letter_of_the_profile_is_used_under_either_policy` (`crates/fsm-core/src/manager/letters.rs`) | – |
 | FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `fsm-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: `a_b_and_c_are_never_used_or_even_asked_about`, `a_profile_cannot_ask_for_a_b_or_c` | – |
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | Both behaviours, below the UI: `a_taken_letter_under_auto_mounts_on_another_and_says_so`, `a_taken_letter_under_fail_stops_before_any_backend_is_made`, `a_profiles_letter_taken_during_the_mount_goes_by_the_setting`. The row note and toast: M2-07 | – |
@@ -60,7 +60,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Read from Explorer's own window through UI Automation: `tests/explorer.rs` (`#[ignore]`d). Showing about 850 ms, hiding about 1.2 s, as the criterion now says. The test allows 3 s, to catch Explorer not being told, and prints what it measured. Confirmed by the owner, 2026-11-05 | – |
 | FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | Through a mounted drive, with `VolumeConfig::read_only`: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`), and `copying_into_a_read_only_drive_fails_cleanly` and `delete_on_close_does_nothing_on_a_read_only_drive` (`tests/write_path.rs`). The choice per profile: `a_read_only_profile_gets_a_read_only_drive` (`apps/fsm/tests/real_drive.rs`) | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-09 | M1-11, M1-12a–c, M1-15, M1-16, M2-07 | `mount_all_and_unmount_all_send_one_command_each`, `mount_all_takes_what_is_unmounted_and_unmount_all_what_is_up`. The filter: left out for now by the owner (spec §7.1) | – |
 | FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | `files_left_open_do_not_hold_up_unmounting_and_are_closed`, `a_flush_that_fails_as_the_drive_stops_does_not_fail_the_unmount`, `a_server_that_stopped_answering_holds_up_unmounting_for_one_timeout_at_most` (`tests/lifecycle.rs`), through Win32 handles. Notepad itself: H-07 | – |
 | FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | Below the UI: `dropping_a_mount_in_progress_cancels_it_at_once` and `a_mount_dropped_just_as_the_drive_starts_leaves_no_drive`. Through the manager: `cancel_while_connecting_returns_to_disconnected_at_once`, and `cancel_at_a_real_dialog_is_back_within_a_second` (`apps/fsm/tests/real_drive.rs`). The row's button: M1-16 | – |
 | FR-MNT-12 | M1-11, M1-12a–c, M1-15, M2-07 | `fsm-win` `explorer_opens_at_the_root_of_the_drive` (`#[ignore]`): a real window at a `subst` drive's root. A mounted drive: M1-19 | – |
@@ -104,14 +104,14 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-APP-03 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | – | – |
-| FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection only: `fsm-win` `winfsp::tests`. Banner: M1-16 | – |
+| FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection: `fsm-win` `winfsp::tests`. Banner and disabled buttons: `without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not`, `without_winfsp_only_starting_a_mount_is_off`. Opening the page: `only_a_secure_web_page_is_opened`, with M1-18 to connect it | – |
 | FR-APP-07 | M1-11, M2-02, M2-06 | – | – |
 
 ## Settings
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SET-01 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-01 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The theme in the window: `the_theme_can_be_forced_either_way_and_handed_back`. The setting: M2-05 | – |
 | FR-SET-02 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
 | FR-SET-03 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
 | FR-SET-04 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
@@ -184,11 +184,11 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-UX-01 | M1-16, M1-17 | – | – |
+| NFR-UX-01 | M1-16, M1-17 | One click from the window: `the_button_follows_the_state_and_sends_the_right_command`. The tray: M2-03 | – |
 | NFR-UX-02 | M1-16, M1-17 | – | – |
-| NFR-UX-03 | M1-16, M1-17 | – | – |
-| NFR-UX-04 | M1-16, M1-17 | – | – |
-| NFR-UX-05 | M1-16, M1-17 | – | – |
+| NFR-UX-03 | M1-16, M1-17 | `each_error_has_the_text_and_code_of_the_catalogue`, `details_meant_for_the_log_are_not_shown`, `a_banner_says_what_to_do_and_takes_one_line_of_a_long_detail` (`apps/fsm/src/ui/tests.rs`) | – |
+| NFR-UX-04 | M1-16, M1-17 | Keys: `the_shortcuts_of_the_table_work`, `the_arrows_move_the_selection_and_enter_acts_on_it`, `the_selection_is_kept_in_view`. Names: `every_button_has_a_name_for_screen_readers`, `a_row_reads_out_its_state_and_address`. The walkthrough: the owner (H-06). A real screen reader: not tried | – |
+| NFR-UX-05 | M1-16, M1-17 | By construction: the window's text is in `@tr` in `apps/fsm/ui/*.slint`. No test looks for a string left out, and no translation has been tried | – |
 
 ## Maintainability
 

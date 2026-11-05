@@ -7,8 +7,9 @@ use std::path::PathBuf;
 
 use fsm_vfs::DriveLetter;
 use windows::Win32::Foundation::{
-    ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LPARAM, WIN32_ERROR, WPARAM,
+    ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LPARAM, RECT, WIN32_ERROR, WPARAM,
 };
+use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONULL, MonitorFromRect};
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
     RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
@@ -158,6 +159,56 @@ fn check(result: WIN32_ERROR) -> io::Result<()> {
     }
 }
 
+/// Opens a web page in the user's browser, as the *Download WinFsp* button does (FR-APP-06). Only
+/// `https://` is taken, as anything else could start a program.
+///
+/// # Errors
+/// If it is not `https://`, or nothing could open it.
+pub fn open_web_page(url: &str) -> io::Result<()> {
+    if !url.starts_with("https://") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "only an https:// page can be opened",
+        ));
+    }
+    let page = wide(url);
+    // SAFETY: all strings are nul-terminated and outlive the call.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(page.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Above 32 is success, as for Explorer below.
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "ShellExecuteW could not open the page: code {code}"
+        )))
+    }
+}
+
+/// Whether any of this rectangle, in physical pixels, is on a monitor. A remembered window position
+/// may not be, once a monitor has gone.
+#[must_use]
+pub fn is_on_a_monitor(x: i32, y: i32, width: u32, height: u32) -> bool {
+    let rect = RECT {
+        left: x,
+        top: y,
+        right: x.saturating_add_unsigned(width),
+        bottom: y.saturating_add_unsigned(height),
+    };
+    // SAFETY: `rect` outlives the call, which only reads it.
+    let monitor = unsafe { MonitorFromRect(&raw const rect, MONITOR_DEFAULTTONULL) };
+    !monitor.is_invalid()
+}
+
 /// Opens the drive's root in a new Explorer window (FR-MNT-12).
 ///
 /// # Errors
@@ -239,6 +290,33 @@ mod tests {
         notify_drive_added(letter('Q'));
         notify_drive_removed(letter('Q'));
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn only_a_secure_web_page_is_opened() {
+        for url in [
+            "http://winfsp.dev/",
+            r"C:\Windows
+otepad.exe",
+            "file:///C:/",
+            "",
+        ] {
+            let refused = open_web_page(url).unwrap_err();
+            assert_eq!(refused.kind(), io::ErrorKind::InvalidInput, "{url}");
+        }
+    }
+
+    #[test]
+    fn a_window_far_from_every_monitor_is_not_on_one() {
+        assert!(!is_on_a_monitor(-1_000_000, -1_000_000, 640, 420));
+        assert!(!is_on_a_monitor(i32::MAX - 10, i32::MAX - 10, 640, 420));
+    }
+
+    /// Windows puts the primary monitor's corner at 0, 0.
+    #[test]
+    #[ignore = "needs a signed-in desktop, which has a monitor"]
+    fn a_window_at_the_corner_of_the_primary_monitor_is_on_it() {
+        assert!(is_on_a_monitor(0, 0, 640, 420));
     }
 
     #[test]
