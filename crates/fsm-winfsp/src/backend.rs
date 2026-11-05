@@ -42,12 +42,13 @@ pub struct VolumeConfig {
     pub cache_ttl: Duration,
     /// Dispatcher threads. 0 is WinFsp's default.
     pub threads: u32,
+    /// Refuse every change with "media is write protected" (FR-MNT-07).
+    pub read_only: bool,
 }
 
 /// A [`RemoteFs`] shown as a drive, through `CachedFs<DeadlineFs<…>>`.
 ///
-/// The write path is yet to come (M1-12b), so for now every drive is read-only. `MountBackend` comes
-/// with M1-12c.
+/// `MountBackend` comes with M1-12c.
 pub struct WinFspBackend {
     config: VolumeConfig,
     fs: Arc<Stack>,
@@ -96,10 +97,12 @@ impl WinFspBackend {
             fs: Arc::clone(&self.fs),
             deadline: Arc::clone(&self.deadline),
             op_timeout: self.config.op_timeout,
+            read_only: self.config.read_only,
             runtime: self.runtime.clone(),
             label: fit_label(&self.config.label),
             descriptor: security::current_user_descriptor().map_err(other("security"))?,
             volume: Mutex::new(None),
+            open_files: Mutex::new(Vec::new()),
         };
         let options = FileSystemParams {
             use_dir_info_by_name: true,
@@ -143,7 +146,7 @@ fn volume_params(config: &VolumeConfig) -> VolumeParams {
         .case_preserved_names(true)
         .unicode_on_disk(true)
         .persistent_acls(false)
-        .read_only_volume(true)
+        .read_only_volume(config.read_only)
         .post_cleanup_when_modified_only(true)
         .pass_query_directory_filename(true)
         .file_info_timeout(FILE_INFO_TIMEOUT_MS)

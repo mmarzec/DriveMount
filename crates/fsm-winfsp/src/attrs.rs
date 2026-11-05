@@ -3,7 +3,7 @@
 //! Remote attributes as Windows shows them (spec §5.6).
 
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fsm_vfs::{Attr, RemotePath};
 use windows::Win32::Storage::FileSystem::{
@@ -17,19 +17,36 @@ pub(crate) const ALLOCATION_UNIT: u64 = 4096;
 /// 1970-01-01 as a FILETIME, which counts 100 ns ticks from 1601-01-01.
 const FILETIME_OF_UNIX_EPOCH: u64 = 116_444_736_000_000_000;
 const NANOS_PER_TICK: u128 = 100;
+const TICKS_PER_SECOND: u64 = 10_000_000;
 
 /// A FILETIME, or 0, which Windows shows as no time, for a time the server left out.
 pub(crate) fn filetime(time: Option<SystemTime>) -> u64 {
     let Some(time) = time else {
         return 0;
     };
-    let ticks = |since: std::time::Duration| {
-        u64::try_from(since.as_nanos() / NANOS_PER_TICK).unwrap_or(u64::MAX)
-    };
+    let ticks =
+        |since: Duration| u64::try_from(since.as_nanos() / NANOS_PER_TICK).unwrap_or(u64::MAX);
     match time.duration_since(UNIX_EPOCH) {
         Ok(after) => FILETIME_OF_UNIX_EPOCH.saturating_add(ticks(after)),
         Err(before) => FILETIME_OF_UNIX_EPOCH.saturating_sub(ticks(before.duration())),
     }
+}
+
+/// The time in a FILETIME, or nothing for 0, which means "leave it as it is" when setting times. So do
+/// the values with the top bit set, which `SetFileTime` uses for "stop updating this".
+pub(crate) fn system_time(filetime: u64) -> Option<SystemTime> {
+    if filetime == 0 || filetime > i64::MAX as u64 {
+        return None;
+    }
+    let ticks = |count: u64| {
+        Duration::from_secs(count / TICKS_PER_SECOND)
+            + Duration::from_nanos((count % TICKS_PER_SECOND) * NANOS_PER_TICK as u64)
+    };
+    Some(if filetime >= FILETIME_OF_UNIX_EPOCH {
+        UNIX_EPOCH + ticks(filetime - FILETIME_OF_UNIX_EPOCH)
+    } else {
+        UNIX_EPOCH - ticks(FILETIME_OF_UNIX_EPOCH - filetime)
+    })
 }
 
 /// The Windows attributes. Everything that is not a directory is shown as a file, including a socket,
@@ -75,8 +92,6 @@ fn index_number(path: &RemotePath) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use fsm_vfs::FileKind;
 
     use super::*;
@@ -111,6 +126,25 @@ mod tests {
     #[test]
     fn a_time_the_server_left_out_is_no_time() {
         assert_eq!(filetime(None), 0);
+    }
+
+    #[test]
+    fn a_filetime_turns_back_into_the_same_time() {
+        for time in [
+            UNIX_EPOCH,
+            UNIX_EPOCH + Duration::from_secs(1_700_000_000),
+            UNIX_EPOCH + Duration::from_nanos(1_700_000_000_000_000_100),
+            UNIX_EPOCH - Duration::from_secs(86_400),
+        ] {
+            assert_eq!(system_time(filetime(Some(time))), Some(time));
+        }
+    }
+
+    #[test]
+    fn times_that_mean_no_change_turn_into_nothing() {
+        assert_eq!(system_time(0), None);
+        assert_eq!(system_time(u64::MAX), None);
+        assert_eq!(system_time(u64::MAX - 1), None);
     }
 
     #[test]

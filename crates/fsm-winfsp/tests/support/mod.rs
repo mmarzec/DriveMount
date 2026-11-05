@@ -3,10 +3,13 @@
 //! A mounted drive over a `MemFs`, with a layer between them that counts calls, makes them slow or
 //! makes them fail, and adds what `MemFs` lacks: symbolic links.
 
+// Each test binary uses its own part of this.
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -18,9 +21,13 @@ use fsm_vfs::{
 use fsm_win::drives::is_letter_free;
 use fsm_winfsp::{VolumeConfig, WinFspBackend};
 use tokio::runtime::Runtime;
-use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     FindClose, FindFirstFileW, FindNextFileW, WIN32_FIND_DATAW,
+};
+use windows::Win32::System::Memory::{
+    CreateFileMappingW, FILE_MAP_WRITE, FlushViewOfFile, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
+    PAGE_READWRITE, UnmapViewOfFile,
 };
 use windows::core::PCWSTR;
 
@@ -34,6 +41,13 @@ pub enum Op {
     Read,
     Close,
     Statfs,
+    Write,
+    Flush,
+    SetAttr,
+    Mkdir,
+    RemoveFile,
+    RemoveDir,
+    Rename,
 }
 
 /// `MemFs`, plus counters, delays, failures and symbolic links.
@@ -48,6 +62,10 @@ pub struct Probe {
     failures: Mutex<HashMap<Op, FsError>>,
     /// Link path → target. Created by `add_link`; the target need not exist.
     links: Mutex<HashMap<String, String>>,
+    /// Remote handles open now, and whether a file was removed while any was.
+    open_handles: AtomicU64,
+    watching_removals: AtomicBool,
+    removed_while_open: AtomicBool,
 }
 
 impl Probe {
@@ -70,6 +88,15 @@ impl Probe {
 
     pub fn fail(&self, op: Op, error: FsError) {
         self.failures.lock().unwrap().insert(op, error);
+    }
+
+    /// From now on, notes any file removed while a remote handle is open.
+    pub fn require_closed_before_remove(&self) {
+        self.watching_removals.store(true, Ordering::SeqCst);
+    }
+
+    pub fn removed_while_open(&self) -> bool {
+        self.removed_while_open.load(Ordering::SeqCst)
     }
 
     pub fn add_link(&self, link: &str, target: &str) {
@@ -113,6 +140,9 @@ impl RemoteFs for Probe {
     }
 
     async fn lstat(&self, path: &RemotePath) -> FsResult<Attr> {
+        if self.links.lock().unwrap().contains_key(path.as_str()) {
+            return Ok(link_attr());
+        }
         self.inner.lstat(path).await
     }
 
@@ -137,13 +167,7 @@ impl RemoteFs for Probe {
             if link.parent().as_ref() == Some(&followed) {
                 entries.push(DirEntry {
                     name: link.file_name().unwrap().to_owned(),
-                    attr: Attr {
-                        kind: FileKind::Symlink,
-                        size: 7,
-                        perm: Some(0o777),
-                        mtime: Some(SystemTime::UNIX_EPOCH),
-                        atime: Some(SystemTime::UNIX_EPOCH),
-                    },
+                    attr: link_attr(),
                 });
             }
         }
@@ -152,7 +176,9 @@ impl RemoteFs for Probe {
 
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle> {
         self.enter(Op::Open).await?;
-        self.inner.open(&self.follow(path), mode).await
+        let handle = self.inner.open(&self.follow(path), mode).await?;
+        self.open_handles.fetch_add(1, Ordering::SeqCst);
+        Ok(handle)
     }
 
     async fn read(&self, handle: &RemoteHandle, offset: u64, len: u32) -> FsResult<Bytes> {
@@ -161,35 +187,51 @@ impl RemoteFs for Probe {
     }
 
     async fn write(&self, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()> {
+        self.enter(Op::Write).await?;
         self.inner.write(handle, offset, data).await
     }
 
     async fn flush(&self, handle: &RemoteHandle) -> FsResult<()> {
+        self.enter(Op::Flush).await?;
         self.inner.flush(handle).await
     }
 
     async fn close(&self, handle: RemoteHandle) -> FsResult<()> {
         self.enter(Op::Close).await?;
+        self.open_handles.fetch_sub(1, Ordering::SeqCst);
         self.inner.close(handle).await
     }
 
     async fn set_attr(&self, target: AttrTarget<'_>, changes: AttrChanges) -> FsResult<Attr> {
+        self.enter(Op::SetAttr).await?;
         self.inner.set_attr(target, changes).await
     }
 
     async fn mkdir(&self, path: &RemotePath) -> FsResult<Attr> {
+        self.enter(Op::Mkdir).await?;
         self.inner.mkdir(path).await
     }
 
     async fn remove_file(&self, path: &RemotePath) -> FsResult<()> {
+        self.enter(Op::RemoveFile).await?;
+        if self.links.lock().unwrap().remove(path.as_str()).is_some() {
+            return Ok(());
+        }
+        if self.watching_removals.load(Ordering::SeqCst)
+            && self.open_handles.load(Ordering::SeqCst) > 0
+        {
+            self.removed_while_open.store(true, Ordering::SeqCst);
+        }
         self.inner.remove_file(path).await
     }
 
     async fn remove_dir(&self, path: &RemotePath) -> FsResult<()> {
+        self.enter(Op::RemoveDir).await?;
         self.inner.remove_dir(path).await
     }
 
     async fn rename(&self, from: &RemotePath, to: &RemotePath, replace: bool) -> FsResult<()> {
+        self.enter(Op::Rename).await?;
         self.inner.rename(from, to, replace).await
     }
 
@@ -200,6 +242,17 @@ impl RemoteFs for Probe {
 
     fn capabilities(&self) -> Capabilities {
         self.inner.capabilities()
+    }
+}
+
+/// What a listing and `lstat` say about a link.
+fn link_attr() -> Attr {
+    Attr {
+        kind: FileKind::Symlink,
+        size: 7,
+        perm: Some(0o777),
+        mtime: Some(SystemTime::UNIX_EPOCH),
+        atime: Some(SystemTime::UNIX_EPOCH),
     }
 }
 
@@ -236,7 +289,7 @@ impl Drop for DriveTurn {
     }
 }
 
-/// A read-only drive that goes away with this value.
+/// A drive that goes away with this value.
 pub struct Drive {
     pub probe: Arc<Probe>,
     pub backend: WinFspBackend,
@@ -250,6 +303,7 @@ pub struct Options {
     pub label: String,
     pub op_timeout: Duration,
     pub cache_ttl: Duration,
+    pub read_only: bool,
 }
 
 impl Default for Options {
@@ -258,6 +312,7 @@ impl Default for Options {
             label: "FSM Test".to_owned(),
             op_timeout: Duration::from_secs(30),
             cache_ttl: Duration::from_secs(5),
+            read_only: false,
         }
     }
 }
@@ -283,6 +338,7 @@ impl Drive {
             op_timeout: options.op_timeout,
             cache_ttl: options.cache_ttl,
             threads: 0,
+            read_only: options.read_only,
         };
         let backend = WinFspBackend::new(fs, config, runtime.handle().clone());
         let letter = start_on_a_free_letter(&backend);
@@ -307,6 +363,45 @@ impl Drive {
 
     pub fn mkdir(&self, path: &str) {
         self.server(self.probe.inner.mkdir(&remote(path))).unwrap();
+    }
+
+    /// What another client of the server would read.
+    pub fn get(&self, path: &str) -> Vec<u8> {
+        self.server(async {
+            let fs = &self.probe.inner;
+            let handle = fs.open(&remote(path), OpenMode::read()).await.unwrap();
+            let mut data = Vec::new();
+            loop {
+                let offset = data.len() as u64;
+                let bytes = fs.read(&handle, offset, 1 << 20).await.unwrap();
+                if bytes.is_empty() {
+                    break;
+                }
+                data.extend_from_slice(&bytes);
+            }
+            fs.close(handle).await.unwrap();
+            data
+        })
+    }
+
+    /// What the server says about a path, or `None` if it is not there.
+    pub fn attr(&self, path: &str) -> Option<Attr> {
+        self.server(self.probe.inner.stat(&remote(path))).ok()
+    }
+
+    /// Creates a file with these contents that the server shows as read-only.
+    pub fn put_read_only(&self, path: &str, data: &[u8]) {
+        self.put(path, data);
+        let changes = AttrChanges {
+            read_only: Some(true),
+            ..AttrChanges::default()
+        };
+        self.server(
+            self.probe
+                .inner
+                .set_attr(AttrTarget::Path(&remote(path)), changes),
+        )
+        .unwrap();
     }
 
     /// Creates a file with these contents, or replaces the contents of one.
@@ -438,6 +533,49 @@ fn found_entry(data: &WIN32_FIND_DATAW) -> Found {
         name: String::from_utf16(&data.cFileName[..len]).unwrap(),
         attributes: data.dwFileAttributes,
         size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
+    }
+}
+
+/// A view of an open file in memory, as far as the size given.
+pub struct MappedFile {
+    mapping: HANDLE,
+    view: MEMORY_MAPPED_VIEW_ADDRESS,
+    len: usize,
+}
+
+impl MappedFile {
+    /// `file` needs to be open for reading and writing, and at least `len` bytes long.
+    pub fn new(file: &std::fs::File, len: usize) -> Self {
+        // SAFETY: the file's handle is open. A mapping keeps what it needs of it.
+        let mapping = unsafe {
+            CreateFileMappingW(raw_handle(file), None, PAGE_READWRITE, 0, 0, PCWSTR::null())
+        }
+        .unwrap();
+        // SAFETY: the mapping was just made, and is for at least `len` bytes.
+        let view = unsafe { MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len) };
+        assert!(!view.Value.is_null());
+        Self { mapping, view, len }
+    }
+
+    pub fn bytes(&mut self) -> &mut [u8] {
+        // SAFETY: the view is `len` bytes, readable and writable, until drop, and borrowed from here.
+        unsafe { std::slice::from_raw_parts_mut(self.view.Value.cast(), self.len) }
+    }
+
+    /// Sends what was changed to the file. Windows only promises it for "soon" otherwise.
+    pub fn flush(&self) {
+        // SAFETY: the view is `len` bytes.
+        unsafe { FlushViewOfFile(self.view.Value, self.len) }.unwrap();
+    }
+}
+
+impl Drop for MappedFile {
+    fn drop(&mut self) {
+        // SAFETY: both are open, and `bytes` cannot be borrowed any more.
+        unsafe {
+            UnmapViewOfFile(self.view).unwrap();
+            CloseHandle(self.mapping).unwrap();
+        }
     }
 }
 

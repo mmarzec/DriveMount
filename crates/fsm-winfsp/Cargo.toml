@@ -36,3 +36,4 @@ winfsp = { workspace = true }
 [target.'cfg(windows)'.dev-dependencies]
 fsm-vfs = { workspace = true, features = ["testing"] }
 fsm-win = { workspace = true }
+windows = { workspace = true, features = ["Win32_System_Memory"] }

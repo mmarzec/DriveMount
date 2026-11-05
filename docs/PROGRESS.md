@@ -2,6 +2,50 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-05: M1-12b `fsm-winfsp` write path (branch `feat/m1-12b-winfsp-write`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `clippy` and `test` for `fsm-vfs` and `fsm-winfsp` also pass in a `rust:1.99.1` container, where `fsm-winfsp` is empty. `fsm-winfsp` has 179 tests: 23 unit tests and 156 that mount real drives through WinFsp: 51 in `tests/read_path.rs`, 103 in `tests/write_path.rs` and 2 in `tests/fsx.rs`. One is `#[ignore]`d, `a_gibibyte_round_trips`, for its memory; it passes. The mounted tests passed 30 runs of 30 in a row on the final code. The exerciser passed 100k operations on its usual seed, before the last small change, which removed a flag, and 10k on 5 other seeds earlier still; since that change it has run in those 30 runs at 10k. The workspace has 534 passing and 128 ignored. The ignored server tests were not run, as `fsm-sftp` did not change. The exe size check was not run: `fsm.exe` does not use this crate yet. `Cargo.lock` did not change.
+
+- **Added:** all the write callbacks of spec §5.8, and `VolumeConfig::read_only`. `tests/write_path.rs` and `tests/fsx.rs`.
+- **Not tried yet: a real `SftpFs` through a drive, and Explorer.** Everything here is `MemFs` through Win32 calls. M1-12c brings the SFTP harness; Explorer is H-06. Things only a real server can show: rename and delete with handles open on Windows OpenSSH, a rename that only changes the case on a case-insensitive server, and what the `fstat` after every write costs.
+- **For the owner to check:**
+  - **`fsx` is our own.** It has no ready Windows build and `winfsp-tests` is not on this machine, so `tests/fsx.rs` does the same operations through Win32, with `fsx`'s limits of 256 KiB and 64 KiB and mapped reads and writes, and checks every read against a copy in memory. It is not the original program, which the plan names. `FSX_OPS=100000` is what M2-09 needs. Building the original was not tried.
+  - **`SetSecurity` gets `STATUS_NOT_SUPPORTED`.** Accepting it and doing nothing would leave someone believing a file was protected. `ReplaceFile` works either way (tested). If a real program turns out to give up over this, H-06 will show it, and accepting it is a one-line change.
+  - **A failed delete looks like success,** as Windows has no way to hear about a failed `Cleanup`. The file is still there in the next listing, and the log has it. Spec §5.8 records this. An earlier check against the server is possible for permissions, but not reliable, so none was added.
+- **Found in WinFsp, none of it visible from M1-12a:**
+  - **The crate has no `CanDelete`,** only `SetDelete`, which the plan lists as an alternative. The driver remembers the flag and passes it to `Cleanup`, so nothing here keeps delete-pending state, as the plan's row suggested.
+  - **`FILE_DELETE_ON_CLOSE` reaches `Cleanup` with no callback that can refuse,** also on a read-only drive, so `Cleanup` checks that itself. Without that the file would be removed. A test covers it.
+  - **Moving a directory into itself and replacing a read-only file are refused by the driver,** as is a parent that is a file (`ERROR_DIRECTORY` for a rename). Guards for the last two were written and then taken out, when injecting faults showed they did nothing.
+  - **Allocation seems to be rounded up to 4096 before it reaches us:** allocating 4 bytes on a 10-byte file does nothing, while allocating 4096 on a 10,000-byte file cuts it there. Seen from the outside only.
+  - **Setting only times arrives with attributes `u32::MAX`,** not 0, going by a fault that read them as a change and made files read-only.
+- **Gotcha for tests:** `File::create` and `fs::write` on an existing file use `OPEN_ALWAYS` and then set the length, so they never reach `Overwrite`. Use `create_always` in `write_path.rs`. The first overwrite tests were testing something else because of this.
+- **Choices the plan left open (now in §5.8):**
+  - **Two remote handles per Windows handle at most,** one to read and one to write, rather than one opened for both. A program opening for both can use a file the server only lets it read or only write, with no retry. A file read and written through one handle costs two of the 112 a mount can hold. This settles M1-12a's question about a read-only handle for a file later written.
+  - **Readers are marked rather than discarded.** A change sets a flag on each handle of the path, and the next read drops what it fetched, so a write never waits for a read. A `discard()` on the write path would have needed either a wait or a limit that could leave stale data behind.
+  - **`Overwrite` is `set_attr(size = 0)` by path,** not `open(truncate)`: no remote handle is needed unless the program goes on to write.
+  - **A name that exists in another case is taken,** for `Create` and `Rename`, and replacing it keeps the name already there. `Ambiguous` still means not found, as M1-04 decided.
+  - **Allocation only shortens a file.** `GetFileInformationByHandle` shows the allocation from the size, not what was asked for.
+- **For later tasks:**
+  - **M1-12c:** the harness should check that closing a handle whose `Cleanup` failed leaves the mount usable. Open files are now also in `Adapter::open_files`, so **`stop` not calling `Close`** (noted in M1-12a) leaves them there too. They go with the `Adapter`.
+  - **M1-15:** pass the profile's read-only setting to `VolumeConfig::read_only`.
+  - **M2-01:** a remote handle lost on reconnect is in `OpenFile::reader` and `writer`, both of which can be taken and opened again, by the path that follows renames.
+  - **M2-08:**
+    - **Every `Write` waits for `fstat`, one more round trip,** on top of what spec §5.6 expects from having no write-behind. The size could be worked out instead, but a guessed size is the bug class to avoid, so this needs thought along with write-behind.
+    - **Each `Create` lists the parent** to look for the name in any case, and each change empties the cached listing, so creating N files lists a directory N times. `Cleanup` adds an fsync per written file. Both will show in NFR-PERF-07.
+    - Overlapping reads and `GetFileInfo` on one handle now take turns.
+- **Known limits, not tested:**
+  - **A callback that runs out of time can leak a remote handle:** if `open` was on its way, nobody closes what it returns. The same was true of reads. It lasts until the session ends, and counts against the limit of 112.
+  - **A change through a symbolic link does not reach readers of its target,** until their 5 s limit.
+  - **A create that fails after the server made the file** (`fstat` or `set_attr` failing) leaves the file there.
+- **The tests are checked too:** 54 faults injected by script (kept out of the repository), then all run again on the code after the changes they led to. On the first pass 43 failed a test. Of the other 11:
+  - 6 were test gaps, now closed: `Overwrite` not reaching readers (the test sought to 0, which resets read-ahead anyway), attributes `u32::MAX` read as a change, an empty change sent to the server, a taken name left for the server to refuse, and `GetFileInfo` and size changes not using the handle.
+  - 2 were code that did nothing, now removed: the read-only target and file-as-parent guards.
+  - 1 was a wrong claim: a comment said refusing `SetSecurity` would break `ReplaceFile`. It does not, which is why it is now refused.
+  - 1 was a flag that made no difference, `written`, since the driver sends no `Cleanup` for an untouched handle. Removed.
+  - 1 stays uncaught: never taking a closed file out of `open_files`. It is a small leak, and mounted tests cannot see it.
+  - The last full run was before the flag went: 50 of 52 applied were caught, all but the leak and the flag. Removing the flag changed only `Cleanup` and a few lines beside it, so the 8 faults on those were run again and all were caught. That leaves 49 of 50 faults caught on the final code.
+- **Next:** M1-12c.
+
 ## 2026-11-04: M1-12a `fsm-winfsp` read path (branch `feat/m1-12a-winfsp-read`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `clippy` and `test` for `fsm-vfs` and `fsm-winfsp` also pass in a `rust:1.99.1` container, where `fsm-winfsp` is empty. `fsm-winfsp` has 70 tests: 19 unit tests and 51 in `tests/read_path.rs`, which mount real drives through WinFsp, none `#[ignore]`d since building the crate needs WinFsp anyway. Those 51 passed 30 runs of 30 in a row. The workspace has 426 passing and 127 ignored. Of the ignored server tests only `the_limit_on_open_files_is_clean_*` was run, as that is all that changed in `fsm-sftp`. The exe size check was not run: `fsm.exe` does not use this crate yet. `Cargo.lock` gained `winfsp`, `winfsp-sys` and what they need.

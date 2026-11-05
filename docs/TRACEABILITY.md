@@ -58,7 +58,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Only that `SHChangeNotify` returns at once: `notifying_returns_with_no_such_drive`. Whether Explorer reacts: M1-12c, H-06 | – |
-| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | So far every drive is read-only, and each kind of change gets the error in the requirement: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`). A choice per profile, and copying into such a drive: M1-12b, M1-15 | – |
+| FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | Through a mounted drive, with `VolumeConfig::read_only`: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`), and `copying_into_a_read_only_drive_fails_cleanly` and `delete_on_close_does_nothing_on_a_read_only_drive` (`tests/write_path.rs`). The choice per profile: M1-15 | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
@@ -161,9 +161,9 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `fsm_vfs::contract` round-trips the listed sizes on `MemFs`. Through the drive: M1-12b | – |
-| NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | So far only below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through the drive: M1-12b | – |
-| NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | Below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive, for lookups, listings, opens, reads and volume queries: `a_hung_*_times_out` and `the_limit_is_for_the_callback_not_for_each_call` (`crates/fsm-winfsp/tests/read_path.rs`). Write callbacks: M1-12b | – |
+| NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | Through a drive on `MemFs`: `what_is_written_reads_back_the_same_at_every_size`, `a_gibibyte_round_trips` (`#[ignore]`d, 1 GiB) and `tests/fsx.rs`, a Rust `fsx`, 10k operations and `FSX_OPS` for more. On a real server: M1-12c, M2-09 | – |
+| NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | Below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through a drive on `MemFs`: `changes_show_in_the_very_next_listing` and `a_new_size_shows_in_the_very_next_listing` (`crates/fsm-winfsp/tests/write_path.rs`) | – |
+| NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | Below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive, for lookups, listings, opens, reads and volume queries: `a_hung_*_times_out` and `the_limit_is_for_the_callback_not_for_each_call` (`crates/fsm-winfsp/tests/read_path.rs`). Write callbacks: `a_hung_*_times_out`, `the_limit_is_for_the_whole_callback` and, for `Cleanup`, `closing_a_handle_is_bounded_when_the_server_hangs` (`tests/write_path.rs`) | – |
 | NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-05 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-06 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |

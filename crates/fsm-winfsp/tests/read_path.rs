@@ -821,6 +821,7 @@ fn hitting_the_limit_on_open_files_says_so_and_can_be_retried() {
 fn the_volume_describes_itself() {
     let drive = Drive::with_options(Options {
         label: "A label that is longer than thirty-two characters".to_owned(),
+        read_only: true,
         ..Options::default()
     });
     let root = wide(&drive.path(""));
@@ -945,7 +946,10 @@ fn security_of(path: &std::path::Path) -> String {
 
 #[test]
 fn a_read_only_volume_refuses_changes_before_they_reach_the_server() {
-    let drive = Drive::new();
+    let drive = Drive::with_options(Options {
+        read_only: true,
+        ..Options::default()
+    });
     drive.put("/file", b"before");
     drive.mkdir("/dir");
 

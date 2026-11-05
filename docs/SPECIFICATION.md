@@ -511,12 +511,13 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 |---|---|
 | Directory | `FILE_ATTRIBUTE_DIRECTORY` |
 | Regular file whose mode has no owner-write bit (`0o200`) | `FILE_ATTRIBUTE_READONLY` |
-| Setting or clearing the Windows read-only attribute | clears or sets `0o200` on the remote |
+| Setting or clearing the Windows read-only attribute | clears or sets `0o200` on the remote. Ignored on a directory, where Windows gives it no meaning and losing the bit would stop new files going in. |
+| Hidden, system and other Windows attributes | Not stored: setting them succeeds and changes nothing |
 | Symlink | Resolved by the server (`stat`) and shown as its target. A broken link is listed, and opening it returns `STATUS_OBJECT_NAME_NOT_FOUND`. Creating symlinks or hard links returns `STATUS_NOT_SUPPORTED`. |
 | Dot-files | Shown as normal files (not hidden) |
 | mtime / atime | LastWriteTime / LastAccessTime. SFTP v3 has 1 s resolution. |
 | (no birth time in SFTP v3) | CreationTime = ChangeTime = mtime |
-| Owner/ACLs | Not mapped. Every file has one fixed security descriptor: full control for the current user. Access is decided by the server. |
+| Owner/ACLs | Not mapped. Every file has one fixed security descriptor: full control for the current user. Access is decided by the server. Setting a descriptor gets `STATUS_NOT_SUPPORTED`, so that nobody believes a file was protected. `ReplaceFile` works without it. |
 | New files and directories | Created without explicit permissions, so the server's umask applies |
 
 ### 5.7 SFTP backend (fsm-sftp)
@@ -598,18 +599,20 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 |---|---|
 | `GetVolumeInfo` | `statfs` (cached 30 s) |
 | `GetSecurityByName` | `stat` (cached), fixed security descriptor |
-| `Create` | `open(create, exclusive)` or `mkdir` |
-| `Open` | `stat`; the remote handle is opened on first read or write |
-| `Overwrite` | `open(truncate)` or `set_attr(size = 0)` |
-| `Read` / `Write` | `read` / `write` (§5.6) |
-| `Flush` | `flush` (fsync) |
+| `Create` | `open(create, exclusive)` or `mkdir`, after looking for the name in any case |
+| `Open` | `stat`; the remote handles are opened on first read and on first write |
+| `Overwrite` | `set_attr(size = 0)` |
+| `Read` / `Write` | `read` / `write` (§5.6), then `fstat` after a write for the size Windows is told |
+| `Flush` | `flush` (fsync), if this handle has a remote handle for writes; nothing for the whole volume |
 | `GetFileInfo` | `fstat` once the remote handle is open, otherwise cached `stat` |
-| `SetBasicInfo` | `set_attr(times, read-only bit)` |
-| `SetFileSize` | `set_attr(size)` |
-| `CanDelete` | check that a directory is empty |
-| `Cleanup` (delete flag) | `remove_file` / `remove_dir`; flush pending writes |
+| `SetBasicInfo` | `set_attr(times, read-only bit)`; the creation and change times are ignored, as SFTP v3 has neither |
+| `SetFileSize` | `set_attr(size)`. Allocation only cuts a file shorter, as no server has any to set. |
+| `SetDelete` | check that a directory is empty. The `winfsp` crate offers this rather than `CanDelete`. The driver refuses a read-only file before this. |
+| `Cleanup` | With the delete flag: `close`, then `remove_file` / `remove_dir`. Otherwise `flush`, if this handle has a remote handle for writes. |
 | `Close` | `close` |
-| `Rename` | `rename(replace = flag)` |
+| `Rename` | `rename(replace = flag)`, after looking for the new name in any case |
+| `SetSecurity` | `STATUS_NOT_SUPPORTED` (§5.6) |
+| `SetVolumeLabel` | `STATUS_NOT_SUPPORTED`: the label comes from the profile |
 | `ReadDirectory` | cached `read_dir`, paged by marker |
 | `GetDirInfoByName` | lookup in the cached listing |
 
@@ -618,6 +621,13 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **Searches for one name.** WinFsp's driver upper-cases the name before `GetDirInfoByName`, so the case that was asked for is lost and only the listing can answer. If several entries match, the first by name is shown, as finding nothing would make `notes` and `Notes` both look missing. `FindNextFile` after such a search reads the directory as well.
 - **File ids.** `Attr` has no inode, so the index number is a hash of the path. With one id for all, programs that compare ids would take all files for one.
 - **Names Windows cannot take.** A name with a lone surrogate gets `STATUS_OBJECT_NAME_INVALID`. A listed name over 255 UTF-16 units is left out of listings, with a note in the log.
+- **Remote handles.** A Windows handle has up to two: a read-only one with the read-ahead state, and a write-only one. A program can open a file for both and use only what the server allows it, with nothing to retry. A file both read and written through one handle costs two of the server's open files. They close with `Close`, or before the removal in `Cleanup`, as some servers will not remove an open file.
+- **Open files follow renames** through the drive, those of a directory above them included. Handles that have opened nothing remotely yet use the new path too.
+- **A change reaches every reader of the path.** Writes, size changes and `Overwrite` mark all handles on that path, and each drops what it fetched ahead before its next read (§5.6). So a change never waits for a read. Marking is by path, so a change through a symbolic link does not reach readers of its target until the 5 s limit.
+- **`Write`.** Asks `fstat` once for an append (`WriteToEndOfFile`) and once for paging I/O (`ConstrainedIo`), which does not change a file's size. Every write then asks `fstat` for the size Windows is told: guessing it is how a size goes wrong. That costs a round trip per write, which M2-08's write-behind has to deal with.
+- **New names.** A name that exists in another case counts as taken, for `Create` and for `Rename`. Replacing it keeps the name already there rather than making a second that Windows would take for the first, so moving `a` over `Taken` as `TAKEN` leaves `Taken`. A rename that only changes the case uses the new spelling.
+- **`Rename` refuses what a server would allow,** with `STATUS_ACCESS_DENIED` as on Windows: replacing a directory or replacing with one. The driver does the same for a read-only target.
+- **`Cleanup` cannot report failure,** as Windows has already closed the handle: a failed flush or removal goes to the log. So a failed `DeleteFile` reads as success, and the file is still there in the next listing. The removal never reaches a server on a read-only drive, where `FILE_DELETE_ON_CLOSE` would otherwise get this far unasked.
 - **`.` and `..`** are listed outside the root, and `..` shows the directory's own details rather than cost a round trip for its parent's.
 
 **Error mapping**
@@ -1011,7 +1021,7 @@ The generic part is `fsm_vfs::contract` (feature `testing`): everything down to 
 
 - Mount an **in-memory `RemoteFs`** and an **in-process russh SFTP server** (from the `russh-sftp` server side) as drives, then run:
   - `winfsp-tests-x64.exe` with the test subset that applies to a network file system without ACLs and streams. The excluded tests are listed in the repo with reasons;
-  - `fsx` (file system exerciser), 100k operations, for data integrity (NFR-REL-01);
+  - `fsx` (file system exerciser), 100k operations, for data integrity (NFR-REL-01). There is no ready Windows build, so this is `crates/fsm-winfsp/tests/fsx.rs`: the same operations and limits through Win32, mapped reads and writes included, with `FSX_OPS` and `FSX_SEED` to set the length and repeat a run;
   - scripted Explorer-like operations through Win32 `CopyFileEx`, `MoveFileEx`, `FindFirstFile` and `ReplaceFile`;
   - NEO regression cases: write → close → reopen → hash; a new file visible in the next listing; a host-key prompt for an unknown server; no drive left after the process is killed.
 - Crash test: kill `fsm.exe` with a mount active, then check with `GetLogicalDrives` that the letter is gone (NFR-REL-04).
