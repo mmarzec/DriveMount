@@ -680,6 +680,10 @@ name = "fsm-core"
 version = "0.1.0"
 dependencies = [
  "fsm-vfs",
+ "proptest",
+ "tempfile",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]

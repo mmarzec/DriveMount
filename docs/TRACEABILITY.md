@@ -19,14 +19,14 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | FR-PROF-01 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-03 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | – | – |
+| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | So far the model: a new id in `Profile::new`, and no rule looks at it but to tell a profile from itself (`the_defaults_of_a_new_profile_are_valid_and_each_gets_its_own_id`, `a_profile_does_not_clash_with_itself`). Keeping it across a rename: M1-14, M1-15 | – |
+| FR-PROF-03 | M1-13, M1-14, M1-15, M1-17 | The rule: `a_name_is_unique_ignoring_case`, `a_second_profile_cannot_take_the_name_of_another` (`fsm-core`). Inline error: M1-17 | – |
+| FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | Each rule of §7.3 has unit tests in `crates/fsm-core/src/profile/validate.rs`, and `each_bad_field_is_reported_against_its_own_box` for the marks. Marking fields and disabling Save: M1-17 | – |
+| FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | Splitting: `the_acceptance_case_fills_all_four_fields`, `a_url_fills_all_four_fields` and the rest of `crates/fsm-core/src/profile/paste.rs`. Filling the boxes: M1-17 | – |
 | FR-PROF-06 | M1-13, M1-14, M1-15, M1-17 | – | – |
 | FR-PROF-07 | M1-11, M1-13, M1-14, M1-15, M1-17 | So far only the removal: `fsm-win` `credentials::tests::delete_all_leaves_nothing_and_only_touches_that_profile`. Profile delete: M1-15 | – |
 | FR-PROF-08 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | – | – |
+| FR-PROF-09 | M1-13, M1-14, M1-15, M1-17 | So far the field and its limit: `a_group_is_at_most_32_characters`. The headers: M1-16 | – |
 
 ## SSH/SFTP backend
 
@@ -34,7 +34,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | FR-SSH-01 | M1-08b, M1-17 | Below the UI: `tests/auth.rs` (needs S-03), such as `a_stored_password_logs_in_without_asking`, `a_missing_password_is_asked_for_once_and_not_on_reconnect`, `a_remembered_password_is_handed_over_after_the_login`. Storing in Credential Manager: M1-11, M1-15. Dialog: M1-17 | – |
 | FR-SSH-02 | M1-08b, M1-17 | Below the UI: `each_key_format_logs_in_without_asking`, `each_encrypted_key_format_asks_once_and_not_on_reconnect` (need S-03), and the key-loading unit tests in `connector/auth.rs`. Dialog: M1-17 | – |
-| FR-SSH-03 | M1-08b, M1-17 | Refused at connect: `ppk_files_are_refused_whatever_their_name`, `a_ppk_file_is_a_format_error` (needs S-03). Hint and disabled Save: M1-13, M1-17 | – |
+| FR-SSH-03 | M1-08b, M1-13, M1-17 | Refused at connect: `ppk_files_are_refused_whatever_their_name`, `a_ppk_file_is_a_format_error` (needs S-03). Hint and no Save, below the UI: `a_ppk_file_gets_the_conversion_hint_and_blocks_saving` (`fsm-core`). Dialog: M1-17 | – |
 | FR-SSH-04 | M1-08b, M1-17 | `a_key_in_the_agent_logs_in_without_asking` and its companions (need S-03), with an in-process agent on a named pipe. Real `ssh-agent`, Unix socket: `a_key_in_real_ssh_agent_logs_in`. **Not run:** the Windows OpenSSH agent itself, and Pageant. M1-19 | – |
 | FR-SSH-05 | M1-08b, M1-17 | Below the UI: `ask_with_a_password_stores_nothing_and_reconnects_without_asking` and its companions (need S-03). Dialog and no credential entries: M1-17 | – |
 | FR-SSH-06 | M1-08b, M1-17 | `a_certificate_next_to_the_key_is_offered` (Ed25519 and RSA), `without_its_certificate_the_key_is_refused`, `a_certificate_that_cannot_be_used_leaves_the_plain_key` (need S-03) | – |
@@ -42,7 +42,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SSH-08 | M1-07, M1-08a, M1-17 | The file: `crates/fsm-sftp/tests/known_hosts.rs`, and `ssh_and_this_module_agree_on_one_file` (`known_hosts_openssh.rs`, needs S-03). In a connection: `tests/connector.rs` (needs S-03), such as `a_revoked_key_is_refused_without_asking` and `a_key_type_on_file_is_asked_for_first`. Dialogs: M1-17 | – |
 | FR-SSH-09 | M1-07, M1-08a, M1-17 | Below the UI: `trust_and_save_is_asked_once_and_real_ssh_agrees`, `trust_once_connects_and_saves_nothing`, `cancel_refuses_and_saves_nothing` (`tests/connector.rs`, need S-03). Dialog: M1-17 | – |
 | FR-SSH-10 | M1-07, M1-08a, M1-17 | Refusal below the UI, with the line and both fingerprints: `a_changed_key_is_refused_without_asking` (needs S-03). Simulated by editing the file, not by replacing the server's key. Traffic after key exchange was not captured. Dialog: M1-17 | – |
-| FR-SSH-11 | M1-09, M1-15, M1-17 | Below the UI: `crates/fsm-sftp/tests/jump.rs`, such as `each_host_key_is_asked_for_and_saved_for_its_own_host` (needs S-03), and `a_jump_host_can_log_in_with_the_agent` in `tests/auth.rs`. Storing `jump-password`: M1-15. Fields and dialogs: M1-17 | – |
+| FR-SSH-11 | M1-09, M1-13, M1-15, M1-17 | Below the UI: `crates/fsm-sftp/tests/jump.rs`, such as `each_host_key_is_asked_for_and_saved_for_its_own_host` (needs S-03), and `a_jump_host_can_log_in_with_the_agent` in `tests/auth.rs`. Storing `jump-password`: M1-15. The fields and their rule: `a_jump_host_is_host_with_optional_user_and_port` and its companions (`fsm-core`). Dialogs: M1-17 | – |
 | FR-SSH-12 | M1-08a, M1-10, M2-01 | So far the SSH layer: `unanswered_keep_alives_close_the_connection` and its two companions (`tests/connector.rs`, need S-03), now 3 intervals. State change to *Reconnecting*: M2-01 | – |
 | FR-SSH-13 | M1-08a, M1-10 | `remote_paths_are_resolved_and_checked`, and `drive_letter_paths_work_where_the_server_uses_them` against a Linux server laid out like Windows (need S-03). **Real Windows OpenSSH has not run:** lab matrix, §10.4 | – |
 | FR-SSH-14 | M1-08a, M1-10 | `the_contract_holds_on_openssh` and `the_contract_holds_on_a_server_without_the_extensions` (`crates/fsm-sftp/tests/sftpfs.rs`, need S-03) | – |

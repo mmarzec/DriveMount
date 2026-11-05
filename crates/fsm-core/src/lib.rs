@@ -3,3 +3,5 @@
 //! Profiles, configuration and the mount manager. Depends only on `fsm-vfs`; no Windows dependencies.
 
 #![forbid(unsafe_code)]
+
+pub mod profile;

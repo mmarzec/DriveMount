@@ -851,17 +851,26 @@ A modal dialog, about 460 × 520.
 
 | Field | Rule | Message |
 |---|---|---|
-| Name | 1–64 chars; unique (case-insensitive); no `\ / : * ? " < > \|` | "Name is required" / "A connection with this name already exists" |
-| Group | 0–32 chars | |
+| Name | 1–64 chars; unique (case-insensitive, ignoring surrounding spaces); no `\ / : * ? " < > \|` or control characters | "Name is required" / "Use at most 64 characters" / "A name cannot contain \ / : * ? " < > \|" / "A connection with this name already exists" |
+| Group | 0–32 chars | "Use at most 32 characters" |
 | Host | DNS name, IPv4 or IPv6 literal; no spaces; no scheme, `user@` or `:port` (paste is split, FR-PROF-05) | "Enter a host name or IP address" |
 | Port | 1–65535 | "Port must be 1–65535" |
-| User | 1–64 chars, no spaces | "User name is required" |
-| Key file | Exists, is readable and is OpenSSH/PEM format; `.ppk` rejected (FR-SSH-03); `.pub` rejected | "This is a public key; select the private key file" |
-| Remote path | `~`, `~/…`, or an absolute path starting with `/`, or a Windows `C:/…` form | "Use an absolute path such as /var/www, or ~ for home" |
-| Drive | Auto or D–Z; a letter in use by another *profile* gives a warning only (allowed, because only one can be mounted) | "Also used by 'NAS backup'" |
-| Cache (s) | 0–60 | |
-| Keep-alive (s) | 0 or 5–300 | |
-| Jump host | Empty or `[user@]host[:port]` | "Use user@host:port" |
+| User | 1–64 chars, no spaces | "User name is required" / "Use at most 64 characters" / "A user name cannot contain spaces" |
+| Key file | Exists, is readable and is OpenSSH/PEM format; `.ppk` rejected (FR-SSH-03); `.pub` rejected. Only for the *Key file* method | "Select a private key file" / "This file does not exist" / "This file cannot be read" / "Convert with PuTTYgen → Conversions → Export OpenSSH key" / "This is a public key; select the private key file" / "Unsupported key file format." |
+| Remote path | `~`, `~/…`, or an absolute path starting with `/`, or a Windows `C:/…` or `C:\…` form; not above the root | "Use an absolute path such as /var/www, or ~ for home" |
+| Drive | Auto or D–Z; a letter in use by another *profile* gives a warning only (allowed, because only one can be mounted) | "Choose Auto or a letter from D to Z" / warning: "Also used by 'NAS backup'" |
+| Cache (s) | 0–60 | "Cache must be 0–60 seconds" |
+| Keep-alive (s) | 0 or 5–300 | "Keep-alive must be 0 (off) or 5–300 seconds" |
+| Jump host | Empty or `[user@]host[:port]`, with `[…]` around an IPv6 address that has a port. No user means the profile's own user, as with `ssh -J`; no port means 22 | "Use user@host:port" |
+
+- **Chars** are Unicode characters, not bytes.
+- **Host:** letters, digits, `-` and `_` in labels. `_` is not legal DNS, but common on local networks. An international name goes in as `xn--…`, and a last label of only digits is refused as a mistyped address (`10.0.4.256`). An IPv6 scope (`fe80::1%4`) is not accepted.
+- **Key file:** the name alone is enough to refuse (`.ppk`, `.pub`, in any case). Otherwise the start of the file decides: a PuTTY or public key by its content too, and a private key by its header. What only reading the key can show (an RSA key under 2048 bits, encrypted forms `russh` cannot read, §5.7) is E-KEY-FORMAT at connect. So a real OpenSSH key named `.ppk` can connect (§5.7) but cannot be selected here.
+
+**Paste (FR-PROF-05).** Besides `[user@]host[:port][/path]` and `sftp://` before it, the form the main window shows is understood: `user@host:/path`, `user@host:~`, `user@host:C:/data`. So are `[::1]:22`, a bare `::1`, and a user with a domain (`me@corp.example@host`).
+- In a URL, `%XX` is decoded. `/~` and `/~/…` after a host mean home, in both forms.
+- A password (`user:secret@host`) is dropped, and goes in no field.
+- All or nothing: text with any part that breaks its rule, or with another scheme, is not split. It stays in the Host box, which the Host rule marks.
 
 ### 7.4 Prompts
 
