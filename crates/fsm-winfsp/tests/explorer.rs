@@ -30,8 +30,8 @@ use support::{Probe, TrustOnce, free_letter, unique_slug};
 use tokio::runtime::Runtime;
 
 /// Well past what is usual here, to catch Explorer not being told at all without failing on a slow
-/// moment: showing takes about 850 ms, and hiding about 1200 ms, which is over FR-MNT-06's 1 s. See
-/// `docs/PROGRESS.md`. Each round prints what it measured. One look at the window costs about 100 ms.
+/// moment: showing takes about 850 ms and hiding about 1200 ms, as FR-MNT-06 says. Each round prints
+/// what it measured. One look at the window costs about 100 ms.
 const LIMIT_MS: u64 = 3000;
 
 struct OnProbe(Arc<Probe>);
