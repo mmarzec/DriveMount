@@ -10,7 +10,7 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-# MemFs and the RemoteFs contract suite, for tests in this and other crates.
+# MemFs, the RemoteFs contract suite and MemorySecretStore, for tests in this and other crates.
 testing = []
 
 [dependencies]
@@ -18,6 +18,7 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]

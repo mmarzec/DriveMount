@@ -12,7 +12,8 @@ use std::io;
 use std::ptr;
 use std::slice;
 
-use fsm_vfs::Secret;
+pub use fsm_vfs::SecretSlot;
+use fsm_vfs::{Secret, SecretStore};
 use uuid::Uuid;
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 use windows::Win32::Security::Credentials::{
@@ -27,34 +28,40 @@ use crate::{os_error, wide};
 /// The longest secret Credential Manager can hold, in UTF-16 code units.
 pub const MAX_SECRET_UNITS: usize = CRED_MAX_CREDENTIAL_BLOB_SIZE as usize / 2;
 
-/// Which of a profile's secrets (NFR-SEC-01).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SecretSlot {
-    /// The password for the server.
-    Password,
-    /// The passphrase of the key file.
-    Passphrase,
-    /// The password for the jump host.
-    JumpPassword,
+/// A [`SecretStore`] over [`store`], [`load`], [`delete`] and [`delete_all`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CredentialStore;
+
+impl SecretStore for CredentialStore {
+    fn store(&self, profile: Uuid, slot: SecretSlot, value: &Secret<String>) -> io::Result<()> {
+        store(profile, slot, value)
+    }
+
+    fn load(&self, profile: Uuid, slot: SecretSlot) -> io::Result<Option<Secret<String>>> {
+        load(profile, slot)
+    }
+
+    fn delete(&self, profile: Uuid, slot: SecretSlot) -> io::Result<bool> {
+        delete(profile, slot)
+    }
+
+    fn delete_all(&self, profile: Uuid) -> io::Result<()> {
+        delete_all(profile)
+    }
 }
 
-impl SecretSlot {
-    /// Every slot a profile can have.
-    pub const ALL: [Self; 3] = [Self::Password, Self::Passphrase, Self::JumpPassword];
-
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Password => "password",
-            Self::Passphrase => "passphrase",
-            Self::JumpPassword => "jump-password",
-        }
+const fn slot_name(slot: SecretSlot) -> &'static str {
+    match slot {
+        SecretSlot::Password => "password",
+        SecretSlot::Passphrase => "passphrase",
+        SecretSlot::JumpPassword => "jump-password",
     }
 }
 
 /// The entry's name in Credential Manager: `FsManager:<uuid>:<slot>`.
 #[must_use]
 pub fn target(profile: Uuid, slot: SecretSlot) -> String {
-    format!("FsManager:{profile}:{}", slot.name())
+    format!("FsManager:{profile}:{}", slot_name(slot))
 }
 
 /// Stores a secret, replacing any earlier one.
@@ -404,6 +411,43 @@ mod tests {
             assert_eq!(error.kind(), io::ErrorKind::InvalidData);
             assert!(!format!("{error:?}").contains("abc"));
         }
+    }
+
+    #[test]
+    fn the_store_goes_through_to_credential_manager() {
+        let profile = Profile::new();
+        let credentials: &dyn SecretStore = &CredentialStore;
+
+        credentials
+            .store(profile.0, SecretSlot::Passphrase, &secret("value"))
+            .unwrap();
+        assert_eq!(
+            loaded(&profile, SecretSlot::Passphrase).as_deref(),
+            Some("value"),
+            "under the name NFR-SEC-01 gives"
+        );
+        let back = credentials
+            .load(profile.0, SecretSlot::Passphrase)
+            .unwrap()
+            .unwrap();
+        assert_eq!(back.expose_secret(), "value");
+
+        assert!(
+            credentials
+                .delete(profile.0, SecretSlot::Passphrase)
+                .unwrap()
+        );
+        assert!(
+            !credentials
+                .delete(profile.0, SecretSlot::Passphrase)
+                .unwrap()
+        );
+
+        store(profile.0, SecretSlot::Password, &secret("a")).unwrap();
+        store(profile.0, SecretSlot::JumpPassword, &secret("b")).unwrap();
+        credentials.delete_all(profile.0).unwrap();
+        assert_eq!(loaded(&profile, SecretSlot::Password), None);
+        assert_eq!(loaded(&profile, SecretSlot::JumpPassword), None);
     }
 
     #[test]

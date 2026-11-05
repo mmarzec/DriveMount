@@ -254,7 +254,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-REL-02 | **Visibility**: a file created, renamed or deleted through the drive shows in the very next directory listing (no stale cache from our own changes). |
 | NFR-REL-03 | **Bounded waits**: no WinFsp callback blocks longer than `op_timeout_secs`. |
 | NFR-REL-04 | **No orphans**: after the process exits for any reason, including a crash or a kill from Task Manager, no FS Manager drive letter remains. |
-| NFR-REL-05 | **Config safety**: config writes are atomic (write a temp file, then `ReplaceFileW`). The previous good file is kept as `config.toml.bak`. A config that cannot be parsed is never overwritten; the app starts read-only and shows an error. |
+| NFR-REL-05 | **Config safety**: config writes are atomic (write a temp file in the same folder, flush it, then replace the file with `MoveFileExW`, through `tempfile`'s `persist`). The previous good file is kept as `config.toml.bak`. A config that cannot be parsed is never overwritten; the app starts read-only and shows an error. |
 | NFR-REL-06 | **Soak**: 72 h with 5 mounts, periodic network drops and sleep/resume cycles. There must be no leak (working set growth < 10%) and no stuck state. |
 
 ### 4.3 Security (NFR-SEC)
@@ -341,9 +341,9 @@ fs-manager/
   scripts/                   CI checks: SPDX headers, exe size
   crates/
     fsm-vfs/                 Shared traits and types, at the bottom of the graph: RemoteFs, Connector,
-                             MountBackend, Prompter, Secret, Attr/DirEntry; caches, read-ahead, name and
+                             MountBackend, Prompter, Secret, SecretStore, Attr/DirEntry; caches, read-ahead, name and
                              permission mapping, operation deadlines, error model     (no Windows deps)
-    fsm-core/                Profile model, ConfigStore (TOML), SecretStore trait, MountManager, state
+    fsm-core/                Profile model, ConfigStore (TOML), MountManager, state
                              machine, letter allocator, event bus. Gets its backends from a factory
                              supplied by the app                                      (no Windows deps)
     fsm-sftp/                RemoteFs over russh + russh-sftp; connector (auth, jump host, host keys,
@@ -739,8 +739,15 @@ key_path = ""
 # nfs_port = 0             mount_port = 0             reserved_port = true
 ```
 
-- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step. The old file is kept as `config.v<N>.bak`. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager".
-- **Unknown keys** are kept on save, for forward compatibility.
+- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager".
+- **Unknown keys** are kept on save, for forward compatibility, at the top of the file, in `[settings]`, in a profile and in its `jump`. Comments are not kept, and known keys are written in the order above.
+- **A damaged file:** one that is not UTF-8 or TOML, has no `schema_version` (so an empty file too), or has `settings` or `profiles` of the wrong type. The app starts read-only with nothing loaded (NFR-REL-05). A save also refuses, and the app turns read-only, if the file has become like this since it was read.
+- **One bad value does not cost the whole file:**
+  - A profile that the model cannot hold (`port = 70000`, a `protocol` or `auth` it does not know, no `id`, a second use of an `id`, a `drive_letter` other than Auto or D–Z) is listed as unreadable, cannot be mounted, and is written back as it was, after the others, until it is deleted.
+  - A profile that fits but breaks a rule of §7.3 (`keepalive_secs = 9999`) is loaded and listed, and the dialog marks the fields. A key file is not looked at on loading, only its name.
+  - A setting with a bad value or out of range takes its default and is reported, and the next save replaces it.
+- **Required in a profile:** `id`, `name`, `protocol`, `host`, `username`, `auth`, and `host` and `auth` in `jump`. The others take the defaults above: no `drive_letter` is Auto, no `key_path` is blank. No `username` in `jump`, or a blank one, is the profile's own (§7.3).
+- `key_path` and `remember` stay in the file for an auth method with no use for them.
 
 ### 6.2 Secrets
 

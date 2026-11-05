@@ -3,11 +3,12 @@
 //! Shared traits and types, caches, read-ahead, name mapping and deadlines. No Windows dependencies.
 //!
 //! This is the lowest crate in the workspace (plan SC-1), so backends and the engine can share
-//! [`RemoteFs`], [`Connector`], [`MountBackend`], [`Prompter`] and [`Secret`] without a cycle.
+//! [`RemoteFs`], [`Connector`], [`MountBackend`], [`Prompter`], [`Secret`] and [`SecretStore`] without a
+//! cycle.
 //! The traits use `async-trait` so they work behind `dyn`; see ADR-0001.
 //!
-//! The `testing` feature adds [`MemFs`], an in-memory [`RemoteFs`], and [`contract`], the test suite
-//! every backend must pass. Other crates take it as a dev-dependency only.
+//! The `testing` feature adds [`MemFs`], an in-memory [`RemoteFs`], [`contract`], the test suite every
+//! backend must pass, and [`MemorySecretStore`]. Other crates take it as a dev-dependency only.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -26,6 +27,7 @@ mod prompt;
 mod readahead;
 mod remote;
 mod secret;
+mod secret_store;
 mod types;
 
 pub use cache::CachedFs;
@@ -43,6 +45,9 @@ pub use prompt::{
 pub use readahead::ReadAhead;
 pub use remote::{Connector, RemoteFs};
 pub use secret::Secret;
+#[cfg(feature = "testing")]
+pub use secret_store::MemorySecretStore;
+pub use secret_store::{SecretSlot, SecretStore};
 pub use types::{
     Access, Attr, AttrChanges, AttrTarget, Capabilities, DirEntry, Disposition, FileKind, FsStats,
     OpenMode, RemoteHandle, apply_read_only,

@@ -18,8 +18,8 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-PROF-01 | M1-13, M1-14, M1-15, M1-17 | – | – |
-| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | So far the model: a new id in `Profile::new`, and no rule looks at it but to tell a profile from itself (`the_defaults_of_a_new_profile_are_valid_and_each_gets_its_own_id`, `a_profile_does_not_clash_with_itself`). Keeping it across a rename: M1-14, M1-15 | – |
+| FR-PROF-01 | M1-13, M1-14, M1-15, M1-17 | Surviving a restart and being gone after a delete, in the file: `each_kind_of_login_comes_back`, `any_profile_comes_back`, `a_deleted_profile_is_gone_and_the_others_keep_their_keys` (`crates/fsm-core/src/config/tests.rs`). The dialog: M1-17 | – |
+| FR-PROF-02 | M1-13, M1-14, M1-15, M1-17 | So far the model: a new id in `Profile::new`, and no rule looks at it but to tell a profile from itself (`the_defaults_of_a_new_profile_are_valid_and_each_gets_its_own_id`, `a_profile_does_not_clash_with_itself`). In the file: `a_rename_keeps_the_id_and_the_unknown_keys`, `the_second_profile_with_an_id_is_unreadable`. The credentials following it: M1-15 | – |
 | FR-PROF-03 | M1-13, M1-14, M1-15, M1-17 | The rule: `a_name_is_unique_ignoring_case`, `a_second_profile_cannot_take_the_name_of_another` (`fsm-core`). Inline error: M1-17 | – |
 | FR-PROF-04 | M1-13, M1-14, M1-15, M1-17 | Each rule of §7.3 has unit tests in `crates/fsm-core/src/profile/validate.rs`, and `each_bad_field_is_reported_against_its_own_box` for the marks. Marking fields and disabling Save: M1-17 | – |
 | FR-PROF-05 | M1-13, M1-14, M1-15, M1-17 | Splitting: `the_acceptance_case_fills_all_four_fields`, `a_url_fills_all_four_fields` and the rest of `crates/fsm-core/src/profile/paste.rs`. Filling the boxes: M1-17 | – |
@@ -111,12 +111,12 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SET-01 | M2-05 | – | – |
-| FR-SET-02 | M2-05 | – | – |
-| FR-SET-03 | M2-05 | – | – |
-| FR-SET-04 | M2-05 | – | – |
-| FR-SET-05 | M2-05 | – | – |
-| FR-SET-06 | M2-05 | – | – |
+| FR-SET-01 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-02 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-03 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-04 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-05 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
+| FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`fsm-core`). The setting: M2-05 | – |
 | FR-SET-07 | M2-05 | – | – |
 
 ## SMB backend
@@ -165,15 +165,15 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | Below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through a drive on `MemFs`: `changes_show_in_the_very_next_listing` and `a_new_size_shows_in_the_very_next_listing` (`crates/fsm-winfsp/tests/write_path.rs`) | – |
 | NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | Below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive, for lookups, listings, opens, reads and volume queries: `a_hung_*_times_out` and `the_limit_is_for_the_callback_not_for_each_call` (`crates/fsm-winfsp/tests/read_path.rs`). Write callbacks: `a_hung_*_times_out`, `the_limit_is_for_the_whole_callback` and, for `Cleanup`, `closing_a_handle_is_bounded_when_the_server_hangs` (`tests/write_path.rs`) | – |
 | NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | `a_killed_process_leaves_no_drive` (`tests/lifecycle.rs`), with a test process. `fsm.exe` itself: M1-19 | – |
-| NFR-REL-05 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
+| NFR-REL-05 | M1-05, M1-12a–c, M1-14, M2-01, M2-09 | `crates/fsm-core/src/config/tests.rs`. Atomic: `the_file_and_its_backup_are_replaced_not_written_into`, and `if_the_backup_cannot_be_written_the_file_is_left_alone`. The backup: `the_backup_is_the_previous_file`. Never overwritten: `a_damaged_file_means_read_only_and_is_never_written`, `a_file_damaged_while_running_is_not_overwritten_and_the_backup_is_kept`, `a_newer_file_means_read_only_with_the_words_in_the_spec`. Showing the error: M1-16 | – |
 | NFR-REL-06 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 
 ## Security
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | `fsm-win` `credentials::tests`: names, type and persistence as Windows reports them, round-trip, delete, limits | – |
-| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config and logs: M1-14, M1-18 | – |
+| NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | `fsm-win` `credentials::tests`: names, type and persistence as Windows reports them, round-trip, delete, limits. Behind `SecretStore`: `the_store_goes_through_to_credential_manager` | – |
+| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config: `a_remembered_secret_is_not_in_the_file_or_its_backup` (`fsm-core`), and the profile model has no field for a secret. Logs: M1-18 | – |
 | NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | So far only zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Zeroed on unmount: M1-15 | – |
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-05 | M1-02, M1-07, M1-11, M2-11 | – | – |

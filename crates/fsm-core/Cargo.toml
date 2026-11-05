@@ -14,9 +14,12 @@ workspace = true
 
 [dependencies]
 fsm-vfs = { workspace = true }
+serde = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
+toml = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]
+fsm-vfs = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
-tempfile = { workspace = true }

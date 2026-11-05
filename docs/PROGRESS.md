@@ -2,6 +2,47 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-05: M1-14 `ConfigStore` and `SecretStore` (branch `feat/m1-14-config-store`)
+
+**Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core`, and the `SecretStore` tests of `fsm-vfs`, also pass in a `rust:1.99.1` container (one fewer test there, as a non-Unicode path is only a Windows test). `fsm-core` has 104 tests, of which 49 are new, and the workspace has 673 passing and 133 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed, and the exe size check, as `fsm.exe` does not use this yet. `Cargo.lock` gains `toml` and `toml_writer` and what they need.
+
+- **Added:** `fsm_core::config`: `ConfigStore`, `Config`, `Settings` and its enums, `UnreadableProfile`, `ReadOnlyReason`, `SaveError`. `fsm_vfs`: `SecretStore`, `SecretSlot`, and `MemorySecretStore` under `testing`. `fsm_win::credentials::CredentialStore`. Spec §6.1 now has the rules below, and §5.2 and NFR-REL-05 have changed.
+- **Settled from M1-13's list:**
+  - **A separate record type** (`config/record.rs`), so the model still knows nothing of serde. The store keeps each profile's record under its id, and takes unknown keys, and `key_path` and `remember` for a method with no use for them, from there on saving. So `Profile` gets no `extra`, and a caller only handles the model.
+  - **One bad profile does not make the file read-only.** Each entry is read on its own. One that does not fit the model (`port = 70000`, `protocol = "smb"`, a second use of an id) goes to `Config::unreadable`, is written back as it was, and goes only if the caller takes it out of that list. One that fits but breaks a rule (`keepalive_secs = 9999`) loads, for the dialog to mark. A bad setting takes its default, and is in `setting_problems()`.
+  - **`validate_profile` is not run by loading.** `Config::invalid_profiles()` runs it when asked, with a `read_key` that says yes, so only a key's name is looked at, and a key on an unplugged drive is fine. It cannot go stale, as it holds nothing.
+- **For the owner to check:**
+  - **`ReplaceFileW` became `MoveFileExW`** in NFR-REL-05, because the plan says `persist`, and `fsm-core` has no Windows calls. Both replace the file by name. The difference is that the new file takes its permissions from the folder, not from the old file, which does not matter in `%APPDATA%`.
+  - **`SecretStore` is in `fsm-vfs`, not `fsm-core`** (§5.2 updated). `fsm-win` implements it, and §5.2 has `fsm-win` and `fsm-core` not depending on each other. `SecretSlot` moved there too, and `fsm_win::credentials::SecretSlot` still works. Errors stay `io::Error`, as nothing needs more.
+  - **Comments in a hand-edited file are lost at the first save,** and known keys are put in §6.1's order. Unknown keys are sorted. §6.1 only asks for unknown keys to be kept. Keeping comments means `toml_edit`, which is a larger change, and `op_timeout_secs` and `winfsp_threads` can only be set by hand, so tell me if it matters.
+  - **A newer file still shows its profiles,** read by this version's rules, and can't be saved. §6.1 only says read-only. **Open question:** may they be mounted? A newer version may have changed what a field means. I would allow it, as the alternative is an app that does nothing until it is upgraded. M1-15 decides, as `read_only()` is all it has to look at.
+  - **A migrated file is written at the first save,** not on opening, so starting the app writes nothing and a full disk cannot stop it. §6.1 says so now.
+  - **A file with no `schema_version` is damaged,** including an empty one, which is what a crashed editor leaves. So is `schema_version = 0`.
+  - **A bad setting is replaced at the next save,** rather than kept. A `theme` from a later version without a schema bump would be lost, but a schema bump is what that should have.
+  - **Edits made while the app runs are lost at the next save,** unless they broke the file: then the save is refused, and neither the file nor the backup changes.
+  - **A key the user types in by hand, like `password = "…"`, is kept like any unknown key,** and copied to the backup. NFR-SEC-02 is met for what this program writes.
+- **Two bugs the tests found, worth knowing at each `toml` upgrade:**
+  - `#[serde(flatten)]` buffers values, which turns a date into a table. `ProfileRecord::read` puts the exact values back from the raw table (`restore_exact_values`). `unknown_keys_survive_saving_at_every_level` covers it.
+  - The writer lets `u64` above `i64::MAX` through, as text the parser refuses, so one huge `keepalive_secs` from a caller would have damaged the file. `save` now reads its text back before writing, and gives `SaveError::WouldNotLoad`.
+- **The tests are checked too:** 40 faults injected by script (kept out of the repository), with a harmless change as a control. 36 failed a test at once. Of the other 4:
+  - The BOM step was dead code, as `toml` already skips one, so it is gone and the test stays.
+  - `what_is_kept_follows_each_save` closes a test gap.
+  - Writing in place instead of replacing passed, so `the_file_and_its_backup_are_replaced_not_written_into` was added. It uses a hard link, which still sees the old file if it was replaced. A reader thread looking for half a file was tried first: it did not catch the fault in 30 saves, and took 3 s.
+  - **Still open:** treating any read error as "no file" at save time passes, as the only way to cause one here, a folder in its place, also fails the write. A file that can be replaced but not read would be overwritten if this were wrong. The code is right, but no test holds it.
+  - Flushing with `sync_all` was not injected, as only a power cut would show it. Nor were `Display` texts, beyond the one §6.1 gives.
+- **For later tasks:**
+  - **M1-15:**
+    - `ConfigStore::open(path)` never fails. `default_path()` is `None` without `APPDATA`. `save` is blocking and flushes twice, about 100 ms in all here, so keep it off the UI thread.
+    - **Check `read_only()` first:** the Save commands should be off, and `save` refuses anyway. The Save command also calls `validate_profile`, as `save` does not check §7.3.
+    - **Don't mount** what is in `Config::invalid_profiles()`, nor `Config::unreadable`, which holds no model. Deleting an unreadable one means removing it from the list and, if `id` is `Some`, `delete_all(id)` (FR-PROF-07).
+    - **Secrets:** take an `Arc<dyn SecretStore>`, with `CredentialStore` in the app and `MemorySecretStore` (`fsm-vfs`'s `testing`) in tests. A `remember = true` left in the file for `agent` or `ask` means nothing, and the model does not show it, so §6.2's deletion when a method changes must look at the old and new `SftpAuth`.
+    - **A save can fail for a moment:** another program with the file open without sharing delete, such as a virus scanner or an editor, makes `MoveFileExW` fail. `SaveError::Io` leaves the store writable and `config()` as it was, so the change can be tried again. There are no retries here.
+  - **M1-16:**
+    - **Show `read_only()`,** which has `Display`, as the error NFR-REL-05 asks for. §7.8 has no code for these yet. The texts are English, like M1-13's. The `Damaged` detail is what `toml` says, and is several lines long with a line of the file. `backup_path()` is there to point at, though nothing restores it.
+    - **Unreadable profiles need a row,** or nobody can tell why a profile went away. `name` and `id` are `Option`s. `problem` is `serde`'s text, like "invalid value: integer `70000`, expected u16", without the key.
+    - `setting_problems()` and the `invalid_profiles()` of a profile are worth a line each.
+  - **M2-05:** `save` does not check a setting's range; the checks are only in reading the file. `Settings::winfsp_threads` of 0 means the number of cores.
+
 ## 2026-11-05: M1-13 Profile model and validation (branch `feat/m1-13-profile-model`)
 
 **Status: done locally; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows; `clippy` and `test` for `fsm-core` also pass in a `rust:1.99.1` container. `fsm-core` has 55 tests, all unit tests, of which 2 are property tests. The workspace has 618 passing and 133 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed, and the exe size check, as `fsm.exe` does not use this crate yet. `Cargo.lock` gained only `fsm-core`'s new dependencies, all already in the tree.
