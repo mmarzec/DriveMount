@@ -31,7 +31,6 @@ winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
 [[profiles]]
 id             = "6f1c2c1e-4d0b-4c55-9a51-7d8a1c3b2e10"
 name           = "Production"
-group          = "Web"            # optional
 protocol       = "sftp"           # sftp | smb (M3) | nfs (M4)
 host           = "10.0.4.21"
 port           = 22
@@ -157,7 +156,6 @@ fn the_example_in_the_spec_reads_as_it_says() {
     let profile = &store.config().profiles[0];
     assert_eq!(profile.id, Uuid::parse_str(ID_A).unwrap());
     assert_eq!(profile.name, "Production");
-    assert_eq!(profile.group.as_deref(), Some("Web"));
     assert_eq!(
         profile.drive,
         DriveChoice::Letter(DriveLetter::new('Z').unwrap())
@@ -226,7 +224,6 @@ fn the_file_starts_with_its_version_and_uses_the_names_in_the_spec() {
     assert_eq!(entry["auth"].as_str(), Some("password"));
     assert_eq!(entry["remember"].as_bool(), Some(true));
     assert_eq!(entry["drive_letter"].as_str(), Some("Z"));
-    assert!(!entry.contains_key("group"));
     assert!(!entry.contains_key("jump"));
     assert!(!entry.contains_key("key_path"));
 }
@@ -340,16 +337,14 @@ fn any_profile() -> impl Strategy<Value = Profile> {
     (
         any::<u128>(),
         any::<String>(),
-        proptest::option::of(".*\\S.*"),
         sftp,
         drive,
         any::<[bool; 3]>(),
     )
         .prop_map(
-            |(id, name, group, sftp, drive, [read_only, mount_on_start, auto_reconnect])| Profile {
+            |(id, name, sftp, drive, [read_only, mount_on_start, auto_reconnect])| Profile {
                 id: Uuid::from_u128(id),
                 name,
-                group,
                 protocol: Protocol::Sftp(sftp),
                 drive,
                 read_only,
@@ -406,7 +401,6 @@ fn only_the_required_keys_are_required() {
 
     assert_eq!(store.config().settings, Settings::default());
     let profile = &store.config().profiles[0];
-    assert_eq!(profile.group, None);
     assert_eq!(profile.drive, DriveChoice::Auto);
     assert!(!profile.read_only);
     assert!(!profile.mount_on_start);
@@ -420,17 +414,16 @@ fn only_the_required_keys_are_required() {
 }
 
 #[test]
-fn a_blank_group_is_none_and_a_blank_jump_user_is_the_profiles_own() {
+fn a_blank_jump_user_is_the_profiles_own() {
     let entry = a_profile_entry(
         ID_A,
         "One",
-        "group = \"  \"\n[profiles.jump]\nhost = \"j\"\nusername = \"\"\nauth = \"agent\"\n",
+        "[profiles.jump]\nhost = \"j\"\nusername = \"\"\nauth = \"agent\"\n",
     );
     let folder = Folder::with(a_file(&[entry]));
     let store = folder.open();
 
     let profile = &store.config().profiles[0];
-    assert_eq!(profile.group, None);
     assert_eq!(sftp(profile).jump.as_ref().unwrap().username, None);
 }
 

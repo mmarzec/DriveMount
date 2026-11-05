@@ -97,8 +97,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-PROF-05 | M | Pasting `user@host:port/path` or `sftp://user@host:port/path` into the Host field splits it into the matching fields. | Pasting `deploy@10.0.4.21:2222/var/www` fills user, host, port and path. |
 | FR-PROF-06 | M | **Test connection** connects, authenticates and checks that the remote path exists and is a directory, without mounting. It reports the result in the dialog: OK with round-trip time, or the error from §7.8. | Wrong password → "Authentication failed"; missing path → "Remote path not found". |
 | FR-PROF-07 | M | Deleting a profile also deletes its Credential Manager entries. A mounted profile is unmounted first, after confirmation. | After delete, no `FsManager:<uuid>:*` credentials remain. |
-| FR-PROF-08 | M | While a profile is mounted, connection fields are read-only, with the hint "Unmount to change". These fields are protocol, host, port, user, authentication, remote path, drive letter, jump host and read-only. Name, group and the start/reconnect flags stay editable. The same goes for a mount in progress. Cache and keep-alive are locked too, as a drive takes them when it starts. | Editing the host of a mounted profile is impossible; renaming is possible. |
-| FR-PROF-09 | S | Optional **group** label; the list groups rows under collapsible headers. | Profiles with group "Web" are shown under a "Web" header. |
+| FR-PROF-08 | M | While a profile is mounted, connection fields are read-only, with the hint "Unmount to change". These fields are protocol, host, port, user, authentication, remote path, drive letter, jump host and read-only. Name and the start/reconnect flags stay editable. The same goes for a mount in progress. Cache and keep-alive are locked too, as a drive takes them when it starts. | Editing the host of a mounted profile is impossible; renaming is possible. |
 
 ### 3.2 SSH/SFTP backend (FR-SSH), v1
 
@@ -132,7 +131,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-MNT-06 | M | An already-running Explorer is told about drive changes at once. A WinFsp letter stays invisible to a running Explorer, and `SHChangeNotify` alone does not help. So `WM_DEVICECHANGE` goes to Explorer's desktop window alone, limited to 500 ms, alongside `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)` (§5.8). Broadcasts of `WM_DEVICECHANGE` are forbidden, because they hang on unresponsive windows. | An open Explorer window shows the drive within 1 s and hides it in about 1.2 s, without restarting Explorer. The owner accepted the time for hiding on 2026-11-05. |
 | FR-MNT-07 | M | **Read-only** profiles mount a read-only volume. Writes fail with "media is write protected" (`STATUS_MEDIA_WRITE_PROTECTED`). | Copying into a read-only drive fails cleanly. |
 | FR-MNT-08 | M | **Mount on start**: profiles with `mount_on_start` are mounted in parallel when the app starts. Profiles that need a prompt queue their prompts one at a time. | 5 such profiles mount in parallel at start-up. |
-| FR-MNT-09 | M | **Mount all** (toolbar) mounts every unmounted profile in the current filter. **Unmount all** (toolbar and tray) unmounts everything. | Mount all with search "web" mounts only the matching profiles. |
+| FR-MNT-09 | M | **Mount all** (toolbar) mounts every unmounted profile. **Unmount all** (toolbar and tray) unmounts everything. | Mount all with two profiles unmounted mounts both. |
 | FR-MNT-10 | M | **Unmount** flushes open handles and stops the WinFsp host. Unmount is not blocked by files Explorer has open; those handles are invalidated. | Unmount with a file open in Notepad completes; Notepad's next save shows an error. |
 | FR-MNT-11 | M | **Cancel**: a mount in *Connecting* can be cancelled from the row. | Cancel during a slow handshake returns to *Disconnected* within 1 s. |
 | FR-MNT-12 | M | **Open in Explorer** opens the drive root (`explorer.exe Z:\`). | An Explorer window opens at Z:\ showing the contents of the remote path. |
@@ -716,7 +715,6 @@ winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
 [[profiles]]
 id             = "6f1c2c1e-4d0b-4c55-9a51-7d8a1c3b2e10"
 name           = "Production"
-group          = "Web"            # optional
 protocol       = "sftp"           # sftp | smb (M3) | nfs (M4)
 host           = "10.0.4.21"
 port           = 22
@@ -800,20 +798,16 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 
 ### 7.1 Main window (default 640 × 420, minimum 480 × 320; size and position remembered)
 
-> **Left out for now, by the owner's decision of 2026-11-05: search and groups.** This covers the search box and Ctrl+F in the mock-up and §7.7, the *Search and list* items about them below, the headers of FR-PROF-09, and "in the current filter" in FR-MNT-09, so *Mount all* takes every unmounted profile. Rows are one list, sorted by name, and a profile's `group` stays in the model and the file without being shown. The text below still describes them, for when they come back.
-
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  FS Manager                                           ─   □   ×  │
 ├──────────────────────────────────────────────────────────────────┤
-│  🔍 Search…                    [ + Add ]  [ Mount all ]   ⚙      │
+│                                [ + Add ]  [ Mount all ]   ⚙      │
 ├──────────────────────────────────────────────────────────────────┤
 │  ⚠ WinFsp 2.1 or later is required…        [ Download WinFsp ]   │  ← only if missing
 ├──────────────────────────────────────────────────────────────────┤
-│  ▾ Web                                                           │
 │   ●  Production         deploy@10.0.4.21:/var/www   Z:  [Unmount] ⋯ │
 │   ◐  Staging            deploy@stage:/srv           Y:  [ Cancel] ⋯ │
-│  ▾ Home                                                          │
 │   ○  NAS backup         marcin@nas:~                X:  [ Mount ] ⋯ │
 │   ●  Dev box            me@devbox:/home/me          W:  [Unmount] ⋯ │
 │      ⚠ Authentication failed. Check user name and key.            │  ← error line
@@ -842,10 +836,8 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 - **⋯ menu:** *Open in Explorer* (when mounted), *Edit…*, *Delete…*.
 - **Mouse:** double-clicking a row opens Explorer if mounted, otherwise mounts. The right-click menu is the same as ⋯.
 
-**Search and list**
-- Search filters by name, host, user, group and drive letter.
-- Groups are sorted alphabetically, with ungrouped rows last; rows are sorted by name.
-- Group headers collapse, and the collapsed state is remembered.
+**List**
+- Rows are one flat list, sorted by the drive letter the row shows (D to Z): the letter a mounted profile holds, otherwise the preferred one. Rows with no letter to show (*Auto*, not mounted) come last. Rows with the same letter are sorted by name, ignoring case. A row therefore moves when it is mounted or unmounted.
 - **Empty state:** "No connections yet." with an **Add connection** button.
 
 ### 7.2 Profile dialog (Add / Edit)
@@ -858,7 +850,6 @@ A modal dialog, about 460 × 520.
 ```
 ┌ Add connection ───────────────────────────────────┐
 │ Name        [ Production                       ]  │
-│ Group       [ Web                              ]  │
 │ Host        [ 10.0.4.21               ] Port [22] │
 │ User        [ deploy                           ]  │
 │ Auth        (•) Key file  ( ) Password            │
@@ -884,7 +875,6 @@ A modal dialog, about 460 × 520.
 | Field | Rule | Message |
 |---|---|---|
 | Name | 1–64 chars; unique (case-insensitive, ignoring surrounding spaces); no `\ / : * ? " < > \|` or control characters | "Name is required" / "Use at most 64 characters" / "A name cannot contain \ / : * ? " < > \|" / "A connection with this name already exists" |
-| Group | 0–32 chars | "Use at most 32 characters" |
 | Host | DNS name, IPv4 or IPv6 literal; no spaces; no scheme, `user@` or `:port` (paste is split, FR-PROF-05) | "Enter a host name or IP address" |
 | Port | 1–65535 | "Port must be 1–65535" |
 | User | 1–64 chars, no spaces | "User name is required" / "Use at most 64 characters" / "A user name cannot contain spaces" |
@@ -971,8 +961,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 | Enter | Mount/Unmount selected |
 | Ctrl+Enter | Open selected in Explorer |
 | Del | Delete selected (asks first) |
-| Ctrl+F | Focus search |
-| Esc | Close dialog / clear search / hide window to tray |
+| Esc | Close dialog / hide window to tray |
 | Del, in the question it asks | Focus starts on *Cancel*, so Enter keeps the profile; Esc does too |
 | ↑ ↓ | Move selection |
 

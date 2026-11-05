@@ -21,8 +21,6 @@ const AUTO: &str = "auto";
 pub(super) struct ProfileRecord {
     id: Uuid,
     name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    group: Option<String>,
     protocol: ProtocolRecord,
     host: String,
     #[serde(default = "default_port")]
@@ -179,7 +177,6 @@ impl ProfileRecord {
         Ok(Profile {
             id: self.id,
             name: self.name.clone(),
-            group: self.group.clone().filter(|group| !group.trim().is_empty()),
             protocol,
             drive,
             read_only: self.read_only,
@@ -231,7 +228,6 @@ impl ProfileRecord {
         Ok(Self {
             id: profile.id,
             name: profile.name.clone(),
-            group: profile.group.clone(),
             protocol: ProtocolRecord::Sftp,
             host: sftp.host.clone(),
             port: sftp.port,

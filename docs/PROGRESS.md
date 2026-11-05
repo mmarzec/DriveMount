@@ -14,7 +14,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
   ```
 
   It takes `--empty`, `--no-winfsp`, `--read-only`, `--light`, `--dark` and `--many`. Esc and the close button end it, as there is no tray yet. Commands go to the console. `Staging` always fails to mount, to show the error line. H-06 asks for it at 100% and 150%, and a walk through it by keyboard: Tab, arrows, Enter, Ctrl+N, Ctrl+E, Ctrl+Enter, Del, Esc.
-- **Search and groups are left out, by the owner's decision during this task.** There is no search box, Ctrl+F or headers, and *Mount all* takes every unmounted profile. Spec §7.1 says so at the top, and keeps the text for when they come back. No plan task brings them back yet, which is the owner's to schedule. `Profile::group` stays in the model and the file, so nothing saved is lost. **M1-17 has to decide** whether the dialog still shows a Group box, which would have no visible effect. FR-MNT-09 and FR-PROF-09 are not met as written while this stands, and M1-19's checklist will need to agree.
+- **Search and groups are dropped, by the owner's decision (2026-11-05),** as they would clutter the app. The docs no longer describe them: no search box, Ctrl+F, headers or Group box, and *Mount all* takes every unmounted profile. FR-PROF-09 is removed. `Profile::group`, its check and its tests are removed from the code too; a `group` key in an older file is ignored.
 - **For the owner to check:**
   - **Five more advisories are ignored in `deny.toml`, all "unmaintained" and none a known flaw.** On Windows, only `pin-utils` is built at all, and only at build time, in Slint's macro and build crates. `ttf-parser`, `zvariant`, `zvariant_derive` and `zbus_names` are in Slint's Linux branch, which `cargo tree --target x86_64-pc-windows-msvc` confirms. `deny.toml` has to list them, as it looks at Linux too.
   - **`fsm_app` is `deny(unsafe_code)`, no longer `forbid`,** as the Slint compiler's output has unsafe blocks and `forbid` cannot be lifted for one module. Only `ui::generated` has the exception. `main.rs` keeps `forbid`.
@@ -33,7 +33,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
   - **E-INTERNAL has no *Open logs* button** (§7.8), and no logs exist until M1-18. The row says to see the log.
   - **E-HOSTKEY-CHANGED's dialog** (§7.4.3) is M1-17's. The row only says what happened.
   - **The hint for E-KEY-FORMAT is my wording,** as §7.8 only says "PuTTY conversion hint".
-  - **Names sort by lower-case code point,** so `Ż` comes after `z`.
+  - **Rows sort by preferred drive letter, then by name** (owner's change, 2026-11-05), by the letter the row shows (a mounted profile's real one, else its preferred one), with letterless *Auto* rows last, so a row moves when mounted or unmounted. Names sort by lower-case code point, so `Ż` comes after `z`.
   - **Rows are all instantiated,** not created as they scroll into view, because heights differ and the selection needs its place. `--many` shows 47, with the arrows keeping the selection in view, and nobody will have thousands. Nothing was measured.
   - **The connecting dot asks for frames while it is on screen.** Nothing else animates. NFR-PERF-05 is measured with drives mounted, not connecting, at M2-08.
 - **For later tasks:**

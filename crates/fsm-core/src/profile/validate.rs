@@ -25,7 +25,6 @@ use super::{
 };
 
 const MAX_NAME_CHARS: usize = 64;
-const MAX_GROUP_CHARS: usize = 32;
 const MAX_USER_CHARS: usize = 64;
 const NAME_FORBIDDEN: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|'];
 const MAX_CACHE_SECS: u64 = 60;
@@ -59,8 +58,6 @@ const PUBLIC_KEY_STARTS: &[&[u8]] = &[
 pub enum Field {
     /// Name.
     Name,
-    /// Group.
-    Group,
     /// Host.
     Host,
     /// Port.
@@ -98,9 +95,6 @@ pub enum Problem {
     /// Another profile has this name, in any case (FR-PROF-03).
     #[error("A connection with this name already exists")]
     NameTaken,
-    /// Over 32 characters.
-    #[error("Use at most 32 characters")]
-    GroupTooLong,
     /// Not a DNS name or an address.
     #[error("Enter a host name or IP address")]
     HostInvalid,
@@ -223,9 +217,6 @@ pub fn validate_profile(
         Field::Name,
         check_name(&profile.name, others().map(|other| other.name.as_str())),
     );
-    if let Some(group) = &profile.group {
-        result.check(Field::Group, check_group(group));
-    }
     result.check(Field::Drive, check_drive(profile.drive));
     result.drive_warning = drive_warning(
         profile.drive,
@@ -288,18 +279,6 @@ pub fn check_name<'a>(
 
 fn fold_name(name: &str) -> String {
     name.trim().to_lowercase()
-}
-
-/// Group: 0–32 characters.
-///
-/// # Errors
-///
-/// [`Problem::GroupTooLong`].
-pub fn check_group(group: &str) -> Result<(), Problem> {
-    if group.chars().count() > MAX_GROUP_CHARS {
-        return Err(Problem::GroupTooLong);
-    }
-    Ok(())
 }
 
 /// Host: a DNS name, or an IPv4 or IPv6 address. That leaves no room for spaces, a scheme, `user@` or
@@ -727,15 +706,6 @@ mod tests {
             Problem::NameTaken.to_string(),
             "A connection with this name already exists"
         );
-    }
-
-    // ---- Group. ----
-
-    #[test]
-    fn a_group_is_at_most_32_characters() {
-        assert_eq!(check_group(""), Ok(()));
-        assert_eq!(check_group(&"ż".repeat(32)), Ok(()));
-        assert_eq!(check_group(&"a".repeat(33)), Err(Problem::GroupTooLong));
     }
 
     // ---- Host. ----
@@ -1221,7 +1191,6 @@ mod tests {
     fn each_bad_field_is_reported_against_its_own_box() {
         let mut profile = valid();
         profile.name = String::new();
-        profile.group = Some("g".repeat(33));
         profile.drive = letter('C');
         let sftp_fields = sftp(&mut profile);
         sftp_fields.host = "my host".to_owned();
@@ -1247,7 +1216,6 @@ mod tests {
 
         let expected = [
             (Field::Name, Problem::NameRequired),
-            (Field::Group, Problem::GroupTooLong),
             (Field::Drive, Problem::DriveInvalid),
             (Field::Host, Problem::HostInvalid),
             (Field::Port, Problem::PortOutOfRange),

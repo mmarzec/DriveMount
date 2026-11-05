@@ -50,7 +50,7 @@ Newer versions start `sshfs.exe` directly in foreground mode. The app keeps the 
 
 | NEO feature | New app | Reason |
 |---|---|---|
-| Connection profiles: name, host, port, user, auth, remote path, drive letter, groups | **Keep, simplified** | Core of the product. Groups become one optional label. |
+| Connection profiles: name, host, port, user, auth, remote path, drive letter | **Keep, simplified** | Core of the product. Groups are dropped, as the owner finds them clutter. |
 | Templates, "save as template", duplicate | Drop | Out of scope at the user's request. |
 | Mount / unmount, "Mount all", "Dismount all" | **Keep** | Core. |
 | Auto-mount at start, auto-reconnect | **Keep, redesigned** | Event-driven instead of 30 s polling. |

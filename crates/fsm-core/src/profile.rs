@@ -17,9 +17,9 @@ use uuid::Uuid;
 pub use self::paste::{PastedHost, parse_pasted_host};
 pub use self::validate::{
     DriveWarning, Field, FieldError, JumpTarget, Problem, Validation, check_cache_secs,
-    check_drive, check_group, check_host, check_keepalive_secs, check_key_file, check_name,
-    check_port, check_remote_path, check_user, drive_warning, parse_cache_secs, parse_drive,
-    parse_jump_host, parse_keepalive_secs, parse_port, read_key_head, validate_profile,
+    check_drive, check_host, check_keepalive_secs, check_key_file, check_name, check_port,
+    check_remote_path, check_user, drive_warning, parse_cache_secs, parse_drive, parse_jump_host,
+    parse_keepalive_secs, parse_port, read_key_head, validate_profile,
 };
 
 /// The SSH port.
@@ -38,8 +38,6 @@ pub struct Profile {
     pub id: Uuid,
     /// Unique, ignoring case (FR-PROF-03).
     pub name: String,
-    /// The header the row is listed under (FR-PROF-09). `None` when blank.
-    pub group: Option<String>,
     /// What to connect to, and how.
     pub protocol: Protocol,
     /// The letter to mount on (FR-MNT-02).
@@ -59,7 +57,6 @@ impl Profile {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
-            group: None,
             protocol,
             drive: DriveChoice::Auto,
             read_only: false,

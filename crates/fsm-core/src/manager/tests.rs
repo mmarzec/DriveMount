@@ -1543,7 +1543,6 @@ async fn what_is_not_a_connection_field_can_change_while_mounted() {
     world.mounted(id).await;
 
     profile.name = "Renamed".to_owned();
-    profile.group = Some("Web".to_owned());
     profile.mount_on_start = true;
     profile.auto_reconnect = false;
     world
