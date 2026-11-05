@@ -2,9 +2,15 @@
 
 //! A mounted drive over a `MemFs`, with a layer between them that counts calls, makes them slow or
 //! makes them fail, and adds what `MemFs` lacks: symbolic links.
+//!
+//! Setting `FSM_TEST_SERVER=sftp` puts a real SFTP session in between (spec §10.3): `SftpFs`, SSH and
+//! a socket, down to a server in this process over that same layer. Tests that count remote calls
+//! see what reaches the server, which can differ from what the drive asks for.
 
 // Each test binary uses its own part of this.
 #![allow(dead_code)]
+
+pub mod sftp_server;
 
 use std::collections::HashMap;
 use std::os::windows::ffi::OsStrExt;
@@ -13,13 +19,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
+use fsm_sftp::connector::{Auth, SftpConnector, SftpProfile};
 use fsm_vfs::{
-    Attr, AttrChanges, AttrTarget, Bytes, Capabilities, DirEntry, Disposition, DriveLetter,
-    FileKind, FsError, FsResult, FsStats, MemFs, MountError, OpenMode, RemoteFs, RemoteHandle,
-    RemotePath, async_trait,
+    Attr, AttrChanges, AttrTarget, Bytes, Capabilities, Connector, DirEntry, Disposition,
+    DriveLetter, FileKind, FsError, FsResult, FsStats, HostKeyDecision, HostKeyRequest,
+    KbdIntRequest, LoginAnswer, LoginRequest, MemFs, MountError, OpenMode, Prompter, Remember,
+    RemoteFs, RemoteHandle, RemotePath, Secret, SecretRequest, async_trait,
 };
 use fsm_win::drives::is_letter_free;
-use fsm_winfsp::{VolumeConfig, WinFspBackend};
+use fsm_winfsp::{Volume, VolumeConfig};
+use sftp_server::SftpServer;
 use tokio::runtime::Runtime;
 use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES, HANDLE};
 use windows::Win32::Storage::FileSystem::{
@@ -97,6 +106,58 @@ impl Probe {
 
     pub fn removed_while_open(&self) -> bool {
         self.removed_while_open.load(Ordering::SeqCst)
+    }
+
+    /// Remote handles open now.
+    pub fn open_handles(&self) -> u64 {
+        self.open_handles.load(Ordering::SeqCst)
+    }
+
+    /// Stops failing this call.
+    pub fn heal(&self, op: Op) {
+        self.failures.lock().unwrap().remove(&op);
+    }
+
+    /// Creates a file straight on the `MemFs`, as another client of the server would.
+    pub fn inner_put(&self, path: &str, data: &[u8]) {
+        block_on_here(async {
+            let mode = OpenMode::write(Disposition::CreateOrTruncate);
+            let handle = self.inner.open(&remote(path), mode).await.unwrap();
+            let max = self.inner.capabilities().max_write as usize;
+            for (index, chunk) in data.chunks(max).enumerate() {
+                let offset = (index * max) as u64;
+                let chunk = Bytes::copy_from_slice(chunk);
+                self.inner.write(&handle, offset, chunk).await.unwrap();
+            }
+            self.inner.close(handle).await.unwrap();
+        });
+    }
+
+    /// What another client of the server would read.
+    pub fn inner_get(&self, path: &str) -> Vec<u8> {
+        block_on_here(async {
+            let handle = self
+                .inner
+                .open(&remote(path), OpenMode::read())
+                .await
+                .unwrap();
+            let mut data = Vec::new();
+            loop {
+                let offset = data.len() as u64;
+                let bytes = self.inner.read(&handle, offset, 1 << 20).await.unwrap();
+                if bytes.is_empty() {
+                    break;
+                }
+                data.extend_from_slice(&bytes);
+            }
+            self.inner.close(handle).await.unwrap();
+            data
+        })
+    }
+
+    /// Whether the server has this path.
+    pub fn has(&self, path: &str) -> bool {
+        block_on_here(self.inner.stat(&remote(path))).is_ok()
     }
 
     pub fn add_link(&self, link: &str, target: &str) {
@@ -292,10 +353,108 @@ impl Drop for DriveTurn {
 /// A drive that goes away with this value.
 pub struct Drive {
     pub probe: Arc<Probe>,
-    pub backend: WinFspBackend,
+    pub backend: Volume,
     pub letter: DriveLetter,
+    /// With `FSM_TEST_SERVER=sftp`, what stands between the drive and the probe.
+    pub sftp: Option<Sftp>,
     runtime: Runtime,
     _turn: DriveTurn,
+}
+
+/// A real SFTP session, and the server at the other end of it.
+pub struct Sftp {
+    pub server: SftpServer,
+    pub connector: SftpConnector,
+    _known_hosts: tempfile::TempDir,
+}
+
+impl Sftp {
+    /// A server for `probe` on the current runtime, and a connector to it that has never met it.
+    pub async fn start(probe: Arc<Probe>, op_timeout: Duration) -> Self {
+        let server = SftpServer::start(probe).await;
+        let known_hosts = tempfile::tempdir().unwrap();
+        let connector = SftpConnector::new(SftpProfile {
+            host: "127.0.0.1".to_owned(),
+            port: server.port,
+            user: "tester".to_owned(),
+            auth: Auth::Password(Some(Secret::from("anything".to_owned()))),
+            remote_path: "/".to_owned(),
+            keepalive_secs: 0,
+            timeout: op_timeout,
+            known_hosts: known_hosts.path().join("known_hosts"),
+            jump: None,
+        });
+        Self {
+            server,
+            connector,
+            _known_hosts: known_hosts,
+        }
+    }
+}
+
+/// Trusts any host key, and asks nothing else: a password comes with the connector.
+#[derive(Default)]
+pub struct TrustOnce {
+    pub host_keys_asked: AtomicU64,
+}
+
+#[async_trait]
+impl Prompter for TrustOnce {
+    async fn secret(&self, _: SecretRequest) -> Option<(Secret<String>, Remember)> {
+        panic!("no secret should be asked for")
+    }
+
+    async fn login(&self, _: LoginRequest) -> Option<LoginAnswer> {
+        panic!("no login should be asked for")
+    }
+
+    async fn keyboard_interactive(&self, _: KbdIntRequest) -> Option<Vec<Secret<String>>> {
+        panic!("no keyboard-interactive round should be asked for")
+    }
+
+    async fn host_key(&self, _: HostKeyRequest) -> HostKeyDecision {
+        self.host_keys_asked.fetch_add(1, Ordering::SeqCst);
+        HostKeyDecision::TrustOnce
+    }
+}
+
+/// Whether this run puts a real SFTP session under its drives.
+pub fn over_sftp() -> bool {
+    std::env::var("FSM_TEST_SERVER").is_ok_and(|server| server == "sftp")
+}
+
+/// For a test whose fault cannot reach the drive through a real session, so that a run over SFTP does
+/// not fail for that: an error kind that does not cross the wire, or a hung request, which a server
+/// that answers in order (this one, and OpenSSH's) never gets past. Returns whether to skip.
+pub fn not_over_sftp(reason: &str) -> bool {
+    let skip = over_sftp();
+    if skip {
+        println!("skipped over SFTP: {reason}");
+    }
+    skip
+}
+
+/// The same time, as far as the transport can tell: SFTP v3 times are whole seconds.
+pub fn same_time(left: SystemTime, right: SystemTime) -> bool {
+    let seconds = |time: SystemTime| {
+        time.duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    if over_sftp() {
+        seconds(left) == seconds(right)
+    } else {
+        left == right
+    }
+}
+
+/// A slug no other drive of this machine has right now.
+pub fn unique_slug() -> String {
+    format!(
+        "t{}-{}",
+        std::process::id(),
+        NEXT_SLUG.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// The ways a test's drive differs from the usual one.
@@ -326,13 +485,17 @@ impl Drive {
         let turn = DriveTurn::wait();
         let runtime = Runtime::new().unwrap();
         let probe = Arc::new(Probe::default());
-        let fs: Arc<dyn RemoteFs> = Arc::clone(&probe) as Arc<dyn RemoteFs>;
+        let (fs, sftp): (Arc<dyn RemoteFs>, Option<Sftp>) = if over_sftp() {
+            runtime.block_on(async {
+                let sftp = Sftp::start(Arc::clone(&probe), options.op_timeout).await;
+                let fs = sftp.connector.connect(&TrustOnce::default()).await.unwrap();
+                (fs, Some(sftp))
+            })
+        } else {
+            (Arc::clone(&probe) as Arc<dyn RemoteFs>, None)
+        };
         let config = VolumeConfig {
-            slug: format!(
-                "t{}-{}",
-                std::process::id(),
-                NEXT_SLUG.fetch_add(1, Ordering::Relaxed)
-            ),
+            slug: unique_slug(),
             label: options.label,
             file_system_name: "FSM-SFTP".to_owned(),
             op_timeout: options.op_timeout,
@@ -340,12 +503,13 @@ impl Drive {
             threads: 0,
             read_only: options.read_only,
         };
-        let backend = WinFspBackend::new(fs, config, runtime.handle().clone());
+        let backend = Volume::new(fs, config, runtime.handle().clone());
         let letter = start_on_a_free_letter(&backend);
         Self {
             probe,
             backend,
             letter,
+            sftp,
             runtime,
             _turn: turn,
         }
@@ -431,12 +595,12 @@ impl Drop for Drive {
 }
 
 /// Starts a drive on whatever letter is free, one test at a time.
-pub fn start_on_a_free_letter(backend: &WinFspBackend) -> DriveLetter {
+pub fn start_on_a_free_letter(backend: &Volume) -> DriveLetter {
     try_start_on_a_free_letter(backend).unwrap()
 }
 
 /// Tries to start a drive on whatever letter is free, one test at a time.
-pub fn try_start_on_a_free_letter(backend: &WinFspBackend) -> Result<DriveLetter, MountError> {
+pub fn try_start_on_a_free_letter(backend: &Volume) -> Result<DriveLetter, MountError> {
     let _picking = PICKING_A_LETTER
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
@@ -444,12 +608,17 @@ pub fn try_start_on_a_free_letter(backend: &WinFspBackend) -> Result<DriveLetter
     backend.start(letter).map(|()| letter)
 }
 
-fn free_letter() -> DriveLetter {
+pub fn free_letter() -> DriveLetter {
     ('G'..='Y')
         .rev()
         .filter_map(DriveLetter::new)
         .find(|letter| is_letter_free(*letter).unwrap())
         .expect("no free drive letter for the test")
+}
+
+/// `MemFs` never waits for anything, so its calls can finish right here without a runtime.
+fn block_on_here<T>(call: impl Future<Output = T>) -> T {
+    futures::executor::block_on(call)
 }
 
 pub fn remote(path: &str) -> RemotePath {

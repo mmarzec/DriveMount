@@ -11,7 +11,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | PLAT-01 | M2-09, M2-13 | – | – |
 | PLAT-02 | M1-11, M2-10 | Detection: `fsm-win` `winfsp::tests`, with the installed 2.2 in `the_installed_winfsp_is_ready` (`#[ignore]`). Installer: M2-10 | – |
-| PLAT-03 | M0-1, M1-12c | – | – |
+| PLAT-03 | M0-1, M1-12c | Mounted unelevated by every test in `crates/fsm-winfsp/tests`, on this Windows 10 Home. M2-09, M2-13 for the rest | – |
 | PLAT-04 | M1-16, M1-17 | – | – |
 
 ## Profiles
@@ -56,13 +56,13 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `fsm-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: M1-15 | – |
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Only that `SHChangeNotify` returns at once: `notifying_returns_with_no_such_drive`. Whether Explorer reacts: M1-12c, H-06 | – |
+| FR-MNT-05 | M1-11, M1-12a–c, M1-15, M2-07 | The name in Explorer's own window: `a_running_explorer_shows_the_name_and_hides_it_within_a_second` and `a_name_that_needs_unicode_is_shown_as_it_is` (`crates/fsm-winfsp/tests/explorer.rs`, `#[ignore]`d, need a desktop). In the registry: `tests/lifecycle.rs`. **Not checked:** the icon, and *Network locations*: H-06 | – |
+| FR-MNT-06 | M1-11, M1-12a–c, M1-15, M2-07 | Read from Explorer's own window through UI Automation: `tests/explorer.rs` (`#[ignore]`d). Showing about 850 ms; **hiding about 1.2 s, over the 1 s of the criterion**, see `docs/PROGRESS.md`. The test allows 3 s and prints what it measured. H-06 | – |
 | FR-MNT-07 | M1-11, M1-12a–c, M1-15, M2-07 | Through a mounted drive, with `VolumeConfig::read_only`: `a_read_only_volume_refuses_changes_before_they_reach_the_server` (`crates/fsm-winfsp/tests/read_path.rs`), and `copying_into_a_read_only_drive_fails_cleanly` and `delete_on_close_does_nothing_on_a_read_only_drive` (`tests/write_path.rs`). The choice per profile: M1-15 | – |
 | FR-MNT-08 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
 | FR-MNT-09 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
-| FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | – | – |
+| FR-MNT-10 | M1-11, M1-12a–c, M1-15, M2-07 | `files_left_open_do_not_hold_up_unmounting_and_are_closed`, `a_flush_that_fails_as_the_drive_stops_does_not_fail_the_unmount`, `a_server_that_stopped_answering_holds_up_unmounting_for_one_timeout_at_most` (`tests/lifecycle.rs`), through Win32 handles. Notepad itself: H-07 | – |
+| FR-MNT-11 | M1-11, M1-12a–c, M1-15, M2-07 | Below the UI: `dropping_a_mount_in_progress_cancels_it_at_once` and `a_mount_dropped_just_as_the_drive_starts_leaves_no_drive`. The row's button: M1-15, M1-16 | – |
 | FR-MNT-12 | M1-11, M1-12a–c, M1-15, M2-07 | `fsm-win` `explorer_opens_at_the_root_of_the_drive` (`#[ignore]`): a real window at a `subst` drive's root. A mounted drive: M1-19 | – |
 
 ## Connection state and reconnect
@@ -161,10 +161,10 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | Through a drive on `MemFs`: `what_is_written_reads_back_the_same_at_every_size`, `a_gibibyte_round_trips` (`#[ignore]`d, 1 GiB) and `tests/fsx.rs`, a Rust `fsx`, 10k operations and `FSX_OPS` for more. On a real server: M1-12c, M2-09 | – |
+| NFR-REL-01 | M1-03, M1-05, M1-12a–c, M2-01, M2-09 | Through a drive on `MemFs`: `what_is_written_reads_back_the_same_at_every_size`, `a_gibibyte_round_trips` (`#[ignore]`d, 1 GiB) and `tests/fsx.rs`, a Rust `fsx`, 10k operations and `FSX_OPS` for more. Over a real SFTP session to a server in the test process: the same tests with `FSM_TEST_SERVER=sftp`, and `what_is_written_over_sftp_reads_back_the_same_after_reopening`. On a real server: M2-09 | – |
 | NFR-REL-02 | M1-05, M1-12a–c, M2-01, M2-09 | Below the drive: `nfr_rel_02_changes_show_in_the_very_next_listing` and a property test on `CachedFs` over `MemFs` (`crates/fsm-vfs/tests/cache.rs`). Through a drive on `MemFs`: `changes_show_in_the_very_next_listing` and `a_new_size_shows_in_the_very_next_listing` (`crates/fsm-winfsp/tests/write_path.rs`) | – |
 | NFR-REL-03 | M1-05, M1-06, M1-12a–c, M2-01, M2-09 | Below the drive: `every_call_times_out_at_the_deadline_and_signals_suspect` (`crates/fsm-vfs/tests/deadline.rs`). Through the drive, for lookups, listings, opens, reads and volume queries: `a_hung_*_times_out` and `the_limit_is_for_the_callback_not_for_each_call` (`crates/fsm-winfsp/tests/read_path.rs`). Write callbacks: `a_hung_*_times_out`, `the_limit_is_for_the_whole_callback` and, for `Cleanup`, `closing_a_handle_is_bounded_when_the_server_hangs` (`tests/write_path.rs`) | – |
-| NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
+| NFR-REL-04 | M1-05, M1-12a–c, M2-01, M2-09 | `a_killed_process_leaves_no_drive` (`tests/lifecycle.rs`), with a test process. `fsm.exe` itself: M1-19 | – |
 | NFR-REL-05 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 | NFR-REL-06 | M1-05, M1-12a–c, M2-01, M2-09 | – | – |
 

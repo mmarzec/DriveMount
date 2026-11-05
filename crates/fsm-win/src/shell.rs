@@ -6,26 +6,48 @@ use std::io;
 use std::path::PathBuf;
 
 use fsm_vfs::DriveLetter;
+use windows::Win32::Foundation::{
+    ERROR_FILE_NOT_FOUND, ERROR_SUCCESS, LPARAM, WIN32_ERROR, WPARAM,
+};
+use windows::Win32::System::Registry::{
+    HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
+    RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
+};
 use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
 use windows::Win32::UI::Shell::{
     SHCNE_DRIVEADD, SHCNE_DRIVEREMOVED, SHCNE_ID, SHCNF_PATHW, SHChangeNotify, ShellExecuteW,
 };
-use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+use windows::Win32::UI::WindowsAndMessaging::{
+    DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME, DEV_BROADCAST_VOLUME,
+    DEV_BROADCAST_VOLUME_FLAGS, FindWindowW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_SHOWNORMAL,
+    SendMessageTimeoutW, WM_DEVICECHANGE,
+};
 use windows::core::{PCWSTR, w};
 
 use crate::wide;
 
-/// Tells the shell that a drive has appeared. Returns at once, whoever is listening.
+/// The longest Explorer may keep us waiting for one message. It usually takes far less.
+const EXPLORER_WAIT_MS: u32 = 500;
+
+/// Where Explorer keeps what it knows about each network drive, under `HKEY_CURRENT_USER`.
+const MOUNT_POINTS: &str = r"Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2";
+
+/// Tells the shell that a drive has appeared, so that a running Explorer shows it (FR-MNT-06).
 ///
-/// Spike M0-1: this alone may not make a running Explorer show the drive. M1-12c settles what does
-/// (FR-MNT-06).
+/// Waits for Explorer for at most half a second, and never for anyone else, so this does not belong
+/// on an async worker thread.
 pub fn notify_drive_added(letter: DriveLetter) {
     notify(SHCNE_DRIVEADD, letter);
+    tell_explorer(DBT_DEVICEARRIVAL, letter);
 }
 
-/// Tells the shell that a drive has gone. Returns at once, whoever is listening.
+/// Tells the shell that a drive has gone, so that a running Explorer stops showing it (FR-MNT-06).
+///
+/// Waits for Explorer for at most half a second, and never for anyone else, so this does not belong
+/// on an async worker thread.
 pub fn notify_drive_removed(letter: DriveLetter) {
     notify(SHCNE_DRIVEREMOVED, letter);
+    tell_explorer(DBT_DEVICEREMOVECOMPLETE, letter);
 }
 
 /// `SHCNF_FLUSH` must stay out of the flags: it waits for every listener, and a hung one would hang
@@ -35,6 +57,105 @@ fn notify(event: SHCNE_ID, letter: DriveLetter) {
     // SAFETY: with `SHCNF_PATHW`, the first item is a nul-terminated path, read during the call. The
     // event takes no second item.
     unsafe { SHChangeNotify(event, SHCNF_PATHW, Some(root.as_ptr().cast()), None) };
+}
+
+/// What actually makes Explorer look again (spec §5.8): `WM_DEVICECHANGE`, sent to its desktop window
+/// alone. A broadcast is what hung on a suspended program in spike M0-1, and one cannot be posted, as
+/// the message points at its details. Without a desktop window, there is no Explorer to tell.
+fn tell_explorer(event: u32, letter: DriveLetter) {
+    // SAFETY: the class name is a static nul-terminated string.
+    let Ok(desktop) = (unsafe { FindWindowW(w!("Progman"), PCWSTR::null()) }) else {
+        return;
+    };
+    let volume = volume_message(letter);
+    // SAFETY: `volume` outlives the call, which is limited in time and copes with a window that has
+    // gone. The system copies the details across to Explorer, by the size given in them.
+    unsafe {
+        SendMessageTimeoutW(
+            desktop,
+            WM_DEVICECHANGE,
+            WPARAM(event as usize),
+            LPARAM((&raw const volume) as isize),
+            SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT,
+            EXPLORER_WAIT_MS,
+            None,
+        )
+    };
+}
+
+fn volume_message(letter: DriveLetter) -> DEV_BROADCAST_VOLUME {
+    DEV_BROADCAST_VOLUME {
+        dbcv_size: size_of::<DEV_BROADCAST_VOLUME>() as u32,
+        dbcv_devicetype: DBT_DEVTYP_VOLUME.0,
+        dbcv_reserved: 0,
+        dbcv_unitmask: unit_mask(letter),
+        dbcv_flags: DEV_BROADCAST_VOLUME_FLAGS(0),
+    }
+}
+
+/// `A:` is bit 0.
+fn unit_mask(letter: DriveLetter) -> u32 {
+    1 << (letter.as_char() as u32 - 'A' as u32)
+}
+
+/// Sets the name Explorer shows for the network drive `\fsm\<slug>`, as in "Production (Z:)", instead
+/// of one made from its UNC path (FR-MNT-05). It must be there before Explorer hears of the drive.
+///
+/// # Errors
+/// If the registry refuses.
+pub fn set_drive_label(slug: &str, label: &str) -> io::Result<()> {
+    let key_name = wide(mount_point_key(slug));
+    let mut key = HKEY::default();
+    // SAFETY: the name is nul-terminated, and `key` outlives the call.
+    check(unsafe {
+        RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            PCWSTR(key_name.as_ptr()),
+            None,
+            PCWSTR::null(),
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            None,
+            &raw mut key,
+            None,
+        )
+    })?;
+    let value: Vec<u8> = wide(label).iter().flat_map(|u| u.to_le_bytes()).collect();
+    // SAFETY: `key` was just opened to set values, and the data is a nul-terminated UTF-16 string
+    // for the type given.
+    let set =
+        check(unsafe { RegSetValueExW(key, w!("_LabelFromReg"), None, REG_SZ, Some(&value)) });
+    // SAFETY: `key` is open and is not used after this. Nothing can be done if closing fails.
+    let _ = unsafe { RegCloseKey(key) };
+    set
+}
+
+/// Removes what [`set_drive_label`], and Explorer itself, keep for this drive. Having nothing to remove
+/// is fine.
+///
+/// # Errors
+/// If the registry refuses.
+pub fn forget_drive_label(slug: &str) -> io::Result<()> {
+    let key_name = wide(mount_point_key(slug));
+    // SAFETY: the name is nul-terminated.
+    let result = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(key_name.as_ptr())) };
+    if result == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    check(result)
+}
+
+/// Explorer spells `\\fsm\<slug>` with `#` for each backslash.
+fn mount_point_key(slug: &str) -> String {
+    format!(r"{MOUNT_POINTS}\##fsm#{slug}")
+}
+
+fn check(result: WIN32_ERROR) -> io::Result<()> {
+    if result == ERROR_SUCCESS {
+        Ok(())
+    } else {
+        Err(io::Error::from_raw_os_error(result.0.cast_signed()))
+    }
 }
 
 /// Opens the drive's root in a new Explorer window (FR-MNT-12).
@@ -110,14 +231,71 @@ mod tests {
         assert!(path.ends_with("explorer.exe"));
     }
 
-    /// Only that the calls return. Whether anything hears them is not checked here: see
-    /// `docs/PROGRESS.md`, M1-11.
+    /// Only that the calls return. That Explorer hears them is shown in `fsm-winfsp`'s
+    /// `tests/explorer.rs`, with a real drive and a real window.
     #[test]
     fn notifying_returns_with_no_such_drive() {
         let start = Instant::now();
         notify_drive_added(letter('Q'));
         notify_drive_removed(letter('Q'));
         assert!(start.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    fn the_message_names_the_one_letter() {
+        assert_eq!(unit_mask(letter('A')), 1);
+        assert_eq!(unit_mask(letter('C')), 1 << 2);
+        assert_eq!(unit_mask(letter('Z')), 1 << 25);
+
+        let message = volume_message(letter('Z'));
+        assert_eq!(message.dbcv_devicetype, DBT_DEVTYP_VOLUME.0);
+        assert_eq!(message.dbcv_unitmask, 1 << 25);
+        // Windows copies this many bytes across to Explorer.
+        assert_eq!(message.dbcv_size, 20);
+    }
+
+    #[test]
+    fn a_slug_has_its_own_key() {
+        assert_eq!(
+            mount_point_key("web"),
+            r"Software\Microsoft\Windows\CurrentVersion\Explorer\MountPoints2\##fsm#web"
+        );
+    }
+
+    #[test]
+    fn a_label_is_stored_and_forgotten() {
+        use windows::Win32::System::Registry::{RRF_RT_REG_SZ, RegGetValueW};
+
+        let slug = format!("fsm-win-test-{}", std::process::id());
+        let read = || {
+            let name = wide(mount_point_key(&slug));
+            let mut buffer = [0u16; 64];
+            let mut size = size_of_val(&buffer) as u32;
+            // SAFETY: the strings are nul-terminated, and the buffer and its size outlive the call.
+            let result = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    PCWSTR(name.as_ptr()),
+                    w!("_LabelFromReg"),
+                    RRF_RT_REG_SZ,
+                    None,
+                    Some(buffer.as_mut_ptr().cast()),
+                    Some(&raw mut size),
+                )
+            };
+            (result == ERROR_SUCCESS).then(|| {
+                let end = buffer.iter().position(|unit| *unit == 0).unwrap();
+                String::from_utf16(&buffer[..end]).unwrap()
+            })
+        };
+
+        set_drive_label(&slug, "Zażółć 😀").unwrap();
+        assert_eq!(read().as_deref(), Some("Zażółć 😀"));
+        set_drive_label(&slug, "Renamed").unwrap();
+        assert_eq!(read().as_deref(), Some("Renamed"));
+        forget_drive_label(&slug).unwrap();
+        assert_eq!(read(), None);
+        forget_drive_label(&slug).unwrap();
     }
 
     /// Opens a real Explorer window on a `subst` drive, finds it through the shell, and closes it.

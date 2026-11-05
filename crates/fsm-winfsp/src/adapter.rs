@@ -61,6 +61,9 @@ const FILE_DIRECTORY_FILE: u32 = 0x1;
 const MAX_CHUNKS_IN_FLIGHT: usize = 64;
 const MAX_BYTES_IN_FLIGHT: usize = 4 * 1024 * 1024;
 
+/// How many files left open are flushed and closed at a time when a drive stops.
+const FILES_CLOSED_AT_A_TIME: usize = 16;
+
 /// Set in `file_attributes` of `SetBasicInfo` to leave them as they are.
 const ATTRIBUTES_UNCHANGED: u32 = u32::MAX;
 
@@ -123,8 +126,42 @@ pub(crate) struct Adapter {
     pub(crate) descriptor: Vec<u8>,
     pub(crate) volume: Mutex<Option<(Instant, FsStats)>>,
     /// Every open file, so that a change through one handle reaches the others. A handful usually,
-    /// so going through all of them is cheap next to the remote call behind each change.
-    pub(crate) open_files: Mutex<Vec<Arc<OpenFile>>>,
+    /// so going through all of them is cheap next to the remote call behind each change. Shared with
+    /// the volume, as WinFsp does not call `Close` for what is still open when a drive stops.
+    pub(crate) open_files: Arc<Mutex<Vec<Arc<OpenFile>>>>,
+}
+
+/// Closes a file's remote handles. Both go even if closing one fails.
+async fn release(fs: &Stack, file: &OpenFile) -> FsResult<()> {
+    let reader = file.reader.lock().await.take();
+    let writer = file.writer.write().await.take();
+    let reader = match reader {
+        Some(reader) => reader.close().await,
+        None => Ok(()),
+    };
+    let writer = match writer {
+        Some(writer) => fs.close(writer).await,
+        None => Ok(()),
+    };
+    reader.and(writer)
+}
+
+/// Flushes and closes what programs still had open when the drive stopped (FR-MNT-10). What fails
+/// goes to the log: the drive has gone by now, and nobody is left to tell.
+pub(crate) async fn close_left_open(fs: &Stack, files: Vec<Arc<OpenFile>>) {
+    stream::iter(files)
+        .for_each_concurrent(FILES_CLOSED_AT_A_TIME, |file| async move {
+            let path = file.path();
+            if let Some(writer) = file.writer.read().await.as_ref()
+                && let Err(error) = fs.flush(writer).await
+            {
+                warn!(%error, path = %path.as_str(), "flushing failed as the drive stopped");
+            }
+            if let Err(error) = release(fs, &file).await {
+                warn!(%error, path = %path.as_str(), "closing failed as the drive stopped");
+            }
+        })
+        .await;
 }
 
 impl Adapter {
@@ -242,21 +279,6 @@ impl Adapter {
         }
         let path = file.path();
         self.fs.set_attr(AttrTarget::Path(&path), changes).await
-    }
-
-    /// Closes the file's remote handles. Both go even if closing one fails.
-    async fn release(&self, file: &OpenFile) -> FsResult<()> {
-        let reader = file.reader.lock().await.take();
-        let writer = file.writer.write().await.take();
-        let reader = match reader {
-            Some(reader) => reader.close().await,
-            None => Ok(()),
-        };
-        let writer = match writer {
-            Some(writer) => self.fs.close(writer).await,
-            None => Ok(()),
-        };
-        reader.and(writer)
     }
 
     /// Whether `path` is a link: `stat` shows a link as its target, and a link to a directory is
@@ -695,7 +717,7 @@ impl FileSystemContext for Adapter {
         let done = if FspCleanupFlags::FspCleanupDelete.is_flagged(flags) {
             // Handles go first: some servers will not remove an open file.
             self.run(async {
-                if let Err(error) = self.release(context).await {
+                if let Err(error) = release(&self.fs, context).await {
                     debug!(%error, path = %path.as_str(), "closing failed");
                 }
                 if context.is_dir && !self.is_link(&path).await.map_err(fail)? {
@@ -866,7 +888,7 @@ impl FileSystemContext for Adapter {
     fn close(&self, context: Arc<OpenFile>) {
         self.open_files()
             .retain(|file| !Arc::ptr_eq(file, &context));
-        let closed = self.run(async { self.release(&context).await.map_err(fail) });
+        let closed = self.run(async { release(&self.fs, &context).await.map_err(fail) });
         if let Err(error) = closed {
             debug!(status = error.to_ntstatus(), path = %context.path().as_str(), "closing failed");
         }

@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# The tests of winfsp-tests that do not run against our drives, each with its reason (spec §10.3).
+# Format: name  # reason, or sftp: name  # reason for one that only applies over SFTP.
+# crates/fsm-winfsp/tests/winfsp_tests.rs refuses a line with no reason, or a name the suite lacks.
+# Each reason was checked against the assertion that fails, in WinFsp's tst/winfsp-tests at v2.2B5.
+
+# Windows attributes other than read-only: SFTP v3 has nowhere to keep them (spec §5.6).
+create_fileattr_test  # expects FILE_ATTRIBUTE_SYSTEM to be kept on a new file
+setfileinfo_test  # expects FILE_ATTRIBUTE_HIDDEN to be kept; times and sizes are in tests/write_path.rs
+create_readonlydir_test  # expects the read-only attribute on a directory; ignored there, as taking the owner's write bit away would stop new files going in (spec §5.8)
+
+# Allocation: no server has any to set, and it is shown from the size (spec §5.8).
+create_allocation_test  # expects the allocation size asked for at create to be kept
+
+# Per-file security: one fixed descriptor for the whole drive, PersistentAcls false (spec §5.8).
+create_notraverse_test  # expects a directory's own descriptor to deny traversal
+getfileattr_test  # expects a file's own descriptor to deny reading its attributes
+setsecurity_test  # SetSecurity gets STATUS_NOT_SUPPORTED on purpose (spec §5.8)
+
+# Reparse points: not offered (spec §5.8). Symbolic links on the server show as their targets.
+reparse_guid_test  # no reparse points
+reparse_nfs_test  # no reparse points
+reparse_symlink_test  # no reparse points
+reparse_symlink_relative_test  # no reparse points
+
+# Extended attributes: not offered (spec §5.8).
+ea_create_test  # no extended attributes
+ea_overwrite_test  # no extended attributes
+ea_getset_test  # no extended attributes
+
+# Named streams: not offered (spec §5.8).
+stream_create_test  # no named streams
+stream_create_overwrite_test  # no named streams
+stream_create_related_test  # no named streams
+stream_create_sd_test  # no named streams
+stream_create_share_test  # no named streams
+stream_getfileinfo_test  # no named streams
+stream_setfileinfo_test  # no named streams
+stream_delete_test  # no named streams
+stream_delete_pending_test  # no named streams
+stream_rename_flipflop_test  # no named streams
+stream_getsecurity_test  # no named streams
+stream_setsecurity_test  # no named streams
+stream_getstreaminfo_test  # no named streams
+stream_dirnotify_test  # no named streams; hangs rather than fails, and has to be killed
+
+# WSL.
+wsl_stat_test  # expects FileStatLxInformation to be refused, for a file system without WSL support, and the driver answers it here; not looked into further, as we keep no POSIX owner to show
+
+# Over SFTP only. These still run on MemFs.
+sftp: getfileinfo_test  # expects a new file's times within the moments around its creation; SFTP v3 times are whole seconds, so they can fall just before
+sftp: security_stress_meta_test  # holds more newly created files open at once than the 112 SftpFs allows a session (spec §5.6), and gets STATUS_TOO_MANY_OPENED_FILES

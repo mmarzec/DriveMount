@@ -746,9 +746,13 @@ dependencies = [
 name = "fsm-winfsp"
 version = "0.1.0"
 dependencies = [
+ "fsm-sftp",
  "fsm-vfs",
  "fsm-win",
  "futures",
+ "russh",
+ "russh-sftp",
+ "tempfile",
  "tokio",
  "tracing",
  "windows 0.61.3",

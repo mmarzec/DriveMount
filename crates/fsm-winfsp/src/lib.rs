@@ -2,9 +2,8 @@
 
 //! Adapter from `RemoteFs` to a WinFsp drive (spec §5.8). Empty on other platforms.
 //!
-//! So far this is the read path: a drive can be listed and read, and everything that would change it
-//! is refused as write-protected. [`WinFspBackend`] starts and stops the drive; `MountBackend` comes
-//! with the mount lifecycle (M1-12c).
+//! [`WinFspBackend`] is what the mount manager uses: it connects, shows the drive and tells Explorer.
+//! [`Volume`] is the drive alone, over a file system that is already connected.
 
 #![cfg(windows)]
 // Implements WinFsp callbacks. clippy::undocumented_unsafe_blocks requires a SAFETY comment on each block.
@@ -17,5 +16,7 @@ mod backend;
 mod paths;
 mod security;
 mod status;
+mod volume;
 
-pub use backend::{VolumeConfig, WinFspBackend};
+pub use backend::WinFspBackend;
+pub use volume::{Volume, VolumeConfig};

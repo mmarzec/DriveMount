@@ -1,210 +1,177 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Starting and stopping a drive.
+//! What the mount manager drives: connecting, showing the drive and telling Explorer (spec §5.4).
 
-use std::hash::{DefaultHasher, Hash, Hasher};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
 
-use fsm_vfs::{CachedFs, DeadlineFs, DriveLetter, MountError, RemoteFs};
+use fsm_vfs::{
+    Connector, DriveLetter, Health, MountBackend, MountError, Prompter, RemoteFs, async_trait,
+};
+use fsm_win::shell;
 use tokio::runtime::Handle;
-use tokio::sync::watch;
-use winfsp::host::{FileSystemHost, FileSystemParams, FineGuard, VolumeParams};
+use tokio::sync::{Mutex, watch};
+use tokio::task::{JoinHandle, spawn_blocking};
+use tracing::{debug, info, warn};
 
-use crate::adapter::{Adapter, Deadline, Stack};
-use crate::{attrs, security};
+use crate::volume::{Volume, VolumeConfig, fit_label};
 
-/// Volume labels are limited to this many UTF-16 units (spec §5.8).
-const MAX_LABEL: usize = 32;
-
-/// What Windows caches for: short, and never for ever (spec §5.6, spike M0-1).
-const FILE_INFO_TIMEOUT_MS: u32 = 1000;
-
-const SECTOR_SIZE: u16 = 4096;
-const SECTORS_PER_ALLOCATION_UNIT: u16 = 1;
-const _: () =
-    assert!(SECTOR_SIZE as u64 * SECTORS_PER_ALLOCATION_UNIT as u64 == attrs::ALLOCATION_UNIT);
-
-const MAX_COMPONENT_LENGTH: u16 = 255;
-
-/// What a drive looks like and how it behaves.
-#[derive(Debug, Clone)]
-pub struct VolumeConfig {
-    /// The last part of the volume prefix `\fsm\<slug>`, which makes this a network drive.
-    pub slug: String,
-    /// The volume label, cut to fit. Usually the profile's name.
-    pub label: String,
-    /// The file system's name, `FSM-SFTP` or `FSM-NFS`.
-    pub file_system_name: String,
-    /// The limit for each callback, and for each remote call within it (`op_timeout_secs`).
-    pub op_timeout: Duration,
-    /// How long attributes and listings are remembered (`cache_ttl_secs`).
-    pub cache_ttl: Duration,
-    /// Dispatcher threads. 0 is WinFsp's default.
-    pub threads: u32,
-    /// Refuse every change with "media is write protected" (FR-MNT-07).
-    pub read_only: bool,
-}
-
-/// A [`RemoteFs`] shown as a drive, through `CachedFs<DeadlineFs<…>>`.
+/// The profile's drive: connects when mounted, and is gone again when unmounted.
 ///
-/// `MountBackend` comes with M1-12c.
-pub struct WinFspBackend {
+/// The connection is made for each mount and dropped with it, so what it has remembered goes too
+/// (NFR-SEC-03).
+pub struct WinFspBackend<C> {
+    connector: Arc<C>,
     config: VolumeConfig,
-    fs: Arc<Stack>,
-    deadline: Arc<Deadline>,
-    runtime: Handle,
-    host: Mutex<Option<FileSystemHost<Adapter, FineGuard>>>,
+    mounted: Mutex<Option<Mounted>>,
+    health: watch::Sender<Health>,
 }
 
-impl WinFspBackend {
-    /// A backend for `fs`, not yet on any drive. Callbacks run their remote calls on `runtime`, which
-    /// has to outlive the drive.
+/// What a mounted drive holds.
+struct Mounted {
+    visible: VisibleDrive,
+    watcher: JoinHandle<()>,
+}
+
+impl<C: Connector> WinFspBackend<C> {
+    /// A backend for one profile, not connected yet.
     #[must_use]
-    pub fn new(fs: Arc<dyn RemoteFs>, config: VolumeConfig, runtime: Handle) -> Self {
-        let deadline = Arc::new(DeadlineFs::new(fs, config.op_timeout));
-        let fs = Arc::new(CachedFs::new(Arc::clone(&deadline), config.cache_ttl));
+    pub fn new(connector: C, config: VolumeConfig) -> Self {
         Self {
+            connector: Arc::new(connector),
             config,
-            fs,
-            deadline,
-            runtime,
-            host: Mutex::new(None),
+            mounted: Mutex::new(None),
+            health: watch::Sender::new(Health::Ok),
         }
     }
 
-    /// The "suspect" signal of spec §5.6: how many calls have timed out so far, including callbacks
-    /// that ran out of time between remote calls.
-    #[must_use]
-    pub fn suspect(&self) -> watch::Receiver<u64> {
-        self.deadline.suspect()
+    /// Follows the suspect signal: each rise is worth asking whether the connection still answers.
+    /// Reconnecting is M2-01's, which also adds keep-alive misses.
+    fn watch_health(&self, mut suspect: watch::Receiver<u64>) -> JoinHandle<()> {
+        let connector = Arc::clone(&self.connector);
+        let health = self.health.clone();
+        tokio::spawn(async move {
+            while suspect.changed().await.is_ok() {
+                let state = match connector.probe().await {
+                    Ok(round_trip) => {
+                        debug!(?round_trip, "the connection still answers");
+                        Health::Ok
+                    }
+                    Err(error) => {
+                        warn!(%error, "the connection does not answer");
+                        Health::Lost(error.to_string())
+                    }
+                };
+                health.send_if_modified(|current| {
+                    let changed = *current != state;
+                    current.clone_from(&state);
+                    changed
+                });
+            }
+        })
     }
+}
 
-    /// Makes the drive appear on `letter`.
-    ///
-    /// # Errors
-    ///
-    /// [`MountError::WinFspMissing`] if WinFsp cannot be loaded. [`MountError::Other`] if the drive
-    /// cannot start, or is already on a letter.
-    pub fn start(&self, letter: DriveLetter) -> Result<(), MountError> {
-        let mut slot = self.host();
-        if slot.is_some() {
+#[async_trait]
+impl<C: Connector> MountBackend for WinFspBackend<C> {
+    /// Dropping this future cancels the mount (FR-MNT-11), at any point: what has been set up by
+    /// then goes away with it.
+    async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError> {
+        let mut mounted = self.mounted.lock().await;
+        if mounted.is_some() {
             return Err(MountError::Other("the drive is already mounted".to_owned()));
         }
-        winfsp::winfsp_init().map_err(|_| MountError::WinFspMissing)?;
 
-        let adapter = Adapter {
-            fs: Arc::clone(&self.fs),
-            deadline: Arc::clone(&self.deadline),
-            op_timeout: self.config.op_timeout,
-            read_only: self.config.read_only,
-            runtime: self.runtime.clone(),
-            label: fit_label(&self.config.label),
-            descriptor: security::current_user_descriptor().map_err(other("security"))?,
-            volume: Mutex::new(None),
-            open_files: Mutex::new(Vec::new()),
-        };
-        let options = FileSystemParams {
-            use_dir_info_by_name: true,
-            volume_params: volume_params(&self.config),
-            debug_mode: Default::default(),
-        };
-        let mut host = FileSystemHost::<Adapter, FineGuard>::new_with_options(options, adapter)
-            .map_err(other("create"))?;
-        host.mount(letter.to_string()).map_err(other("mount"))?;
-        host.start_with_threads(self.config.threads)
-            .map_err(other("start"))?;
-        *slot = Some(host);
+        let fs = self.connector.connect(prompter).await?;
+        let config = self.config.clone();
+        let runtime = Handle::current();
+        // The drive's output goes unread if this future is dropped, which takes the drive away again.
+        let visible = spawn_blocking(move || VisibleDrive::show(fs, config, runtime, letter))
+            .await
+            .map_err(|error| MountError::Other(format!("starting the drive: {error}")))??;
+
+        self.health.send_replace(Health::Ok);
+        let watcher = self.watch_health(visible.volume.suspect());
+        *mounted = Some(Mounted { visible, watcher });
+        info!(%letter, slug = %self.config.slug, "mounted");
         Ok(())
     }
 
-    /// Removes the drive. Does nothing if it is not there. Waits for callbacks in progress, which
-    /// are limited by the operation timeout.
-    pub fn stop(&self) {
-        let host = self.host().take();
-        drop(host);
-    }
+    /// Never held up by files that programs have open: their handles stop working (FR-MNT-10). What
+    /// cannot be flushed by then goes to the log.
+    async fn unmount(&self) -> Result<(), MountError> {
+        let Some(Mounted { visible, watcher }) = self.mounted.lock().await.take() else {
+            return Ok(());
+        };
+        watcher.abort();
 
-    /// Nothing panics while holding this lock in a way that matters: the host is either there or not.
-    fn host(&self) -> MutexGuard<'_, Option<FileSystemHost<Adapter, FineGuard>>> {
-        self.host.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-}
-
-fn other<E: std::fmt::Display>(step: &'static str) -> impl FnOnce(E) -> MountError {
-    move |error| MountError::Other(format!("WinFsp {step}: {error}"))
-}
-
-/// The volume parameters of spec §5.8.
-fn volume_params(config: &VolumeConfig) -> VolumeParams {
-    let mut params = VolumeParams::new();
-    params
-        .sector_size(SECTOR_SIZE)
-        .sectors_per_allocation_unit(SECTORS_PER_ALLOCATION_UNIT)
-        .max_component_length(MAX_COMPONENT_LENGTH)
-        .case_sensitive_search(false)
-        .case_preserved_names(true)
-        .unicode_on_disk(true)
-        .persistent_acls(false)
-        .read_only_volume(config.read_only)
-        .post_cleanup_when_modified_only(true)
-        .pass_query_directory_filename(true)
-        .file_info_timeout(FILE_INFO_TIMEOUT_MS)
-        .volume_creation_time(attrs::filetime(Some(SystemTime::now())))
-        .volume_serial_number(serial_number(&config.slug))
-        .filesystem_name(&config.file_system_name)
-        .prefix(format!(r"\fsm\{}", config.slug));
-    params
-}
-
-/// A serial number that stays the same from one mount to the next (spec §5.8).
-fn serial_number(slug: &str) -> u32 {
-    let mut hasher = DefaultHasher::new();
-    slug.hash(&mut hasher);
-    // Keeps the low half of the hash on purpose.
-    hasher.finish() as u32
-}
-
-/// The longest start of `label` that fits, without cutting a character in two.
-fn fit_label(label: &str) -> String {
-    let mut used = 0;
-    label
-        .chars()
-        .take_while(|c| {
-            used += c.len_utf16();
-            used <= MAX_LABEL
+        let visible = spawn_blocking(move || {
+            visible.hide();
+            visible
         })
-        .collect()
+        .await
+        .map_err(|error| MountError::Other(format!("stopping the drive: {error}")))?;
+        visible.volume.close_left_open().await;
+        info!(slug = %self.config.slug, "unmounted");
+        Ok(())
+    }
+
+    fn health(&self) -> watch::Receiver<Health> {
+        self.health.subscribe()
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// A drive that Explorer knows about, until it is hidden or dropped. Everything here blocks, for
+/// callbacks in progress and for Explorer, so it stays off async worker threads.
+struct VisibleDrive {
+    volume: Volume,
+    letter: DriveLetter,
+    slug: String,
+    hidden: std::sync::Once,
+}
 
-    #[test]
-    fn a_short_label_is_kept() {
-        assert_eq!(fit_label("Production"), "Production");
-        assert_eq!(fit_label(""), "");
+impl VisibleDrive {
+    fn show(
+        fs: Arc<dyn RemoteFs>,
+        config: VolumeConfig,
+        runtime: Handle,
+        letter: DriveLetter,
+    ) -> Result<Self, MountError> {
+        let slug = config.slug.clone();
+        // Without the label the drive still works, under a name made from its UNC path.
+        if let Err(error) = shell::set_drive_label(&slug, &fit_label(&config.label)) {
+            warn!(%error, %slug, "could not set the name Explorer shows");
+        }
+        let volume = Volume::new(fs, config, runtime);
+        if let Err(error) = volume.start(letter) {
+            forget_label(&slug);
+            return Err(error);
+        }
+        shell::notify_drive_added(letter);
+        Ok(Self {
+            volume,
+            letter,
+            slug,
+            hidden: std::sync::Once::new(),
+        })
     }
 
-    #[test]
-    fn a_long_label_is_cut_to_32_units() {
-        let exact = "x".repeat(32);
-        assert_eq!(fit_label(&exact), exact);
-        assert_eq!(fit_label(&"x".repeat(33)), exact);
-        assert_eq!(fit_label(&"ż".repeat(33)), "ż".repeat(32));
+    fn hide(&self) {
+        self.hidden.call_once(|| {
+            self.volume.stop();
+            shell::notify_drive_removed(self.letter);
+            forget_label(&self.slug);
+        });
     }
+}
 
-    #[test]
-    fn a_label_is_not_cut_inside_a_character() {
-        // 😀 takes two UTF-16 units, and would end on unit 33.
-        let label = format!("{}😀", "x".repeat(31));
-        assert_eq!(fit_label(&label), "x".repeat(31));
+impl Drop for VisibleDrive {
+    fn drop(&mut self) {
+        self.hide();
     }
+}
 
-    #[test]
-    fn the_serial_number_depends_on_the_slug_alone() {
-        assert_eq!(serial_number("web"), serial_number("web"));
-        assert_ne!(serial_number("web"), serial_number("db"));
+fn forget_label(slug: &str) {
+    if let Err(error) = shell::forget_drive_label(slug) {
+        warn!(%error, %slug, "could not remove the name Explorer shows");
     }
 }

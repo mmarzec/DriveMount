@@ -880,7 +880,10 @@ fn one_time_can_be_set_and_the_other_stays() {
     drop(file);
     let after = drive.attr("/file").unwrap();
     assert_eq!(after.mtime, Some(modified));
-    assert_eq!(after.atime, before.atime);
+    assert!(support::same_time(
+        after.atime.unwrap(),
+        before.atime.unwrap()
+    ));
     assert!(!after.is_read_only());
 }
 
@@ -1670,6 +1673,9 @@ fn a_hung_mkdir_times_out() {
 
 #[test]
 fn a_hung_write_times_out_and_the_next_can_work() {
+    if support::not_over_sftp("a hung request stays at the head of the server's queue") {
+        return;
+    }
     let drive = short_drive();
     drive.put("/file", b"before");
     let mut file = OpenOptions::new()
@@ -1745,6 +1751,9 @@ fn a_hung_check_for_emptiness_times_out() {
 /// Windows waits for cleanup when a handle closes, and there is no error to report it with.
 #[test]
 fn closing_a_handle_is_bounded_when_the_server_hangs() {
+    if support::not_over_sftp("a hung request stays at the head of the server's queue") {
+        return;
+    }
     let drive = short_drive();
     drive.put("/file", b"x");
 
@@ -1874,6 +1883,9 @@ fn a_written_file_shows_times_and_size_from_the_server() {
     let metadata = file.metadata().unwrap();
     assert_eq!(metadata.len(), 5000);
     let attr: Attr = drive.attr("/file").unwrap();
-    assert_eq!(metadata.modified().unwrap(), attr.mtime.unwrap());
+    assert!(support::same_time(
+        metadata.modified().unwrap(),
+        attr.mtime.unwrap()
+    ));
     assert!(attr.mtime.unwrap() <= SystemTime::now());
 }

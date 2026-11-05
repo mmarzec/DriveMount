@@ -676,6 +676,9 @@ fn a_broken_link_is_listed_but_does_not_open() {
 
 #[test]
 fn a_link_that_times_out_fails_the_listing() {
+    if support::not_over_sftp("a timeout does not cross the wire") {
+        return;
+    }
     let drive = drive_with_links();
     drive.mkdir("/dir");
     drive.probe.add_link("/dir/slow", "/target");
@@ -751,6 +754,9 @@ fn a_hung_open_times_out() {
 
 #[test]
 fn a_hung_read_times_out_and_the_next_can_work() {
+    if support::not_over_sftp("a hung request stays at the head of the server's queue") {
+        return;
+    }
     let drive = short_drive();
     drive.put("/file", b"contents");
     let mut file = File::open(drive.path("file")).unwrap();
@@ -790,6 +796,9 @@ fn the_limit_is_for_the_callback_not_for_each_call() {
 
 #[test]
 fn a_lost_connection_reads_as_an_unreachable_network() {
+    if support::not_over_sftp("tests/lifecycle.rs loses a real connection instead") {
+        return;
+    }
     let drive = Drive::new();
     drive.put("/file", b"x");
     let mut file = File::open(drive.path("file")).unwrap();
@@ -808,6 +817,9 @@ fn a_server_that_refuses_the_open_is_refused_on_the_first_read() {
 
 #[test]
 fn hitting_the_limit_on_open_files_says_so_and_can_be_retried() {
+    if support::not_over_sftp("that limit is SftpFs's own, and does not come from the server") {
+        return;
+    }
     let drive = Drive::new();
     drive.put("/file", b"x");
     let mut file = File::open(drive.path("file")).unwrap();

@@ -128,8 +128,8 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-MNT-02 | M | Each mount gets its drive letter: the profile's letter, or *Auto*, which picks the highest free letter from Z downwards. | *Auto* with Z: free → Z:. |
 | FR-MNT-03 | M | **Free letter** means not present in `GetLogicalDrives()` *and* not a remembered network connection (`WNetGetConnectionW` ≠ `ERROR_NOT_CONNECTED`). A, B and C are never used. | A disconnected persistent `net use Y:` mapping makes Y: count as taken. |
 | FR-MNT-04 | M | **Letter taken** at mount time: behaviour depends on the `letter_conflict` setting. *auto* (default) mounts on the next free letter, shows "Y: (Z: was in use)" in the row and sends a notification. *fail* stops with E-LETTER-TAKEN. | Both behaviours are covered by tests. |
-| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\fsm\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. Explorer names network drives after the UNC path ("slug (\\fsm)"), not the volume label, so the profile name is also written to `_LabelFromReg` under `HKCU\…\Explorer\MountPoints2\##fsm#<slug>` (verified in M1-12c; spike M0-1 §7). | Explorer shows "Production (Z:)" with a network-drive icon. |
-| FR-MNT-06 | M | An already-running Explorer is told about drive changes at once. Spike M0-1 showed that a WinFsp letter created with `DefineDosDevice` stays invisible to a running Explorer, and `SHChangeNotify` from another process did not help. The mechanism is chosen in M1-12c: first candidate, assign the letter with `WNetAddConnection2W` through WinFsp's network provider (the `net use` path); otherwise `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)` plus an **asynchronous** device broadcast. Synchronous `WM_DEVICECHANGE` broadcasts are forbidden, because they hang on unresponsive windows. | An open Explorer window shows or hides the drive within 1 s, without restarting Explorer. |
+| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\fsm\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. Explorer names network drives after the UNC path ("slug (\\fsm)"), not the volume label, so the profile name is also written to `_LabelFromReg` under `HKCU\…\Explorer\MountPoints2\##fsm#<slug>` before Explorer hears of the drive, and removed on unmount (§5.8). | Explorer shows "Production (Z:)" with a network-drive icon. |
+| FR-MNT-06 | M | An already-running Explorer is told about drive changes at once. A WinFsp letter stays invisible to a running Explorer, and `SHChangeNotify` alone does not help. So `WM_DEVICECHANGE` goes to Explorer's desktop window alone, limited to 500 ms, alongside `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)` (§5.8). Broadcasts of `WM_DEVICECHANGE` are forbidden, because they hang on unresponsive windows. | An open Explorer window shows or hides the drive within 1 s, without restarting Explorer. |
 | FR-MNT-07 | M | **Read-only** profiles mount a read-only volume. Writes fail with "media is write protected" (`STATUS_MEDIA_WRITE_PROTECTED`). | Copying into a read-only drive fails cleanly. |
 | FR-MNT-08 | M | **Mount on start**: profiles with `mount_on_start` are mounted in parallel when the app starts. Profiles that need a prompt queue their prompts one at a time. | 5 such profiles mount in parallel at start-up. |
 | FR-MNT-09 | M | **Mount all** (toolbar) mounts every unmounted profile in the current filter. **Unmount all** (toolbar and tray) unmounts everything. | Mount all with search "web" mounts only the matching profiles. |
@@ -368,6 +368,7 @@ Dependencies between the crates. Only `fsm-vfs` is shared, so there is no cycle,
 fsm-vfs ◀── fsm-sftp, fsm-nfs                 (portable)
 fsm-vfs ◀── fsm-core                          (portable)
 fsm-vfs ◀── fsm-winfsp, fsm-smb, fsm-win      (Windows; empty crates on other platforms)
+fsm-win ◀── fsm-winfsp                        (the Explorer label and notifications)
 apps/fsm ──▶ all of the above
 ```
 
@@ -444,11 +445,11 @@ States: `Disconnected`, `Connecting`, `Mounted`, `Reconnecting`, `Unmounting`, `
 | From | Event | To | Action |
 |---|---|---|---|
 | Disconnected / Error | Mount requested | Connecting | allocate letter, `connect()`; prompts if needed |
-| Connecting | Connected + mounted | Mounted | `SHChangeNotify(DRIVEADD)` |
+| Connecting | Connected + mounted | Mounted | the backend has told Explorer (§5.8) |
 | Connecting | Cancel | Disconnected | drop connection |
 | Connecting | Error (auth, host key, unreachable, path…) | Error(reason) | toast (FR-NOT-01) |
 | Mounted | Unmount requested | Unmounting | flush, stop host |
-| Unmounting | Done | Disconnected | `SHChangeNotify(DRIVEREMOVED)`, zero secrets |
+| Unmounting | Done | Disconnected | the backend has told Explorer (§5.8); zero secrets |
 | Mounted | Connection lost, auto_reconnect | Reconnecting | keep the letter; start backoff |
 | Mounted | Connection lost, no auto_reconnect | Error(Connection lost) | unmount, toast |
 | Reconnecting | Reconnected | Mounted | reopen handles lazily |
@@ -628,6 +629,10 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **New names.** A name that exists in another case counts as taken, for `Create` and for `Rename`. Replacing it keeps the name already there rather than making a second that Windows would take for the first, so moving `a` over `Taken` as `TAKEN` leaves `Taken`. A rename that only changes the case uses the new spelling.
 - **`Rename` refuses what a server would allow,** with `STATUS_ACCESS_DENIED` as on Windows: replacing a directory or replacing with one. The driver does the same for a read-only target.
 - **`Cleanup` cannot report failure,** as Windows has already closed the handle: a failed flush or removal goes to the log. So a failed `DeleteFile` reads as success, and the file is still there in the next listing. The removal never reaches a server on a read-only drive, where `FILE_DELETE_ON_CLOSE` would otherwise get this far unasked.
+- **Mounting.** `MountBackend::mount` connects, writes the Explorer label, starts the drive and tells Explorer. Dropping the future cancels it at any point, and what was set up by then goes with it (FR-MNT-11). A letter in use gives `LetterTaken`. Each mount makes its own connection, and `unmount` drops it.
+- **Unmounting.** `unmount` stops the host, tells Explorer, removes the label, then flushes and closes on the server what programs still had open, in one `op_timeout_secs` at most. WinFsp calls no `Close` for those. Failures go to the log, and unmounting never fails over them (FR-MNT-10). The programs get an error at their next use of the handle.
+- **Health.** Each rise of the suspect signal asks `Connector::probe`, and its answer sets `Health`. That is the third trigger of FR-REC-01. Keep-alive timeouts, transport errors and reconnecting are M2-01's, so until then a dropped connection fails calls without `Health` showing it.
+- **Explorer.** WinFsp sets the letter without telling anyone, and keeps it tied to the process so that a kill removes it (NFR-REL-04), so the letter stays WinFsp's. `WNetAddConnection2W` through `WinFsp.Np` is not an option: it gives error 67 unless the class `fsm` is registered as a launcher service under `HKLM`, which needs administrator rights. What works is `SendMessageTimeoutW(Progman, WM_DEVICECHANGE, DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE)` with a `DEV_BROADCAST_VOLUME`, with `SMTO_ABORTIFHUNG` and 500 ms. It reaches one window, so no other program can hold it up. It is not sent after a crash, so an open window can list a dead drive until the next mount or unmount of that letter. Windows set to open folders in a separate process were not tried.
 - **`.` and `..`** are listed outside the root, and `..` shows the directory's own details rather than cost a round trip for its parent's.
 
 **Error mapping**
@@ -1020,7 +1025,7 @@ The generic part is `fsm_vfs::contract` (feature `testing`): everything down to 
 ### 10.3 Windows integration tests (Windows CI runner with WinFsp installed)
 
 - Mount an **in-memory `RemoteFs`** and an **in-process russh SFTP server** (from the `russh-sftp` server side) as drives, then run:
-  - `winfsp-tests-x64.exe` with the test subset that applies to a network file system without ACLs and streams. The excluded tests are listed in the repo with reasons;
+  - `winfsp-tests-x64.exe` with the test subset that applies to a network file system without ACLs and streams. The excluded tests are in `tests/winfsp-tests-exclusions.txt` with reasons. It is not in the WinFsp installer, so `scripts/get-winfsp-tests.ps1` fetches it, pinned by hash. Each test runs alone, in its own folder and with a time limit, as the suite stops at its first failure and can hang;
   - `fsx` (file system exerciser), 100k operations, for data integrity (NFR-REL-01). There is no ready Windows build, so this is `crates/fsm-winfsp/tests/fsx.rs`: the same operations and limits through Win32, mapped reads and writes included, with `FSX_OPS` and `FSX_SEED` to set the length and repeat a run;
   - scripted Explorer-like operations through Win32 `CopyFileEx`, `MoveFileEx`, `FindFirstFile` and `ReplaceFile`;
   - NEO regression cases: write → close → reopen → hash; a new file visible in the next listing; a host-key prompt for an unknown server; no drive left after the process is killed.
