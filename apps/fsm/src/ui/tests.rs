@@ -20,7 +20,7 @@ use slint::{ComponentHandle, LogicalPosition, LogicalSize, Model, SharedString};
 use uuid::Uuid;
 
 use super::errors::{read_only_text, setting_problems_text, shown_error};
-use super::{MainUi, RowStatus, Texts, UiCommand};
+use super::{ActionFailure, MainUi, RowStatus, Texts, UiCommand};
 
 thread_local! {
     static BACKEND_READY: Cell<bool> = const { Cell::new(false) };
@@ -317,6 +317,25 @@ fn without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not() {
     fixture.ui.set_winfsp_ready(true);
     assert!(fixture.labelled(banner).is_none());
     assert!(fixture.is_enabled("Mount A"));
+}
+
+#[test]
+fn a_failed_action_has_a_banner_until_it_is_taken_back() {
+    let fixture = Fixture::new(vec![profile("A")]);
+    let failure = ActionFailure::Delete("the disk is full".to_owned());
+    let shown = "The connection could not be deleted: the disk is full";
+
+    fixture.ui.set_action_failure(Some(&failure));
+    assert!(fixture.labelled(shown).is_some());
+
+    let failure = ActionFailure::Mount("this connection needs correcting first".to_owned());
+    fixture.ui.set_action_failure(Some(&failure));
+    assert!(fixture.labelled(shown).is_none());
+    let shown = "The drive could not be mounted: this connection needs correcting first";
+    assert!(fixture.labelled(shown).is_some());
+
+    fixture.ui.set_action_failure(None);
+    assert!(fixture.labelled(shown).is_none());
 }
 
 #[test]

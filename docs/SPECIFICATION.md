@@ -786,8 +786,8 @@ The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so
 
 ### 6.4 Logs
 
-- **Location:** `%LOCALAPPDATA%\FsManager\logs\fsm.log`, rolled daily, keeping 7 files of at most 5 MB each.
-- **Format and secrets:** text with timestamp, level, span (profile) and message. Secrets cannot appear (NFR-SEC-02).
+- **Location:** `%LOCALAPPDATA%\FsManager\logssm.log`, rolled at midnight UTC and at 5 MiB to `fsm.log.1`, up to `fsm.log.6`, so 7 files of at most 5 MiB each. A log that cannot be written never stops the app.
+- **Format and secrets:** text with timestamp (UTC), level, span (profile) and message. Secrets cannot appear (NFR-SEC-02). The *Log level* setting applies to FS Manager's own crates; other crates log Warn and above at most, as their debug output is not ours to vouch for.
 - **Crash reports:** `crash-<timestamp>.txt` in the same folder.
 
 ---

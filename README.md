@@ -47,7 +47,7 @@ cargo install --locked --version 0.22.2 cargo-audit
 
 | Path | Contents |
 |---|---|
-| `apps/fsm` | The GUI binary, `fsm.exe`, and the library behind it that makes real drives and the main window. `cargo run -p fsm --example main_window` shows the window with made-up connections, and `--example connect` runs it with the real engine and a scratch configuration |
+| `apps/fsm` | The GUI binary, `fsm.exe`, and the library behind it that makes real drives and the main window. `cargo run -p fsm --example main_window` shows the window with made-up connections, and `--example connect` runs `fsm.exe` on a scratch configuration. `--example mount_one` mounts, checks and unmounts one profile with no window, for scripts |
 | `crates/fsm-vfs` | Shared traits and types (`RemoteFs`, `Connector`, `MountBackend`), caches, read-ahead, deadlines |
 | `crates/fsm-core` | Profiles, configuration and the mount manager |
 | `crates/fsm-sftp` | `RemoteFs` over SFTP, and its connector |

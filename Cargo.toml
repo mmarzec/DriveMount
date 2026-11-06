@@ -78,7 +78,9 @@ zeroize = "=1.9.1"
 # Logging
 tracing = "=0.1.44"
 tracing-appender = "=0.2.5"
-tracing-subscriber = { version = "=0.3.23", features = ["env-filter"] }
+# No env-filter, ansi or tracing-log: `logging` filters by crate and writes a file, and a regex engine
+# costs about as much as NFR-PERF-03 has to spare.
+tracing-subscriber = { version = "=0.3.23", default-features = false, features = ["fmt", "std"] }
 
 # Errors, and async in dyn traits (ADR-0001). anyhow is for apps/fsm only.
 anyhow = "=1.0.104"
@@ -106,3 +108,94 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# NFR-PERF-03. What the window is made of, and none of what a drive's speed depends on: those stay at
+# the default, as do Slint's core and software renderer, which draw each frame.
+[profile.release.package.accesskit]
+opt-level = "s"
+[profile.release.package.accesskit_consumer]
+opt-level = "s"
+[profile.release.package.accesskit_windows]
+opt-level = "s"
+[profile.release.package.accesskit_winit]
+opt-level = "s"
+[profile.release.package.arboard]
+opt-level = "s"
+[profile.release.package.fontdb]
+opt-level = "s"
+[profile.release.package.fontique]
+opt-level = "s"
+[profile.release.package.gif]
+opt-level = "s"
+[profile.release.package.harfrust]
+opt-level = "s"
+[profile.release.package.icu_collections]
+opt-level = "s"
+[profile.release.package.icu_decimal]
+opt-level = "s"
+[profile.release.package.icu_locale_core]
+opt-level = "s"
+[profile.release.package.icu_locale_fallback]
+opt-level = "s"
+[profile.release.package.icu_normalizer]
+opt-level = "s"
+[profile.release.package.icu_properties]
+opt-level = "s"
+[profile.release.package.icu_provider]
+opt-level = "s"
+[profile.release.package.icu_segmenter]
+opt-level = "s"
+[profile.release.package.image]
+opt-level = "s"
+[profile.release.package.image-webp]
+opt-level = "s"
+[profile.release.package.kurbo]
+opt-level = "s"
+[profile.release.package.lyon_algorithms]
+opt-level = "s"
+[profile.release.package.lyon_extra]
+opt-level = "s"
+[profile.release.package.lyon_geom]
+opt-level = "s"
+[profile.release.package.lyon_path]
+opt-level = "s"
+[profile.release.package.muda]
+opt-level = "s"
+[profile.release.package.parley]
+opt-level = "s"
+[profile.release.package.png]
+opt-level = "s"
+[profile.release.package.read-fonts]
+opt-level = "s"
+[profile.release.package.resvg]
+opt-level = "s"
+[profile.release.package.roxmltree]
+opt-level = "s"
+[profile.release.package.skrifa]
+opt-level = "s"
+[profile.release.package.swash]
+opt-level = "s"
+[profile.release.package.tiny-skia]
+opt-level = "s"
+[profile.release.package.tiny-skia-path]
+opt-level = "s"
+[profile.release.package.usvg]
+opt-level = "s"
+[profile.release.package.winit]
+opt-level = "s"
+[profile.release.package.zeno]
+opt-level = "s"
+[profile.release.package.flate2]
+opt-level = "s"
+[profile.release.package.i-slint-backend-winit]
+opt-level = "s"
+[profile.release.package.i-slint-common]
+opt-level = "s"
+[profile.release.package.miniz_oxide]
+opt-level = "s"
+[profile.release.package.yoke]
+opt-level = "s"
+[profile.release.package.zerotrie]
+opt-level = "s"
+[profile.release.package.zerovec]
+opt-level = "s"

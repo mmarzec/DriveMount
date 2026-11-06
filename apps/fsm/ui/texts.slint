@@ -135,6 +135,14 @@ export global Texts {
         return @tr("Some settings were not valid, so their defaults are in use: {}", problems);
     }
 
+    // What a row cannot say, as its state did not change.
+    public pure function mount-refused(detail: string) -> string {
+        return @tr("The drive could not be mounted: {}", detail);
+    }
+    public pure function delete-failed(detail: string) -> string {
+        return @tr("The connection could not be deleted: {}", detail);
+    }
+
     // The profile dialog (spec 7.2).
     public pure function add-connection() -> string {
         return @tr("Add connection");

@@ -103,7 +103,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-APP-03 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | – | – |
-| FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection: `fsm-win` `winfsp::tests`. Banner and disabled buttons: `without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not`, `without_winfsp_only_starting_a_mount_is_off`. Opening the page: `only_a_secure_web_page_is_opened`, with M1-18 to connect it | – |
+| FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection: `fsm-win` `winfsp::tests`. Banner and disabled buttons: `without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not`, `without_winfsp_only_starting_a_mount_is_off`. Opening the page: `only_a_secure_web_page_is_opened`, connected in `fsm_app::app::engine` | – |
 | FR-APP-07 | M1-11, M2-02, M2-06 | – | – |
 
 ## Settings
@@ -147,7 +147,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | NFR-PERF-01 | M0-2, M0-3, M1-06, M1-10, M2-08 | – | – |
 | NFR-PERF-02 | M0-2, M0-3, M1-06, M1-10, M2-08 | – | – |
-| NFR-PERF-03 | M1-01, M2-08 | `scripts/check-exe-size.ps1` in CI. Measured against the full app: M2-08 | – |
+| NFR-PERF-03 | M1-01, M2-08 | `scripts/check-exe-size.ps1` in CI: 14.88 MB with the engine, at M1-18. Measured against the full app: M2-08 | – |
 | NFR-PERF-04 | M0-2, M0-3, M1-06, M1-10, M2-08 | – | – |
 | NFR-PERF-05 | M0-2, M0-3, M1-06, M1-10, M2-08 | – | – |
 | NFR-PERF-06 | M0-2, M0-3, M1-06, M1-10, M2-08 | – | – |
@@ -172,7 +172,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | NFR-SEC-01 | M1-02, M1-07, M1-11, M2-11 | `fsm-win` `credentials::tests`: names, type and persistence as Windows reports them, round-trip, delete, limits. Behind `SecretStore`: `the_store_goes_through_to_credential_manager` | – |
-| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config: `a_remembered_secret_is_not_in_the_file_or_its_backup` (`fsm-core`), and the profile model has no field for a secret. Logs: M1-18 | – |
+| NFR-SEC-02 | M1-02, M1-07, M1-11, M2-11 | So far only the type: `fsm-vfs` `secret::tests` (`***`, zeroize on drop), `scripts/check-secret-format.sh` in CI. Config: `a_remembered_secret_is_not_in_the_file_or_its_backup` (`fsm-core`), and the profile model has no field for a secret. Logs: `a_secret_in_a_field_comes_out_as_stars`, `other_crates_stay_at_warn_whatever_the_setting` (`fsm_app::logging`), and at Debug through real mounts in `tests/mount_one.rs`, for a passphrase and a wrong password | – |
 | NFR-SEC-03 | M1-02, M1-07, M1-11, M2-11 | Zeroing on drop: `fsm-vfs` `secret::tests::dropping_zeroizes_exactly_once`. Held only while mounted: `the_backend_is_gone_by_the_time_disconnected_is_announced`, and for cancelling, failing and losing the connection in `crates/fsm-core/src/manager/tests.rs`. That each `Secret` in `russh` is zeroed is not shown (M1-08b's note) | – |
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-05 | M1-02, M1-07, M1-11, M2-11 | – | – |
@@ -196,7 +196,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | NFR-MAINT-01 | M1-01 | `rust-toolchain.toml` pins 1.99.1; edition 2024 in the workspace manifest | 0.1.0 (local) |
 | NFR-MAINT-02 | M1-01 | CI `lint`: `cargo fmt --check`, `cargo clippy -D warnings` | 0.1.0 (local) |
 | NFR-MAINT-03 | M1-01 | CI builds and tests the workspace on Linux; holds again as each crate gains code | 0.1.0 (local) |
-| NFR-MAINT-04 | M1-18 | – | – |
+| NFR-MAINT-04 | M1-18 | `fsm-core` `tests/mount_span.rs`; through a real mount, `a_password_mounts_checks_and_unmounts_in_a_span_of_its_own`. The log's format: `a_line_has_the_time_the_level_the_span_and_the_message` | – |
 
 ## Licensing
 

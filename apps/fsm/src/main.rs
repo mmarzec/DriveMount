@@ -1,11 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! FS Manager: the GUI binary. The main window is in the library, and M1-17 and M1-18 bring the rest.
+//! FS Manager: the GUI binary. It is all in the library's `app`.
 
 #![windows_subsystem = "windows"]
 #![forbid(unsafe_code)]
-// build.rs delay-loads WinFsp, and the linker points out that nothing here calls it yet. Remove this
-// at M1-18.
-#![allow(linker_messages)]
 
+#[cfg(not(windows))]
 fn main() {}
+
+#[cfg(windows)]
+fn main() -> std::process::ExitCode {
+    use fsm_app::app::{Setup, run};
+
+    match Setup::for_this_user().and_then(run) {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            // `run` has logged it. This is for a problem before there is a log, from a console.
+            eprintln!("{error:#}");
+            std::process::ExitCode::FAILURE
+        }
+    }
+}

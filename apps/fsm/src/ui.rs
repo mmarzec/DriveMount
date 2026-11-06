@@ -72,6 +72,15 @@ impl PartialEq for TypedSecrets {
     }
 }
 
+/// A command that came to nothing, with no row or dialog state to show it, and what went wrong.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActionFailure {
+    /// A mount did not start, so the row is as it was.
+    Mount(String),
+    /// A delete did not happen, so the row stays.
+    Delete(String),
+}
+
 /// What the user asked for.
 #[derive(Debug, PartialEq)]
 pub enum UiCommand {
@@ -306,6 +315,18 @@ impl MainUi {
     pub fn set_setting_problems(&self, problems: &[SettingProblem]) {
         let text = setting_problems_text(&self.window.global::<Texts>(), problems);
         self.window.set_settings_text(text);
+    }
+
+    /// What a command the engine refused came to, or `None` once one has worked.
+    pub fn set_action_failure(&self, failure: Option<&ActionFailure>) {
+        let text = failure.map_or_else(SharedString::new, |failure| {
+            let texts = self.window.global::<Texts>();
+            match failure {
+                ActionFailure::Mount(detail) => texts.invoke_mount_refused(detail.into()),
+                ActionFailure::Delete(detail) => texts.invoke_delete_failed(detail.into()),
+            }
+        });
+        self.window.set_failure_text(text);
     }
 
     /// The theme (FR-SET-03). *System* follows Windows.

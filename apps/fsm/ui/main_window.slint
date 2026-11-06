@@ -81,6 +81,7 @@ export component MainWindow inherits Window {
     in property <bool> winfsp-missing;
     in property <string> read-only-text;
     in property <string> settings-text;
+    in property <string> failure-text;
 
     // Asking first.
     in property <string> question;
@@ -318,6 +319,10 @@ export component MainWindow inherits Window {
 
             if root.settings-text != "": Banner {
                 text: root.settings-text;
+            }
+
+            if root.failure-text != "": Banner {
+                text: root.failure-text;
             }
 
             Rectangle {

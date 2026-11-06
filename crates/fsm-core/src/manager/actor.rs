@@ -9,7 +9,7 @@ use fsm_vfs::{ConnectError, Health, MountBackend, MountError, Secret, SecretSlot
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::spawn_blocking;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::{Instrument, info, info_span, warn};
 use uuid::Uuid;
 
 use super::letters::Allocation;
@@ -134,6 +134,19 @@ impl Actor {
                 return Flow::Continue;
             }
         };
+        // NFR-MAINT-04. It lasts as long as the mount does, so all its log lines say whose they are.
+        let span = info_span!("mount", profile_id = %self.id, name = %profile.name);
+        self.mount_found(profile, settings, reply)
+            .instrument(span)
+            .await
+    }
+
+    async fn mount_found(
+        &mut self,
+        profile: Profile,
+        settings: Settings,
+        reply: oneshot::Sender<Result<(), MountRefused>>,
+    ) -> Flow {
         let token = CancellationToken::new();
         *self.cancel.lock().unwrap_or_else(PoisonError::into_inner) = token.clone();
         self.set(MountState::Connecting, None);

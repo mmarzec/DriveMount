@@ -2,6 +2,41 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-06: M1-18 App wiring (branch `feat/m1-18-app-wiring`)
+
+**Status: done locally, not yet committed; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm` also pass in a `rust:1.99.1` container. The workspace has 940 passing and 149 ignored. `fsm`'s 161 unit tests passed 6 runs of 6, one of them on one thread. Against the S-03 server, `tests/mount_one.rs` (7), `tests/fsm_exe.rs` (2) and `tests/real_drive.rs` (6) pass. **Not run:** the other ignored server and desktop tests, as nothing they use changed. `Cargo.lock` gains `tracing-appender`, `tracing-subscriber` and what they need, and no version of anything already there changed.
+
+- **Added:** `fsm_app::app` (`run`, `Setup`) and `app::engine`, `fsm_app::logging`, `main`, `examples/mount_one.rs`, a span for each mount in `Actor::mount`. `examples/connect.rs` is now `app::run` on scratch files.
+- **`fsm.exe` is 14.88 MB against the limit of 15 MB: only 125 KB to spare (NFR-PERF-03).** It was the first build with the engine in it, and came out at 15.97 MB. Dropping `env-filter`, `ansi` and `tracing-log` saved 0.18 MB. The rest comes from `opt-level = "s"` for 44 crates of the window and its fonts in the root `Cargo.toml`, not for Slint's core and software renderer, and not for anything SSH or WinFsp. Nothing was measured for speed, which M2-08 should cover. **M2-03 and M2-04 will go over this.** The next things to try are `opt-level = "s"` for `i-slint-core`, then for everything but the crypto and drive code, or the owner raising the limit.
+- **For the owner to check:**
+  - **The close button quits and Esc minimizes,** whatever `close_to_tray` says, as with no tray until M2-03 a hidden window could not be got back. Quitting asks nothing until M2-06.
+  - **A refused mount or a failed delete shows a new banner,** as M1-16's note asked for, since a row has no state for it. It goes when the next mount starts or the next delete works. Nothing else clears it. Its detail is `Display`, in English, like §7.3's.
+  - **Log lines are in UTC,** and the day rolls at midnight UTC, which is an hour or two off local time in Poland.
+  - **Only our own crates follow the *Log level* setting.** Others stay at Warn or below (NFR-SEC-02), and `russh` logs through `log`, which nothing now bridges, so its warnings are not in the file. §6.4 says so now.
+- **Choices the plan left open:**
+  - **The log is a small `RollingFile` of our own behind `tracing_appender::non_blocking`.** `tracing-appender`'s rolling has no size limit, and dates the live file's name, where §6.4 asks for `fsm.log` and 5 MB. It keeps `fsm.log` and `fsm.log.1` to `.6`, and a log that cannot be written never stops the app. The background writer drops lines rather than wait if it falls 128,000 behind.
+  - **Quitting waits 10 s for drives to go,** then 1 s for the rest of the runtime, then ends anyway, as a process that has ended leaves no drive (NFR-REL-04).
+  - **The runtime has 2–4 workers,** by core count (§5.3).
+- **Checked by hand:** the release `fsm.exe` on scratch folders. A screenshot shows the window as it should be with the font crates at `opt-level = "s"`, the log is written, and it exits with 0 on close.
+- **Not tried by me:** `mount_one` with an agent, keyboard-interactive, a certificate or a jump host, though it takes all of them: that is M1-19's. Real key presses and the file picker in `fsm.exe` (as for M1-17), the banner by eye, a log really rolling in a running app (the tests call the writer directly), and a real day or 5 MB going by.
+- **Known limits:**
+  - **The log level is read at start,** until M2-05 adds the reload handle.
+  - **`APPDATA` or `USERPROFILE` not set ends the program with only a line on stderr,** which a GUI binary has nowhere to show.
+  - **A changed-key error can show its dialog twice** if the event channel overflows while it is the profile's latest state, as catching up applies the state again. It takes 256 events behind.
+  - **Commands each go to a task of their own,** so a Mount and an Unmount sent in the same instant could swap. The UI's button changes only on events, so a user cannot do this.
+- **For later tasks:**
+  - **M1-19:** `examples/mount_one.rs` is what §9.2 asks for: `--config`, `--profile`, `--host-key`, `--secret-env`, `--answers-env`, `--login-key`. Secrets stay in memory and the file is not changed. `tests/fsm_exe.rs` shows how to run the real binary on scratch folders through `APPDATA`, `LOCALAPPDATA` and `USERPROFILE`, and how to read and press through UI Automation with no real keys.
+  - **M2-03, M2-06:** `UiCommand::HideWindow` and `CloseWindow` in `app/engine.rs` are where hiding and the quit question go.
+  - **M2-05:** `logging::subscriber` is where the reload layer goes. `UiCommand::OpenSettings` only logs for now.
+  - **M2-06:** the crash hook goes before `app::run` in `main.rs`, and `run` already logs an error that ends it.
+  - **CI:** `real_drive.rs`, `mount_one.rs` and `fsm_exe.rs` run in no job, as they need Docker and WinFsp on one machine, or a desktop. `wrong_arguments_are_exit_code_2` does run, and calls `cargo run` from inside the test.
+- **Worth knowing:**
+  - **A scoped `tracing` subscriber in a test loses events when other tests run in parallel.** A line first reached on a thread with no subscriber is cached as wanted by nobody. The span test failed every time beside the others and passed alone, so it is a process of its own, `crates/fsm-core/tests/mount_span.rs`.
+  - **A lagging `broadcast` receiver still gets the newest 256 events,** so what is lost is only a profile that has gone quiet, which is what the test has to look at.
+  - **`servers.ps1` stops at the first line on stderr if its output is redirected,** as PowerShell 5.1 treats that as an error, and `docker compose` writes progress there. Done partway through a recreate, that left a container with a clashing name, which `docker compose down` and `up` cleared. Run it with no redirection.
+- **The tests are checked too:** 27 faults injected by script (kept out of the repository), with a harmless change as a control, which passed. 22 failed a test at once. Of the other 5: 3 were test gaps, now closed, and all 3 faults now fail a test (a missed event for a quiet profile, a second Mount counted as a failure, the limit off by one). 1 did not apply through a mistake in the script, was corrected, and fails a test. 1 was dead code, removing the oldest file when a rename replaces it anyway, and is gone. The 22 were not run again after that, which changed those tests and the line removed.
+- **Next:** M1-19.
+
 ## 2026-11-06: M1-17 Profile dialog and prompts (branch `feat/m1-17-profile-dialog`)
 
 **Status: done locally, and the owner confirmed H-06 on 2026-11-06; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm`, and both script checks, also pass in a `rust:1.99.1` container, where the window does not exist. The window's and dialog's 127 tests passed 5 runs of 5 and once on one thread. The workspace has 913 passing and 140 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed. A release build of the preview is 11.42 MB against the limit of 15 MB (10.43 MB at M1-16). `Cargo.lock` did not change.

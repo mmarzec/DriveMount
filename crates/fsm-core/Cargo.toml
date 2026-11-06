@@ -26,3 +26,4 @@ uuid = { workspace = true }
 [dev-dependencies]
 fsm-vfs = { workspace = true, features = ["testing"] }
 proptest = { workspace = true }
+tracing-subscriber = { workspace = true }
