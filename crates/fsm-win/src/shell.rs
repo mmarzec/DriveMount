@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Telling the shell about drives, and opening them in Explorer.
+//! Telling the shell about drives, opening them in Explorer, and the small things the dialogs ask of
+//! Windows.
 
 use std::io;
-use std::path::PathBuf;
+use std::os::windows::ffi::OsStringExt;
+use std::path::{Path, PathBuf};
 
 use fsm_vfs::DriveLetter;
 use windows::Win32::Foundation::{
@@ -15,6 +17,11 @@ use windows::Win32::System::Registry::{
     RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
 };
 use windows::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+use windows::Win32::UI::Controls::Dialogs::{
+    CommDlgExtendedError, GetOpenFileNameW, OFN_FILEMUSTEXIST, OFN_HIDEREADONLY, OFN_NOCHANGEDIR,
+    OPENFILENAMEW,
+};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CAPITAL};
 use windows::Win32::UI::Shell::{
     SHCNE_DRIVEADD, SHCNE_DRIVEREMOVED, SHCNE_ID, SHCNF_PATHW, SHChangeNotify, ShellExecuteW,
 };
@@ -23,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DEV_BROADCAST_VOLUME_FLAGS, FindWindowW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_SHOWNORMAL,
     SendMessageTimeoutW, WM_DEVICECHANGE,
 };
-use windows::core::{PCWSTR, w};
+use windows::core::{PCWSTR, PWSTR, w};
 
 use crate::wide;
 
@@ -239,6 +246,95 @@ pub fn open_in_explorer(letter: DriveLetter) -> io::Result<()> {
     }
 }
 
+/// Opens the folder a file is in, with the file selected: *Open file location* (spec §7.4.3).
+///
+/// # Errors
+/// If Explorer cannot be started.
+pub fn show_in_explorer(file: &Path) -> io::Result<()> {
+    let explorer = wide(explorer_path()?);
+    let arguments = wide(select_argument(file));
+    // SAFETY: all strings are nul-terminated and outlive the call.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(explorer.as_ptr()),
+            PCWSTR(arguments.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Above 32 is success, as in `open_in_explorer`.
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "ShellExecuteW could not start Explorer: code {code}"
+        )))
+    }
+}
+
+/// What Explorer takes to select a file.
+fn select_argument(file: &Path) -> String {
+    format!("/select,\"{}\"", file.display())
+}
+
+/// Whether Caps Lock is on, for the hint in a password prompt (spec §7.4.1).
+#[must_use]
+pub fn caps_lock_is_on() -> bool {
+    // SAFETY: takes a key code and returns a number. The low bit is whether the key is toggled on.
+    let state = unsafe { GetKeyState(i32::from(VK_CAPITAL.0)) };
+    state & 1 != 0
+}
+
+/// The longest path the file dialog gives back, in UTF-16 units, as `\?\` paths can be this long.
+const MOST_PATH_UNITS: usize = 32_768;
+
+/// Asks the user to choose a file, starting in `start_in`. `None` if they cancelled.
+///
+/// This blocks until they answer, so it belongs on a thread of its own, which may be any.
+///
+/// # Errors
+/// If the dialog could not be shown.
+pub fn pick_file(title: &str, start_in: Option<&Path>) -> io::Result<Option<PathBuf>> {
+    let title = wide(title);
+    let start_in = start_in.map(wide);
+    let mut chosen = vec![0u16; MOST_PATH_UNITS];
+    let mut request = OPENFILENAMEW {
+        lStructSize: size_of::<OPENFILENAMEW>() as u32,
+        lpstrFile: PWSTR(chosen.as_mut_ptr()),
+        nMaxFile: MOST_PATH_UNITS as u32,
+        lpstrTitle: PCWSTR(title.as_ptr()),
+        lpstrInitialDir: start_in
+            .as_ref()
+            .map_or_else(PCWSTR::null, |folder| PCWSTR(folder.as_ptr())),
+        // Without the last one, the dialog would change the whole process's current directory.
+        Flags: OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR,
+        ..OPENFILENAMEW::default()
+    };
+    // SAFETY: every pointer in `request` is to a nul-terminated string or to `chosen`, whose length is
+    // given, and all of them outlive the call.
+    let answered = unsafe { GetOpenFileNameW(&raw mut request) }.as_bool();
+    if answered {
+        let end = chosen
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(chosen.len());
+        return Ok(Some(std::ffi::OsString::from_wide(&chosen[..end]).into()));
+    }
+    // SAFETY: takes nothing and returns a number.
+    let code = unsafe { CommDlgExtendedError() };
+    if code.0 == 0 {
+        Ok(None)
+    } else {
+        Err(io::Error::other(format!(
+            "the file dialog could not be shown: code {:#x}",
+            code.0
+        )))
+    }
+}
+
 /// The drive's root, as in `Z:\`.
 fn root_of(letter: DriveLetter) -> String {
     format!("{letter}\\")
@@ -268,6 +364,15 @@ mod tests {
 
     use super::*;
     use crate::test_support::{SubstDrive, letter, lock_letters};
+
+    #[test]
+    fn explorer_is_told_which_file_to_select_even_with_spaces_in_its_name() {
+        let file = Path::new(r"C:\Users\a b\.ssh\known_hosts");
+        assert_eq!(
+            select_argument(file),
+            r#"/select,"C:\Users\a b\.ssh\known_hosts""#
+        );
+    }
 
     #[test]
     fn a_root_has_its_backslash() {

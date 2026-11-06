@@ -135,6 +135,82 @@ export global Texts {
         return @tr("Some settings were not valid, so their defaults are in use: {}", problems);
     }
 
+    // The profile dialog (spec 7.2).
+    public pure function add-connection() -> string {
+        return @tr("Add connection");
+    }
+    public pure function edit-connection() -> string {
+        return @tr("Edit connection");
+    }
+    public pure function drive-auto() -> string {
+        return @tr("Auto");
+    }
+    public pure function drive-letter-free(letter: string) -> string {
+        return @tr("{} (free)", letter);
+    }
+    public pure function saved-password-placeholder() -> string {
+        return @tr("Leave empty to keep the saved one");
+    }
+    public pure function secret-too-long(most: int) -> string {
+        return @tr("Too long to be saved: use at most {} characters", most);
+    }
+    public pure function testing() -> string {
+        return @tr("Connecting…");
+    }
+    public pure function connected(milliseconds: int) -> string {
+        return @tr("✓ Connected ({} ms)", milliseconds);
+    }
+    public pure function nothing-can-be-saved() -> string {
+        return @tr("The configuration file cannot be changed, so this cannot be saved.");
+    }
+    public pure function fields-to-correct() -> string {
+        return @tr("Correct the marked fields and save again.");
+    }
+    public pure function saved-without-secret() -> string {
+        return @tr("The connection was saved, but its password could not be remembered.");
+    }
+    public pure function secret-not-removed() -> string {
+        return @tr("Nothing was saved, as the saved password could not be removed.");
+    }
+    public pure function not-saved() -> string {
+        return @tr("The connection could not be saved. See the log for details.");
+    }
+    public pure function unmount-to-change() -> string {
+        return @tr("Unmount to change");
+    }
+    public pure function choose-key-file() -> string {
+        return @tr("Choose a private key file");
+    }
+
+    // Prompts (spec 7.4).
+    public pure function password-for(user: string, host: string) -> string {
+        return @tr("Password for {}@{}", user, host);
+    }
+    public pure function passphrase-for(key-name: string) -> string {
+        return @tr("Passphrase for {}", key-name);
+    }
+    public pure function login-to(user: string, host: string) -> string {
+        return @tr("Log in to {}@{}", user, host);
+    }
+    public pure function unknown-server() -> string {
+        return @tr("Unknown server");
+    }
+    public pure function not-connected-before(host: string, port: int) -> string {
+        return @tr("FS Manager has not connected to {}:{} before.", host, port);
+    }
+    public pure function server-key-changed-title() -> string {
+        return @tr("Server key has changed: connection refused");
+    }
+    public pure function host-and-port(host: string, port: int) -> string {
+        return @tr("{}:{}", host, port);
+    }
+    public pure function known-hosts-line(file: string, line: int) -> string {
+        return @tr("{} line {}", file, line);
+    }
+    public pure function server-key-changed-advice(line: int) -> string {
+        return @tr("This can mean someone is intercepting the connection, or the server was reinstalled. If you are sure the change is expected, remove line {} from the file and connect again.", line);
+    }
+
     // Asking first (FR-PROF-07).
     public pure function delete-question(name: string) -> string {
         return @tr("Delete \"{}\"? Its saved password is removed too.", name);

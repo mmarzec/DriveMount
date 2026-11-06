@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The main window with made-up connections and a pretend engine, for looking at it (H-06). Nothing is
-//! mounted, and nothing the user has saved is read or changed. Not shipped.
+//! mounted, and nothing the user has saved is read or changed. Not shipped. For the dialog's prompts,
+//! which need a real connection, see `examples/connect.rs`.
 //!
 //! ```text
 //! cargo run -p fsm --example main_window -- [--empty] [--no-winfsp] [--read-only] [--light|--dark] [--many]
@@ -31,6 +32,8 @@ mod preview {
     use fsm_core::config::{Config, ConfigStore, Theme};
     use fsm_core::manager::{MountDetail, MountEvent, MountState};
     use fsm_vfs::{ConnectError, DriveLetter, MountError};
+    use fsm_win::drives::is_letter_free;
+    use fsm_win::shell::pick_file;
     use slint::Timer;
     use uuid::Uuid;
 
@@ -181,8 +184,32 @@ auth = "agent"
                 // There is no tray to come back from.
                 let _ = slint::quit_event_loop();
             }
-            UiCommand::Add
-            | UiCommand::Edit(_)
+            UiCommand::Save { profile, .. } => {
+                let mut config = config.borrow_mut();
+                config.profiles.retain(|saved| saved.id != profile.id);
+                config.profiles.push(*profile);
+                ui.set_config(config.clone());
+                ui.save_finished(Ok(()));
+            }
+            UiCommand::Test { attempt, .. } => {
+                let ui = Rc::clone(ui);
+                Timer::single_shot(Duration::from_millis(800), move || {
+                    ui.test_finished(attempt, Ok(Duration::from_millis(12)));
+                });
+            }
+            UiCommand::FindFreeLetters => {
+                let free = ('D'..='Z')
+                    .filter_map(DriveLetter::new)
+                    .filter(|letter| is_letter_free(*letter).unwrap_or(false))
+                    .collect();
+                ui.set_free_letters(free);
+            }
+            // It blocks the window, which does not matter for a look at it.
+            UiCommand::PickKeyFile { which, title } => {
+                ui.key_file_picked(which, pick_file(&title, None).ok().flatten());
+            }
+            UiCommand::CancelTest { .. }
+            | UiCommand::OpenFileLocation(_)
             | UiCommand::OpenInExplorer(_)
             | UiCommand::OpenSettings
             | UiCommand::DownloadWinFsp => {}

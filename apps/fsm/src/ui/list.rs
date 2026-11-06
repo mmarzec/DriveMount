@@ -176,6 +176,26 @@ impl ListState {
     }
 
     /// Whether anything can be added.
+    pub(super) fn profile(&self, id: Uuid) -> Option<&Profile> {
+        self.config.profiles.iter().find(|profile| profile.id == id)
+    }
+
+    pub(super) fn profiles(&self) -> &[Profile] {
+        &self.config.profiles
+    }
+
+    pub(super) const fn is_read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// Whether connection fields are locked (FR-PROF-08).
+    pub(super) fn is_in_use(&self, id: Uuid) -> bool {
+        matches!(
+            self.state_of(id),
+            MountState::Connecting | MountState::Mounted | MountState::Unmounting
+        )
+    }
+
     pub(super) const fn can_add(&self) -> bool {
         !self.read_only
     }

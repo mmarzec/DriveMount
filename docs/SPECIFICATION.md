@@ -842,7 +842,14 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 
 ### 7.2 Profile dialog (Add / Edit)
 
-A modal dialog, about 460 × 520.
+A modal dialog, about 480 × 580, drawn inside the main window with the window dimmed behind it, as NFR-UX-02 allows. The fields scroll when it does not fit, and Tab scrolls to what it reaches. The main window's default size has no room for it, so opening it grows the window to at least 520 × 620, moved up if that would pass the bottom of the screen, and closing it puts the window back, unless the user has resized it meanwhile.
+
+- **Advanced** is drawn as `+ Advanced` / `– Advanced`, as the mock-up's arrow is in no font Slint falls back to on Windows 10. It opens by itself when something in it needs correcting, and stays open until that is done.
+- **Drive:** lines of free letters read `Z: (free)`. Finding them does not hold up the dialog, so the marks come a moment after it opens.
+- **Passwords:** a password is never read back. A box left empty keeps what is saved. *Remember* starts ticked in a new profile. A jump host's password box has no *Remember*: filled, it is stored; empty, it is asked for at each mount. A key's passphrase has no box, as the mock-up shows: it is asked for at the first use.
+- **Saving:** Save waits for the file, and Cancel and Esc wait with it. If it fails, the dialog stays with what was typed and says why.
+- **Test connection** needs no name. Any edit stops a test under way and clears what the last one said, and so does closing the dialog. Cancelling a prompt during a test says nothing.
+- **Hint "Unmount to change"** shows at the top, and locked fields are disabled. If a mount starts with the dialog open, the locked fields go back to what is saved.
 
 - **v1:** shows SSH fields only.
 - **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it.
@@ -885,6 +892,8 @@ A modal dialog, about 460 × 520.
 | Keep-alive (s) | 0 or 5–300 | "Keep-alive must be 0 (off) or 5–300 seconds" |
 | Jump host | Empty or `[user@]host[:port]`, with `[…]` around an IPv6 address that has a port. No user means the profile's own user, as with `ssh -J`; no port means 22 | "Use user@host:port" |
 
+- **Empty boxes in a new profile:** Name, Host, User and Key file are not marked until they have held something, so that a new form does not open in red. Save is off all the same. A saved profile that breaks a rule shows it at once.
+- **Passwords to be stored:** one longer than Credential Manager holds (1,280 UTF-16 units) is marked as "Too long to be saved: use at most {n} characters", and Save stays off, as it could otherwise only fail once the profile was saved.
 - **Chars** are Unicode characters, not bytes.
 - **Host:** letters, digits, `-` and `_` in labels. `_` is not legal DNS, but common on local networks. An international name goes in as `xn--…`, and a last label of only digits is refused as a mistyped address (`10.0.4.256`). An IPv6 scope (`fe80::1%4`) is not accepted.
 - **Key file:** the name alone is enough to refuse (`.ppk`, `.pub`, in any case). Otherwise the start of the file decides: a PuTTY or public key by its content too, and a private key by its header. What only reading the key can show (an RSA key under 2048 bits, encrypted forms `russh` cannot read, §5.7) is E-KEY-FORMAT at connect. So a real OpenSSH key named `.ppk` can connect (§5.7) but cannot be selected here.
@@ -899,7 +908,9 @@ A modal dialog, about 460 × 520.
 #### 7.4.1 Secret prompt
 
 - **Title:** "Password for deploy@10.0.4.21", or "Passphrase for id_ed25519", or the keyboard-interactive server text.
-- **Controls:** a masked field with a show toggle and a Caps Lock hint; a *Remember* checkbox (not shown for keyboard-interactive prompts other than the password); *OK* / *Cancel*.
+- **Controls:** a masked field with a show toggle and a Caps Lock hint; a *Remember* checkbox, unticked to start with (not shown for keyboard-interactive prompts); *OK* / *Cancel*. The show toggle is the toolkit's own, the eye in the box, and shows once the box has something in it and the focus. *OK* needs something typed, except for a server's own question, whose answer may be empty if it says so.
+- **Keyboard-interactive:** one prompt for each of the server's questions, with the user and host and the server's instructions above the first. An answer the server allows to be shown is not masked. A password question has no *Remember*, unlike what this section first said, as `Prompter::keyboard_interactive` returns answers only. To remember that password, use the *Password* method, whose stored password answers it (FR-SSH-07).
+- **Order:** one prompt shows at a time, in the order they came, in front of the dialog and the delete question. A prompt whose mount is cancelled goes away.
 - **Window behaviour:** brings the main window to the front if it is hidden.
 
 An *Ask each time* profile first shows a prompt offering a password, or a key file plus passphrase (FR-SSH-05). It has no *Remember*, and neither has a passphrase prompt that follows it.
@@ -921,7 +932,7 @@ An *Ask each time* profile first shows a prompt offering a password, or a key fi
 
 #### 7.4.3 Changed host key
 
-An error dialog (no trust button) titled **"Server key has changed: connection refused"**. It shows:
+An error dialog (no trust button) titled **"Server key has changed: connection refused"**, from a mount or from Test connection, in its turn among the prompts. It shows:
 - the host;
 - the old and new fingerprints;
 - `known_hosts` line N;

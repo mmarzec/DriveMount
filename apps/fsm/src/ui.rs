@@ -1,33 +1,44 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The main window (spec §7.1). [`MainUi`] puts what the engine says into the window, and turns what
-//! the user does into [`UiCommand`]s. It knows nothing of the engine, which is M1-18's to connect, so
-//! that all of it can be driven by the tests here and by `examples/main_window.rs`.
+//! The main window (spec §7.1), its profile dialog (§7.2) and its prompts (§7.4). [`MainUi`] puts what
+//! the engine says into the window, and turns what the user does into [`UiCommand`]s. It knows nothing
+//! of the engine, which is M1-18's to connect, so that all of it can be driven by the tests here and by
+//! `examples/`.
 //!
 //! The markup is in `ui/*.slint`, and only draws what it is given. What the list shows is worked out
-//! in [`list`], and error texts in [`errors`]. All of this runs on the UI thread.
+//! in [`list`], what the dialog's boxes mean in [`form`], the queue of prompts is in [`prompts`], and
+//! error texts in [`errors`]. All of this runs on the UI thread but [`UiPrompter`].
 
+mod dialog;
 pub mod errors;
+mod form;
 mod list;
+mod prompts;
 mod remembered;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::time::Duration;
 
 use fsm_core::config::{
     Config, ConfigStore, ReadOnlyReason, SettingProblem, Theme, UnreadableProfile,
 };
-use fsm_core::manager::{MountEvent, MountState};
-use fsm_vfs::DriveLetter;
+use fsm_core::manager::{MountEvent, MountState, ProfileChangeError};
+use fsm_core::profile::Profile;
+use fsm_vfs::{ConnectError, DriveLetter, HostKeyDecision, MountError, Secret, SecretSlot};
 use slint::{
     CloseRequestResponse, ComponentHandle, LogicalSize, Model, ModelRc, PhysicalPosition,
     PlatformError, SharedString, VecModel,
 };
 use uuid::Uuid;
 
+use self::dialog::{Dialog, Room};
 use self::errors::{read_only_text, setting_problems_text, shown_error};
 use self::list::{Body, Item, Key, Line, ListState, Primary, ProfileItem};
+pub use self::prompts::UiPrompter;
+use self::prompts::{Mailbox, Prompts};
 use self::remembered::{Placement, Remembered};
 
 #[allow(
@@ -44,18 +55,59 @@ mod generated {
 }
 
 use self::generated::{EntryKind, ListEntry, PrimaryAction, RowStatus, ThemeChoice};
-pub use self::generated::{MainWindow, Texts};
+pub use self::generated::{KeyFileBox, MainWindow, Texts};
 
 /// Where the *Download WinFsp* button goes (FR-APP-06).
 pub const WINFSP_DOWNLOAD_URL: &str = "https://winfsp.dev/rel/";
 
+/// The dialog's password boxes, as `MountManager::save` and `test` take them. Secrets have no
+/// comparison, so two of these are equal if they fill the same slots.
+#[derive(Debug, Default)]
+pub struct TypedSecrets(pub Vec<(SecretSlot, Secret<String>)>);
+
+impl PartialEq for TypedSecrets {
+    fn eq(&self, other: &Self) -> bool {
+        let slots = |typed: &Self| typed.0.iter().map(|(slot, _)| *slot).collect::<Vec<_>>();
+        slots(self) == slots(other)
+    }
+}
+
 /// What the user asked for.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum UiCommand {
-    /// Open the dialog for a new profile.
-    Add,
-    /// Open the dialog on a profile.
-    Edit(Uuid),
+    /// Save what is in the dialog. Answer with [`MainUi::save_finished`].
+    Save {
+        /// The profile, checked as far as the dialog can.
+        profile: Box<Profile>,
+        /// What goes with it.
+        secrets: TypedSecrets,
+    },
+    /// Test what is in the dialog (FR-PROF-06). Answer with [`MainUi::test_finished`].
+    Test {
+        /// What to answer with, and what [`CancelTest`](Self::CancelTest) means.
+        attempt: u64,
+        /// The profile, which need not have been saved.
+        profile: Box<Profile>,
+        /// What goes before anything stored.
+        typed: TypedSecrets,
+    },
+    /// Stop a test, whose answer no longer counts.
+    CancelTest {
+        /// The test.
+        attempt: u64,
+    },
+    /// The dialog opened: find which letters are free, off this thread, for
+    /// [`MainUi::set_free_letters`].
+    FindFreeLetters,
+    /// Show the file dialog, off this thread, for [`MainUi::key_file_picked`].
+    PickKeyFile {
+        /// Which box asked.
+        which: KeyFileBox,
+        /// The file dialog's title.
+        title: String,
+    },
+    /// Open the folder of `known_hosts` with the file selected (spec §7.4.3).
+    OpenFileLocation(PathBuf),
     /// Delete a profile. The user has been asked.
     Delete(Uuid),
     /// Take an unreadable entry out of the file. The user has been asked.
@@ -85,14 +137,31 @@ struct Inner {
     list: RefCell<ListState>,
     /// What the question on screen is about.
     deleting: RefCell<Option<Key>>,
+    /// The profile dialog, while it is open.
+    dialog: RefCell<Option<Dialog>>,
+    drive_items: Rc<VecModel<SharedString>>,
+    next_attempt: Cell<u64>,
+    /// How the window was before it grew for the dialog.
+    room: RefCell<Option<Room>>,
+    mailbox: Arc<Mailbox>,
+    prompts: RefCell<Prompts>,
+    prompt_serial: Cell<i32>,
     remembered: RefCell<Remembered>,
     remembered_path: Option<PathBuf>,
 }
 
-/// The main window, and what it needs to keep showing the right thing. Dropping it closes the window.
+/// The main window, and what it needs to keep showing the right thing. Dropping it closes the window,
+/// and answers what the prompter still has waiting with a cancel.
 pub struct MainUi {
     window: MainWindow,
     inner: Rc<Inner>,
+}
+
+impl Drop for MainUi {
+    fn drop(&mut self) {
+        self.inner.mailbox.close();
+        *self.inner.prompts.borrow_mut() = Prompts::default();
+    }
 }
 
 impl MainUi {
@@ -123,12 +192,29 @@ impl MainUi {
 
         let entries = Rc::new(VecModel::default());
         window.set_entries(ModelRc::from(Rc::clone(&entries)));
+        let drive_items = Rc::new(VecModel::default());
+        window.set_drive_items(ModelRc::from(Rc::clone(&drive_items)));
+        let weak = window.as_weak();
+        let mailbox = Arc::new(Mailbox::new(move || {
+            let woken = weak.upgrade_in_event_loop(|window| window.invoke_mail_arrived());
+            // Only as the app ends. A prompt left waiting is ended with its task.
+            if let Err(error) = woken {
+                tracing::debug!(%error, "the window could not be told about a prompt");
+            }
+        }));
         let inner = Rc::new(Inner {
             window: window.as_weak(),
             commands: Box::new(commands),
             entries,
             list: RefCell::new(ListState::new()),
             deleting: RefCell::new(None),
+            dialog: RefCell::new(None),
+            drive_items,
+            next_attempt: Cell::new(0),
+            room: RefCell::new(None),
+            mailbox,
+            prompts: RefCell::default(),
+            prompt_serial: Cell::new(0),
             remembered: RefCell::new(remembered),
             remembered_path,
         });
@@ -156,12 +242,46 @@ impl MainUi {
     pub fn set_config(&self, config: Config) {
         self.inner.list.borrow_mut().set_config(config);
         self.inner.refresh();
+        self.inner.dialog_follows_list();
     }
 
-    /// A profile's new state.
+    /// A profile's new state. A changed host key brings up its dialog (spec §7.4.3).
     pub fn apply_event(&self, event: &MountEvent) {
         self.inner.list.borrow_mut().apply(event);
         self.inner.refresh();
+        self.inner.dialog_follows_list();
+        if let MountState::Error(MountError::Connect(ConnectError::HostKeyChanged(details))) =
+            &event.state
+        {
+            self.inner.show_changed_key(details.clone());
+        }
+    }
+
+    /// What the engine asks the user through. It can go to any thread.
+    #[must_use]
+    pub fn prompter(&self) -> Arc<UiPrompter> {
+        Arc::new(UiPrompter::new(Arc::clone(&self.inner.mailbox)))
+    }
+
+    /// The answer to [`UiCommand::FindFreeLetters`].
+    pub fn set_free_letters(&self, letters: Vec<DriveLetter>) {
+        self.inner.set_free_letters(letters);
+    }
+
+    /// The answer to [`UiCommand::Save`]. The dialog closes, or says what went wrong. Call
+    /// [`set_config`](Self::set_config) as well if the file changed.
+    pub fn save_finished(&self, result: Result<(), ProfileChangeError>) {
+        self.inner.save_finished(result);
+    }
+
+    /// The answer to [`UiCommand::Test`].
+    pub fn test_finished(&self, attempt: u64, result: Result<Duration, ConnectError>) {
+        self.inner.test_finished(attempt, result);
+    }
+
+    /// The answer to [`UiCommand::PickKeyFile`]. `None` if the user cancelled.
+    pub fn key_file_picked(&self, which: KeyFileBox, path: Option<PathBuf>) {
+        self.inner.key_file_picked(which, path);
     }
 
     /// Whether WinFsp can be used. If not, the banner shows, and nothing can start mounting
@@ -240,6 +360,25 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     });
     let handler = Rc::clone(inner);
     window.on_question_answered(move |yes| handler.answer(yes));
+
+    window.on_form_edited(on(Inner::form_edited));
+    let handler = Rc::clone(inner);
+    window.on_host_edited(move |text| handler.host_edited(&text));
+    let handler = Rc::clone(inner);
+    window.on_browse_key_file(move |which| handler.browse_key_file(which));
+    window.on_test_pressed(on(Inner::start_test));
+    window.on_cancel_test_pressed(on(Inner::cancel_test));
+    window.on_save_pressed(on(Inner::save));
+    window.on_dialog_cancelled(on(Inner::cancel_dialog));
+
+    window.on_prompt_ok(on(Inner::prompt_ok));
+    window.on_prompt_cancelled(on(Inner::prompt_cancelled));
+    window.on_prompt_trust_once(on(|inner| inner.prompt_trust(HostKeyDecision::TrustOnce)));
+    window.on_prompt_trust_save(on(|inner| inner.prompt_trust(HostKeyDecision::TrustSave)));
+    window.on_prompt_open_location(on(Inner::prompt_open_location));
+    window.on_caps_lock_check(on(Inner::check_caps_lock));
+    window.on_mail_arrived(on(Inner::read_mail));
+
     let handler = Rc::clone(inner);
     window.window().on_close_requested(move || {
         handler.remember_placement();
@@ -255,7 +394,7 @@ impl Inner {
 
     fn add(&self) {
         if self.list.borrow().can_add() {
-            self.send(UiCommand::Add);
+            self.open_dialog(None);
         }
     }
 
@@ -360,7 +499,7 @@ impl Inner {
             ..
         }) = self.item(index)
         {
-            self.send(UiCommand::Edit(id));
+            self.open_dialog(Some(id));
         }
     }
 
@@ -378,7 +517,7 @@ impl Inner {
 
     fn edit_selected(&self) {
         if let Some(Key::Profile(id)) = self.selected_item().map(|item| item.key) {
-            self.send(UiCommand::Edit(id));
+            self.open_dialog(Some(id));
         }
     }
 

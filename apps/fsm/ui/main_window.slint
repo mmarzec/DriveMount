@@ -6,8 +6,10 @@
 import { Button, Palette, ScrollView } from "std-widgets.slint";
 import { EntryKind, ListEntry, PrimaryAction, ProfileRow, RowStatus } from "rows.slint";
 import { Texts } from "texts.slint";
+import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog } from "dialog.slint";
+import { PromptInput, PromptKind, PromptPanel, PromptView } from "prompts.slint";
 
-export { EntryKind, ListEntry, PrimaryAction, RowStatus, Texts }
+export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, Texts }
 
 export enum ThemeChoice { system, light, dark }
 
@@ -83,6 +85,20 @@ export component MainWindow inherits Window {
     // Asking first.
     in property <string> question;
 
+    // The profile dialog.
+    in property <bool> dialog-open;
+    in-out property <DialogForm> form;
+    in property <DialogMarks> marks;
+    in property <DialogView> dialog-view;
+    in property <[string]> drive-items;
+    in-out property <bool> advanced-open;
+
+    // A prompt, in front of all that.
+    in property <bool> prompt-open;
+    in property <PromptView> prompt-view;
+    in-out property <PromptInput> prompt-input;
+    in property <bool> caps-lock;
+
     out property <length> list-scroll: -list.content-y;
     out property <length> list-visible-height: list.visible-height;
 
@@ -108,6 +124,24 @@ export component MainWindow inherits Window {
 
     callback question-answered(yes: bool);
 
+    callback form-edited();
+    callback host-edited(text: string);
+    callback browse-key-file(which: KeyFileBox);
+    callback test-pressed();
+    callback cancel-test-pressed();
+    callback save-pressed();
+    callback dialog-cancelled();
+
+    callback prompt-ok();
+    callback prompt-cancelled();
+    callback prompt-trust-once();
+    callback prompt-trust-save();
+    callback prompt-open-location();
+    // A key went up in a prompt, which may have been Caps Lock.
+    callback caps-lock-check();
+    // Something was posted from another thread.
+    callback mail-arrived();
+
     public function set-theme(choice: ThemeChoice) {
         Palette.color-scheme = choice == ThemeChoice.dark ? ColorScheme.dark
             : choice == ThemeChoice.light ? ColorScheme.light
@@ -129,8 +163,19 @@ export component MainWindow inherits Window {
         keys.focus();
     }
 
+    // Where the keys go when a prompt closes.
+    public function focus-after-prompt() {
+        if (root.dialog-open) {
+            root.refocus-dialog = !root.refocus-dialog;
+        } else {
+            keys.focus();
+        }
+    }
+
+    // Flipped to send the focus into the dialog, which is only there when it is open.
+    property <bool> refocus-dialog;
     property <bool> asking: root.question != "";
-    property <bool> interactive: !root.asking;
+    property <bool> interactive: !root.asking && !root.dialog-open && !root.prompt-open;
     out property <bool> is-dark: Palette.color-scheme == ColorScheme.dark;
 
     init => {
@@ -140,10 +185,24 @@ export component MainWindow inherits Window {
     keys := FocusScope {
         // Before anything focused sees them, so that they work wherever the focus is.
         capture-key-pressed(event) => {
+            if (root.prompt-open) {
+                if (event.text == Key.Escape) {
+                    root.prompt-cancelled();
+                    return accept;
+                }
+                return reject;
+            }
             if (root.asking) {
                 if (event.text == Key.Escape) {
                     root.question-answered(false);
                     keys.focus();
+                    return accept;
+                }
+                return reject;
+            }
+            if (root.dialog-open) {
+                if (event.text == Key.Escape) {
+                    root.dialog-cancelled();
                     return accept;
                 }
                 return reject;
@@ -177,9 +236,16 @@ export component MainWindow inherits Window {
             return reject;
         }
 
+        capture-key-released(event) => {
+            if (root.prompt-open) {
+                root.caps-lock-check();
+            }
+            return reject;
+        }
+
         // What the focused control did not want, so that Enter stays a focused button's.
         key-pressed(event) => {
-            if (root.asking) {
+            if (!root.interactive) {
                 return reject;
             }
             if (event.text == Key.Return) {
@@ -366,6 +432,7 @@ export component MainWindow inherits Window {
 
                         Button {
                             text: @tr("Delete");
+                            enabled: !root.prompt-open;
                             clicked => {
                                 root.question-answered(true);
                                 keys.focus();
@@ -375,6 +442,7 @@ export component MainWindow inherits Window {
                         // The safe answer is the one Enter gives.
                         no := Button {
                             text: @tr("Cancel");
+                            enabled: !root.prompt-open;
                             init => {
                                 self.focus();
                             }
@@ -385,6 +453,69 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
+        }
+
+        if root.dialog-open: ProfileDialog {
+            property <bool> refocus: root.refocus-dialog;
+
+            width: parent.width;
+            height: parent.height;
+            form <=> root.form;
+            marks: root.marks;
+            view: root.dialog-view;
+            drive-items: root.drive-items;
+            advanced-open <=> root.advanced-open;
+            interactive: !root.asking && !root.prompt-open;
+            changed refocus => {
+                self.focus-again();
+            }
+            edited => {
+                root.form-edited();
+            }
+            host-edited(text) => {
+                root.host-edited(text);
+            }
+            browse(which) => {
+                root.browse-key-file(which);
+            }
+            test => {
+                root.test-pressed();
+            }
+            cancel-test => {
+                root.cancel-test-pressed();
+            }
+            save => {
+                root.save-pressed();
+            }
+            cancel => {
+                root.dialog-cancelled();
+            }
+        }
+
+        if root.prompt-open: PromptPanel {
+            width: parent.width;
+            height: parent.height;
+            view: root.prompt-view;
+            input <=> root.prompt-input;
+            caps-lock: root.caps-lock;
+            ok => {
+                root.prompt-ok();
+            }
+            cancel => {
+                root.prompt-cancelled();
+            }
+            trust-once => {
+                root.prompt-trust-once();
+            }
+            trust-save => {
+                root.prompt-trust-save();
+            }
+            open-location => {
+                root.prompt-open-location();
+            }
+            browse(which) => {
+                root.browse-key-file(which);
             }
         }
     }

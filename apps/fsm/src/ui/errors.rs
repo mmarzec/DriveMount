@@ -69,7 +69,9 @@ fn internal(texts: &Texts<'_>) -> ShownError {
     )
 }
 
-fn shown_connect_error(texts: &Texts<'_>, error: &ConnectError) -> ShownError {
+/// What spec §7.8 has for this error, as Test connection reports it too.
+#[must_use]
+pub fn shown_connect_error(texts: &Texts<'_>, error: &ConnectError) -> ShownError {
     match error {
         ConnectError::Auth { user, host } => ShownError::new(
             "E-AUTH",

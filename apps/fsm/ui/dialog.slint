@@ -1,0 +1,677 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The Add/Edit dialog (spec 7.2). It lives in the main window, with the window dimmed behind it, as
+// the delete question does. `fsm_app::ui::form` says what is wrong with what is typed: this file only
+// draws that, and reports that something changed.
+
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
+import { Colours } from "rows.slint";
+
+export enum AuthChoice { key-file, password, agent, ask }
+export enum KeyFileBox { profile, jump, login }
+
+// What is in the boxes.
+export struct DialogForm {
+    name: string,
+    host: string,
+    port: string,
+    user: string,
+    auth: AuthChoice,
+    key-file: string,
+    password: string,
+    remember-password: bool,
+    remember-passphrase: bool,
+    remote-path: string,
+    drive-index: int,
+    mount-on-start: bool,
+    jump-host: string,
+    // Agent, key file, password, as in the dropdown.
+    jump-auth-index: int,
+    jump-key-file: string,
+    jump-password: string,
+    auto-reconnect: bool,
+    read-only: bool,
+    cache: string,
+    keep-alive: string,
+}
+
+// What to say under each box. Empty means nothing.
+export struct DialogMarks {
+    name: string,
+    host: string,
+    port: string,
+    user: string,
+    key-file: string,
+    password: string,
+    remote-path: string,
+    drive: string,
+    drive-warning: string,
+    cache: string,
+    keep-alive: string,
+    jump-host: string,
+    jump-key-file: string,
+    jump-password: string,
+}
+
+// Everything else Rust decides.
+export struct DialogView {
+    title: string,
+    // FR-PROF-08: connection fields cannot change.
+    locked: bool,
+    can-save: bool,
+    can-test: bool,
+    testing: bool,
+    saving: bool,
+    test-text: string,
+    test-failed: bool,
+    // Above the buttons: why Save failed, or why it is off.
+    message: string,
+    password-placeholder: string,
+}
+
+// A line of the form: its label, what goes there, and what is wrong with it.
+component FormRow {
+    in property <string> label;
+    in property <string> problem;
+    in property <string> warning;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        VerticalLayout {
+            alignment: start;
+            width: 88px;
+
+            Rectangle {
+                height: 32px;
+
+                Text {
+                    x: 0;
+                    width: parent.width;
+                    text: root.label;
+                    vertical-alignment: center;
+                    accessible-role: none;
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                @children
+            }
+
+            if root.problem != "": Text {
+                text: root.problem;
+                color: Colours.red;
+                wrap: word-wrap;
+            }
+
+            if root.warning != "": Text {
+                text: root.warning;
+                color: Colours.amber;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
+// The toolkit has a radio group, but only as one column, and the mock-up has two.
+component Radio {
+    in property <string> text;
+    in property <bool> checked;
+    in property <bool> enabled: true;
+
+    callback chosen();
+
+    min-height: 28px;
+    horizontal-stretch: 1;
+    accessible-role: radio-button;
+    accessible-label: root.text;
+    accessible-checkable: true;
+    accessible-checked: root.checked;
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.chosen();
+        }
+    }
+    forward-focus: scope;
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " ") {
+                root.chosen();
+                return accept;
+            }
+            return reject;
+        }
+
+        TouchArea {
+            enabled: root.enabled;
+            clicked => {
+                scope.focus();
+                root.chosen();
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            VerticalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: 16px;
+                    height: 16px;
+                    border-radius: 8px;
+                    border-width: scope.has-focus ? 2px : 1px;
+                    border-color: root.enabled ? Palette.foreground : Palette.border;
+
+                    if root.checked: Rectangle {
+                        width: 8px;
+                        height: 8px;
+                        border-radius: 4px;
+                        background: root.enabled ? Palette.accent-background : Palette.border;
+                    }
+                }
+            }
+
+            Text {
+                text: root.text;
+                vertical-alignment: center;
+                color: root.enabled ? Palette.foreground : Palette.border;
+                accessible-role: none;
+            }
+        }
+    }
+}
+
+export component ProfileDialog {
+    in-out property <DialogForm> form;
+    in property <DialogMarks> marks;
+    in property <DialogView> view;
+    in property <[string]> drive-items;
+    in-out property <bool> advanced-open;
+    // Off while a prompt is in front of it.
+    in property <bool> interactive: true;
+
+    callback edited();
+    callback host-edited(text: string);
+    callback browse(which: KeyFileBox);
+    callback test();
+    callback cancel-test();
+    callback save();
+    callback cancel();
+
+    property <bool> editable: root.interactive && !root.view.locked;
+    property <bool> jump-in-use: root.form.jump-host != "";
+
+    // After a prompt: it most likely came from Test connection.
+    public function focus-again() {
+        test-button.focus();
+    }
+
+    init => {
+        name-box.focus();
+    }
+
+    // Nothing behind it can be reached by mouse.
+    TouchArea { }
+
+    Rectangle {
+        background: #00000060;
+    }
+
+    Rectangle {
+        width: min(parent.width - 24px, 480px);
+        height: min(parent.height - 24px, 580px);
+        border-radius: 8px;
+        border-width: 1px;
+        border-color: Palette.border;
+        background: Palette.background;
+
+        VerticalLayout {
+            padding: 16px;
+            padding-right: 8px;
+            spacing: 8px;
+
+            Text {
+                text: root.view.title;
+                font-size: 16px;
+                font-weight: 600;
+            }
+
+            if root.view.locked: Text {
+                text: @tr("Unmount to change");
+                color: Colours.amber;
+                wrap: word-wrap;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                content-height: column.preferred-height;
+
+                column := VerticalLayout {
+                    width: parent.width;
+                    padding-right: 8px;
+                    spacing: 6px;
+                    alignment: start;
+
+                    FormRow {
+                        label: @tr("Name");
+                        problem: root.marks.name;
+
+                        name-box := LineEdit {
+                            text <=> root.form.name;
+                            enabled: root.interactive;
+                            accessible-label: @tr("Name");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: @tr("Host");
+                        problem: root.marks.host != "" ? root.marks.host : root.marks.port;
+
+                        LineEdit {
+                            text <=> root.form.host;
+                            enabled: root.editable;
+                            accessible-label: @tr("Host");
+                            edited(text) => {
+                                root.host-edited(text);
+                            }
+                        }
+
+                        Text {
+                            text: @tr("Port");
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                            accessible-role: none;
+                        }
+
+                        LineEdit {
+                            width: 64px;
+                            horizontal-stretch: 0;
+                            text <=> root.form.port;
+                            enabled: root.editable;
+                            accessible-label: @tr("Port");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: @tr("User");
+                        problem: root.marks.user;
+
+                        LineEdit {
+                            text <=> root.form.user;
+                            enabled: root.editable;
+                            accessible-label: @tr("User");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: @tr("Auth");
+
+                        GridLayout {
+                            spacing-horizontal: 8px;
+                            horizontal-stretch: 1;
+
+                            Row {
+                                Radio {
+                                    text: @tr("Key file");
+                                    enabled: root.editable;
+                                    checked: root.form.auth == AuthChoice.key-file;
+                                    chosen => {
+                                        root.form.auth = AuthChoice.key-file;
+                                        root.edited();
+                                    }
+                                }
+
+                                Radio {
+                                    text: @tr("Password");
+                                    enabled: root.editable;
+                                    checked: root.form.auth == AuthChoice.password;
+                                    chosen => {
+                                        root.form.auth = AuthChoice.password;
+                                        root.edited();
+                                    }
+                                }
+                            }
+
+                            Row {
+                                Radio {
+                                    text: @tr("SSH agent");
+                                    enabled: root.editable;
+                                    checked: root.form.auth == AuthChoice.agent;
+                                    chosen => {
+                                        root.form.auth = AuthChoice.agent;
+                                        root.edited();
+                                    }
+                                }
+
+                                Radio {
+                                    text: @tr("Ask each time");
+                                    enabled: root.editable;
+                                    checked: root.form.auth == AuthChoice.ask;
+                                    chosen => {
+                                        root.form.auth = AuthChoice.ask;
+                                        root.edited();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.form.auth == AuthChoice.key-file: FormRow {
+                        label: @tr("Key file");
+                        problem: root.marks.key-file;
+
+                        LineEdit {
+                            text <=> root.form.key-file;
+                            enabled: root.editable;
+                            accessible-label: @tr("Key file");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+
+                        Button {
+                            text: "…";
+                            horizontal-stretch: 0;
+                            enabled: root.editable;
+                            accessible-label: @tr("Choose key file");
+                            clicked => {
+                                root.browse(KeyFileBox.profile);
+                            }
+                        }
+                    }
+
+                    if root.form.auth == AuthChoice.key-file: FormRow {
+                        CheckBox {
+                            text: @tr("Remember passphrase");
+                            checked <=> root.form.remember-passphrase;
+                            enabled: root.editable;
+                            toggled => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    if root.form.auth == AuthChoice.password: FormRow {
+                        label: @tr("Password");
+                        problem: root.marks.password;
+
+                        LineEdit {
+                            text <=> root.form.password;
+                            input-type: password;
+                            placeholder-text: root.view.password-placeholder;
+                            enabled: root.editable;
+                            accessible-label: @tr("Password");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    if root.form.auth == AuthChoice.password: FormRow {
+                        CheckBox {
+                            text: @tr("Remember password");
+                            checked <=> root.form.remember-password;
+                            enabled: root.editable;
+                            toggled => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: @tr("Remote path");
+                        problem: root.marks.remote-path;
+
+                        LineEdit {
+                            text <=> root.form.remote-path;
+                            enabled: root.editable;
+                            accessible-label: @tr("Remote path");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: @tr("Drive");
+                        problem: root.marks.drive;
+                        warning: root.marks.drive-warning;
+
+                        ComboBox {
+                            model: root.drive-items;
+                            current-index <=> root.form.drive-index;
+                            enabled: root.editable;
+                            accessible-label: @tr("Drive");
+                            selected => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        CheckBox {
+                            text: @tr("Mount when FS Manager starts");
+                            checked <=> root.form.mount-on-start;
+                            enabled: root.interactive;
+                            toggled => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+
+                        Button {
+                            // Not the mock-up's arrow, which is in no font Slint falls back to on Windows 10.
+                            text: (root.advanced-open ? "– " : "+ ") + @tr("Advanced");
+                            enabled: root.interactive;
+                            accessible-label: @tr("Advanced");
+                            clicked => {
+                                root.advanced-open = !root.advanced-open;
+                            }
+                        }
+                    }
+
+                    if root.advanced-open: VerticalLayout {
+                        spacing: 6px;
+
+                        FormRow {
+                            label: @tr("Jump host");
+                            problem: root.marks.jump-host;
+
+                            LineEdit {
+                                text <=> root.form.jump-host;
+                                placeholder-text: "user@host:port";
+                                enabled: root.editable;
+                                accessible-label: @tr("Jump host");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+
+                            ComboBox {
+                                width: 112px;
+                                horizontal-stretch: 0;
+                                model: [@tr("Agent"), @tr("Key file"), @tr("Password")];
+                                current-index <=> root.form.jump-auth-index;
+                                enabled: root.editable && root.jump-in-use;
+                                accessible-label: @tr("Jump host login");
+                                selected => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        if root.jump-in-use && root.form.jump-auth-index == 1: FormRow {
+                            label: @tr("Its key file");
+                            problem: root.marks.jump-key-file;
+
+                            LineEdit {
+                                text <=> root.form.jump-key-file;
+                                enabled: root.editable;
+                                accessible-label: @tr("Jump host key file");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+
+                            Button {
+                                text: "…";
+                                horizontal-stretch: 0;
+                                enabled: root.editable;
+                                accessible-label: @tr("Choose jump host key file");
+                                clicked => {
+                                    root.browse(KeyFileBox.jump);
+                                }
+                            }
+                        }
+
+                        if root.jump-in-use && root.form.jump-auth-index == 2: FormRow {
+                            label: @tr("Its password");
+                            problem: root.marks.jump-password;
+
+                            LineEdit {
+                                text <=> root.form.jump-password;
+                                input-type: password;
+                                placeholder-text: @tr("Empty: asked for at each mount");
+                                enabled: root.editable;
+                                accessible-label: @tr("Jump host password");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        FormRow {
+                            CheckBox {
+                                text: @tr("Reconnect automatically");
+                                checked <=> root.form.auto-reconnect;
+                                enabled: root.interactive;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        FormRow {
+                            CheckBox {
+                                text: @tr("Read-only");
+                                checked <=> root.form.read-only;
+                                enabled: root.editable;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        FormRow {
+                            label: @tr("Cache (s)");
+                            problem: root.marks.cache;
+
+                            LineEdit {
+                                text <=> root.form.cache;
+                                enabled: root.editable;
+                                accessible-label: @tr("Cache (s)");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        FormRow {
+                            label: @tr("Keep-alive (s)");
+                            problem: root.marks.keep-alive;
+
+                            LineEdit {
+                                text <=> root.form.keep-alive;
+                                enabled: root.editable;
+                                accessible-label: @tr("Keep-alive (s)");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                padding-right: 8px;
+                spacing: 8px;
+
+                test-button := Button {
+                    horizontal-stretch: 0;
+                    text: root.view.testing ? @tr("Cancel test") : @tr("Test connection");
+                    enabled: root.interactive && (root.view.testing || root.view.can-test);
+                    clicked => {
+                        if (root.view.testing) {
+                            root.cancel-test();
+                        } else {
+                            root.test();
+                        }
+                    }
+                }
+
+                Text {
+                    text: root.view.test-text;
+                    color: root.view.test-failed ? Colours.red : Palette.foreground;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+
+            if root.view.message != "": Text {
+                text: root.view.message;
+                color: Colours.red;
+                wrap: word-wrap;
+            }
+
+            HorizontalLayout {
+                padding-right: 8px;
+                alignment: end;
+                spacing: 8px;
+
+                Button {
+                    text: @tr("Cancel");
+                    enabled: root.interactive && !root.view.saving;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
+
+                Button {
+                    text: @tr("Save");
+                    primary: true;
+                    enabled: root.interactive && root.view.can-save;
+                    clicked => {
+                        root.save();
+                    }
+                }
+            }
+        }
+    }
+}

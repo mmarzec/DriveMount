@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! The window itself, through Slint's testing back-end: real markup, real key and pointer events, and
-//! no screen. What the list holds is tested in `list.rs`.
+//! no screen. What the list holds is tested in `list.rs`, and the profile dialog in `tests/dialog.rs`.
+
+mod dialog;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -68,7 +70,16 @@ impl Fixture {
         self.ui.window().window().dispatch_event(event);
     }
 
+    /// What rendering a frame would do first: makes what has just appeared, which is what takes the
+    /// focus. Without it, keys would go to something that has just gone away.
+    fn make_what_appeared(&self) {
+        let _ = ElementQuery::from_root(self.ui.window())
+            .match_descendants()
+            .find_all();
+    }
+
     fn key(&self, key: impl Into<SharedString>) {
+        self.make_what_appeared();
         let text = key.into();
         self.dispatch(WindowEvent::KeyPressed { text: text.clone() });
         self.dispatch(WindowEvent::KeyReleased { text });
@@ -84,6 +95,7 @@ impl Fixture {
     }
 
     fn labelled(&self, label: &str) -> Option<ElementHandle> {
+        self.make_what_appeared();
         ElementHandle::find_by_accessible_label(self.ui.window(), label).next()
     }
 
@@ -270,7 +282,9 @@ fn the_empty_state_offers_to_add() {
     let fixture = Fixture::new(Vec::new());
     assert!(fixture.ui.window().get_no_connections());
     fixture.press("Add connection");
-    assert_eq!(fixture.take_sent(), [UiCommand::Add]);
+    assert!(fixture.ui.window().get_dialog_open());
+    assert_eq!(fixture.take_sent(), [UiCommand::FindFreeLetters]);
+    fixture.key(Key::Escape);
 
     fixture.ui.set_config(Config {
         profiles: profiles(&["a"]),
@@ -281,9 +295,7 @@ fn the_empty_state_offers_to_add() {
 
 #[test]
 fn without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not() {
-    let saved = profile("A");
-    let id = saved.id;
-    let fixture = Fixture::new(vec![saved]);
+    let fixture = Fixture::new(vec![profile("A")]);
     let banner = "WinFsp 2.1 or later is required to mount SSH drives";
     assert!(fixture.labelled(banner).is_none());
 
@@ -298,7 +310,9 @@ fn without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not() {
     fixture.key(Key::Return);
     assert!(fixture.take_sent().is_empty(), "Enter must not mount");
     fixture.ctrl("e");
-    assert_eq!(fixture.take_sent(), [UiCommand::Edit(id)]);
+    assert!(fixture.ui.window().get_dialog_open());
+    fixture.key(Key::Escape);
+    assert_eq!(fixture.take_sent(), [UiCommand::FindFreeLetters]);
 
     fixture.ui.set_winfsp_ready(true);
     assert!(fixture.labelled(banner).is_none());
@@ -390,16 +404,25 @@ fn the_shortcuts_of_the_table_work() {
     let id = saved.id;
     let fixture = Fixture::new(vec![saved]);
 
+    let opens_the_dialog = |title: &str| {
+        let window = fixture.ui.window();
+        assert!(window.get_dialog_open());
+        assert_eq!(window.get_dialog_view().title, title);
+        assert_eq!(fixture.take_sent(), [UiCommand::FindFreeLetters]);
+        fixture.key(Key::Escape);
+        assert!(!window.get_dialog_open());
+    };
     fixture.ctrl("n");
-    assert_eq!(fixture.take_sent(), [UiCommand::Add]);
+    opens_the_dialog("Add connection");
     fixture.ctrl("N");
-    assert_eq!(fixture.take_sent(), [UiCommand::Add], "with Caps Lock on");
+    opens_the_dialog("Add connection");
 
     fixture.ctrl("e");
     assert!(fixture.take_sent().is_empty(), "nothing is selected");
+    assert!(!fixture.ui.window().get_dialog_open());
     fixture.key(Key::DownArrow);
     fixture.ctrl("e");
-    assert_eq!(fixture.take_sent(), [UiCommand::Edit(id)]);
+    opens_the_dialog("Edit connection");
 
     fixture.ctrl(Key::Return);
     assert!(fixture.take_sent().is_empty(), "it is not mounted");

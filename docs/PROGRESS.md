@@ -2,6 +2,50 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-06: M1-17 Profile dialog and prompts (branch `feat/m1-17-profile-dialog`)
+
+**Status: done locally, waiting for the owner's H-06, so the plan's box stays ☐; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm`, and both script checks, also pass in a `rust:1.99.1` container, where the window does not exist. The window's and dialog's 127 tests passed 5 runs of 5 and once on one thread. The workspace has 913 passing and 140 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed. A release build of the preview is 11.42 MB against the limit of 15 MB (10.43 MB at M1-16). `Cargo.lock` did not change.
+
+- **Added:** `apps/fsm/src/ui/dialog.rs`, `form.rs` and `prompts.rs`, with `apps/fsm/ui/dialog.slint` and `prompts.slint`. `MainUi::prompter()` gives `UiPrompter`, the `Prompter` for the engine. `fsm_win::shell::show_in_explorer`, `caps_lock_is_on` and `pick_file`. `apps/fsm/examples/connect.rs` runs the window with the real engine and a scratch configuration.
+- **H-06, for the owner.** Start the servers, then the window:
+
+  ```bash
+  tests\docker\servers.ps1 up
+  ```
+
+  ```bash
+  cargo run -p fsm --example connect -- --fresh
+  ```
+
+  Try `tester@localhost:2222/` with the password `tester`. The configuration and `known_hosts` are in `%TEMP%\fsm-connect-preview`, secrets are only in memory, and `--fresh` empties that folder. Look at it at 100% and 150%, and walk through it by keyboard. `tests\docker\servers.ps1 down` stops the servers. `--example main_window` shows the same dialog with made-up connections, in `--light` and `--dark`.
+- **For the owner to check:**
+  - **The dialog and prompts are drawn inside the main window,** as the delete question is, which NFR-UX-02 allows. The default window has no room for a 480 × 580 dialog, so opening it grows the window to at least 520 × 620, and closing it puts the window back unless you resized it meanwhile.
+  - **A new form's empty boxes are not marked until they have held something,** with Save off all the same. Marked from the start, the form opened in red, and the messages pushed Advanced out of view. §7.3 says so now.
+  - **No *Remember* on a keyboard-interactive password,** which differs from §7.4.1 as first written, as `Prompter::keyboard_interactive` returns answers only. The *Password* method does remember, and its stored password answers that question (FR-SSH-07). Changing this means changing the trait.
+  - **A password too long for Credential Manager** (1,280 UTF-16 units) is marked, and stops Save only if it is to be kept. It could otherwise only fail once the profile was saved.
+  - **Advanced is drawn as `+ Advanced` / `– Advanced`,** as the mock-up's arrow is in no font Slint falls back to here.
+- **Checked by hand against S-03, through `connect` and UI Automation,** at 100% and partly with `SLINT_SCALE_FACTOR=1.5`: *Trust and save* and no question on the next run, a wrong and a right password, save, mount (V:), a killed process leaving no drive, a passphrase key (`id_ed25519_pass`), the marks for `.pub` and `.ppk`, *Ask each time* with a password, `totpuser` with a real code, and the changed key from a test and from a mount, by editing `known_hosts`.
+- **Not tried by me:** *Open file location* pressed, the real file picker, a walk through by real key presses (the tests send keys through the testing back-end), the Caps Lock hint on a real key, coming to the front from hidden or minimized, a real 150%, a jump host against a server, and the look of a profile locked while mounted, as the ⋯ menu is out of UI Automation's reach (tests cover the behaviour).
+- **Known limits:**
+  - **Typed passwords pass through Slint's `SharedString`,** which is not zeroed. They are cleared from the window's properties when the dialog or prompt ends, and copies may stay in memory until overwritten. Slint offers nothing better.
+  - **§7.3's messages are `Problem`'s `Display`, in English,** not `@tr`.
+  - **The Drive box's current line only gains "(free)" when the selection changes,** as the marks come after it opens.
+  - **Closing the app with the dialog open** remembers the grown window.
+  - **A key path is checked on a thread of its own at each edit,** and only the last answer counts. Nothing was measured, and typing is slow enough for it not to matter on a local disk. A slow network path just means more threads waiting for a moment.
+- **For later tasks, M1-18:**
+  - `MainUi` opens the dialog itself, so `UiCommand::Add` and `Edit` are gone. It sends `Save`, `Test`, `CancelTest`, `FindFreeLetters`, `PickKeyFile` and `OpenFileLocation`, and takes the answers through `save_finished`, `test_finished`, `set_free_letters` and `key_file_picked`. `examples/connect.rs` shows all of it working, and can be lifted.
+  - **After a Save, call `set_config` before `save_finished`,** as the dialog closes on the latter and the list has to be right by then.
+  - **Keep `pick_file` and `show_in_explorer` off the UI thread:** a plain `std::thread`, as the file dialog is modal and needs no runtime. Start the picker in `%USERPROFILE%\.ssh`.
+  - **Dropping `MainUi` closes the mailbox,** which answers whoever is waiting with a cancel. Get `prompter()` before handing `MainUi` to the UI thread.
+- **Worth knowing about Slint 1.18:**
+  - **Wrapped text inside a nested layout counts as one line** in the outer layout's height. The changed-key dialog's buttons fell out of its panel that way, so its parts are separate `if`s in one layout. `the_panel_holds_all_it_shows_however_the_text_wraps` holds it.
+  - **An element going away can take the focus with it, or a `changed` handler on it can.** A text prompt followed by another kind left Esc and Enter dead until Tab, a real bug found by hand. `the_next_prompt_has_the_keys_whatever_kind_came_before` holds it.
+  - **The testing back-end's queries skip what is clipped,** so a test has to scroll a box into view first, and elements under an `if` are only found once the window has laid them out.
+  - **`SLINT_SCALE_FACTOR` does not change winit's scale,** so a logical `set_size` comes out wrong under it. The dialog uses physical sizes.
+- **The tests are checked too:** 24 faults injected by script (kept out of the repository), with a harmless change as a control, which passed. All 24 were caught. One of them hung a test rather than failing it, as `when_the_window_goes_whoever_is_waiting_is_answered_with_a_cancel` had one wait with no limit. It now has one, and that fault now fails two tests within the normal run time. The other 23 were not run again after that, which only changed that wait.
+- **A trap in scripts:** Python's `subprocess.run(..., shell=True, capture_output=True, timeout=...)` on Windows kills only the shell, then waits with no limit for pipes the hung child still holds. It held the fault run for an hour and a half. Send output to a file, and kill with `taskkill /T`.
+- **Next:** H-06 by the owner, then M1-18.
+
 ## 2026-11-05: M1-16 Main window (branch `feat/m1-16-main-window`)
 
 **Status: done locally, and the owner confirmed H-06 on 2026-11-05; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `build`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm`, and both script checks, also pass in a `rust:1.99.1` container, where the window does not exist, as `fsm` only uses Slint on Windows. That run came before the last two tests were added, which only build on Windows. `fsm` has 52 unit tests, of which 43 are the window's, which passed 5 runs of 5 and once on one thread. The workspace has 829 passing and 140 ignored. **Not run:** the other ignored server and desktop tests, as nothing they use changed. A release build of the preview is 10.43 MB against the limit of 15 MB. `fsm.exe` itself does not use the window until M1-18, so its size check says little yet, and the SFTP and WinFsp code will add to that figure. `Cargo.lock` gains Slint and what it needs, 424 packages, and no version of anything already there changed.
