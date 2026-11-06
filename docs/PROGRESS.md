@@ -4,10 +4,10 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 
 ## 2026-11-06: M1-17 Profile dialog and prompts (branch `feat/m1-17-profile-dialog`)
 
-**Status: done locally, waiting for the owner's H-06, so the plan's box stays ☐; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm`, and both script checks, also pass in a `rust:1.99.1` container, where the window does not exist. The window's and dialog's 127 tests passed 5 runs of 5 and once on one thread. The workspace has 913 passing and 140 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed. A release build of the preview is 11.42 MB against the limit of 15 MB (10.43 MB at M1-16). `Cargo.lock` did not change.
+**Status: done locally, and the owner confirmed H-06 on 2026-11-06; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm`, and both script checks, also pass in a `rust:1.99.1` container, where the window does not exist. The window's and dialog's 127 tests passed 5 runs of 5 and once on one thread. The workspace has 913 passing and 140 ignored. **Not run:** the ignored server and desktop tests, as nothing they use changed. A release build of the preview is 11.42 MB against the limit of 15 MB (10.43 MB at M1-16). `Cargo.lock` did not change.
 
 - **Added:** `apps/fsm/src/ui/dialog.rs`, `form.rs` and `prompts.rs`, with `apps/fsm/ui/dialog.slint` and `prompts.slint`. `MainUi::prompter()` gives `UiPrompter`, the `Prompter` for the engine. `fsm_win::shell::show_in_explorer`, `caps_lock_is_on` and `pick_file`. `apps/fsm/examples/connect.rs` runs the window with the real engine and a scratch configuration.
-- **H-06, for the owner.** Start the servers, then the window:
+- **H-06, which the owner has checked and found good.** The confirmation was for H-06 as a whole, so it does not say which of the items under "Not tried by me" below were tried. To see it again, start the servers, then the window:
 
   ```bash
   tests\docker\servers.ps1 up
@@ -44,7 +44,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
   - **`SLINT_SCALE_FACTOR` does not change winit's scale,** so a logical `set_size` comes out wrong under it. The dialog uses physical sizes.
 - **The tests are checked too:** 24 faults injected by script (kept out of the repository), with a harmless change as a control, which passed. All 24 were caught. One of them hung a test rather than failing it, as `when_the_window_goes_whoever_is_waiting_is_answered_with_a_cancel` had one wait with no limit. It now has one, and that fault now fails two tests within the normal run time. The other 23 were not run again after that, which only changed that wait.
 - **A trap in scripts:** Python's `subprocess.run(..., shell=True, capture_output=True, timeout=...)` on Windows kills only the shell, then waits with no limit for pipes the hung child still holds. It held the fault run for an hour and a half. Send output to a file, and kill with `taskkill /T`.
-- **Next:** H-06 by the owner, then M1-18.
+- **Next:** M1-18.
 
 ## 2026-11-05: M1-16 Main window (branch `feat/m1-16-main-window`)
 
