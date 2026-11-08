@@ -236,7 +236,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 |---|---|---|
 | NFR-PERF-01 | Cold start to window visible (from process creation to first frame, logged) | < 250 ms |
 | NFR-PERF-02 | Cold start with `--tray` to tray icon visible | < 150 ms |
-| NFR-PERF-03 | Size of `fsm.exe` (release, stripped) | < 15 MB |
+| NFR-PERF-03 | Size of `fsm.exe` (release, stripped) | < 30 MB |
 | NFR-PERF-04 | Idle working set after 60 s: no mounts / each additional idle mount | < 40 MB / < 8 MB |
 | NFR-PERF-05 | CPU while idle with 5 mounts | < 0.1% average over 10 min; no periodic wake-ups apart from keep-alives |
 | NFR-PERF-06 | Sequential read and write of a 1 GB file through Explorer copy, compared with OpenSSH `sftp` get/put on the same link | ≥ 90% (LAN and WAN) |
@@ -273,7 +273,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | ID | Requirement |
 |---|---|
 | NFR-UX-01 | Mount or unmount takes ≤ 2 clicks from the window or the tray. |
-| NFR-UX-02 | The UI consists of the main window, one profile dialog, one settings page and small prompts. There are no other windows. |
+| NFR-UX-02 | The UI consists of the main window, three pages that each take the list's place (the connection page, the Add/Edit page and the settings page), and small prompts. There are no other windows. |
 | NFR-UX-03 | Every error message says what happened and what to do (catalogue in §7.8). No raw error codes appear without explanation. |
 | NFR-UX-04 | Everything can be done with the keyboard (§7.7). Every control has an accessible name for screen readers. |
 | NFR-UX-05 | English only in v1. All strings are wrapped in Slint `@tr()` so translations can be added without code changes. `slint` has no `tr!` for Rust, so what Rust has to show comes from the `Texts` global in `apps/fsm/ui/texts.slint`. |
@@ -796,60 +796,93 @@ The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so
 
 Built with **Slint** (Fluent style, software renderer). Theme: System / Light / Dark.
 
+**Look.** Both themes use a warm palette: off-white or warm dark grey surfaces, and a grey-blue accent for focus and for the one main button in view. It is defined in `apps/fsm/ui/theme.slint`. Text is **Inter** (SIL OFL 1.1) at 15 px, in Regular and SemiBold, subset to Latin and Latin Extended-A and embedded in the exe. Icons are **Lucide** SVGs (ISC), tinted to the theme. Both licences ship as `apps/fsm/ui/fonts/OFL.txt` and `apps/fsm/ui/icons/LICENSE`, and belong in the third-party licence file (NFR-LIC-04). FS Manager draws the window's own buttons. Text boxes, check boxes and drop-downs are Fluent's, and keep its blue focus line.
+
 ### 7.1 Main window (default 640 × 420, minimum 480 × 320; size and position remembered)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │  FS Manager                                           ─   □   ×  │
 ├──────────────────────────────────────────────────────────────────┤
-│                                [ + Add ]  [ Mount all ]   ⚙      │
+│  FS Manager           [+ Add] [▷ Mount all] [□ Unmount all] [⚙]  │
 ├──────────────────────────────────────────────────────────────────┤
 │  ⚠ WinFsp 2.1 or later is required…        [ Download WinFsp ]   │  ← only if missing
 ├──────────────────────────────────────────────────────────────────┤
-│   ●  Production         deploy@10.0.4.21:/var/www   Z:  [Unmount] ⋯ │
-│   ◐  Staging            deploy@stage:/srv           Y:  [ Cancel] ⋯ │
-│   ○  NAS backup         marcin@nas:~                X:  [ Mount ] ⋯ │
-│   ●  Dev box            me@devbox:/home/me          W:  [Unmount] ⋯ │
-│      ⚠ Authentication failed. Check user name and key.            │  ← error line
+│   ○  NAS backup                              [ Mount  ]    X:    │
+│   ◌  Staging                                 [ Cancel ]    Y:    │
+│   ✓  Production                              [Unmount ]    Z:  › │  ← › on hover
+│   !  Dev box                                 [ Retry  ]          │
 ├──────────────────────────────────────────────────────────────────┤
-│  2 mounted · 1 connecting                                        │
+│  1 mounted · 1 connecting · 1 failed                             │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Row status and primary button**
+**Row status and primary button.** Every row is one line: status icon, name, primary button, drive letter.
 
-| Status | Dot | Button |
+| Status | Icon | Button |
 |---|---|---|
-| Disconnected | ○ grey | Mount |
-| Connecting | ◐ amber, animated | Cancel |
-| Mounted | ● green | Unmount |
-| Reconnecting | ◐ amber + "Reconnecting…" line | Unmount |
-| Error | ● red + one-line message | Retry |
+| Disconnected | empty circle, grey | Mount |
+| Connecting | loader, amber, pulsing | Cancel |
+| Mounted | circle with a tick, green | Unmount |
+| Reconnecting | loader, amber, and "Reconnecting…" on the page | Unmount |
+| Error | circle with "!", red. The message is on the page | Retry (accent) |
 
 **Rows and menus**
 - **Drive letter:** the row shows it when mounted, and the preferred letter (dimmed) otherwise. *Auto* has none to show until it is mounted.
-- **Toolbar:** *Unmount all* sits beside *Mount all*, as FR-MNT-09 has it there, though the mock-up does not. Each is disabled when it has nothing to act on.
+- **Toolbar:** *Add*, *Mount all*, *Unmount all* (FR-MNT-09) and Settings, each with an icon. *Mount all* and *Unmount all* are disabled when they have nothing to act on. *Add* is always there, and is the only way to add with the mouse.
 - **Status bar:** also counts failed profiles ("· 1 failed"), and says "Nothing mounted" when there is nothing to count.
-- **Unmounting** has no row in the table above: an amber half dot, with *Unmount* disabled.
-- **What else gets a line under the row:** "Y: (Z: was in use)" (FR-MNT-04), a profile that breaks a rule of §7.3, whose *Mount* is disabled until it is edited, and an entry of the file that cannot be read (§6.1), which can only be deleted.
-- **⋯ button:** drawn as `···`, as the character in the mock-up is in no font Slint falls back to on Windows 10.
-- **⋯ menu:** *Open in Explorer* (when mounted), *Edit…*, *Delete…*.
-- **Mouse:** double-clicking a row opens Explorer if mounted, otherwise mounts. The right-click menu is the same as ⋯.
+- **Unmounting** has no row in the table above: an amber loader, with *Unmount* disabled.
+- **What a row has no room for:** the address, "Y: (Z: was in use)" (FR-MNT-04), an error, and a profile that breaks a rule of §7.3 (its *Mount* is disabled until it is edited). These are on the connection page, and in a tooltip that shows after 0.7 s over the row. An entry of the file that cannot be read (§6.1) has a red warning icon and no button, and can only be deleted.
+- **Mouse:** a click anywhere on a row except its button opens the row's **connection page** (§7.1.1). The right-click menu has *Details*, *Open in Explorer* (when mounted), *Edit…* and *Delete…*.
 
 **List**
 - Rows are one flat list, sorted by the drive letter the row shows (D to Z): the letter a mounted profile holds, otherwise the preferred one. Rows with no letter to show (*Auto*, not mounted) come last. Rows with the same letter are sorted by name, ignoring case. A row therefore moves when it is mounted or unmounted.
-- **Empty state:** "No connections yet." with an **Add connection** button.
+- **Rows** are separated by a 1 px line.
+- **Empty state:** a drive icon, "No connections yet." and "Choose Add to set one up." There is no button in the middle: the toolbar's *Add* is the one.
 
-### 7.2 Profile dialog (Add / Edit)
+### 7.1.1 Connection page
 
-A modal dialog, about 480 × 580, drawn inside the main window with the window dimmed behind it, as NFR-UX-02 allows. The fields scroll when it does not fit, and Tab scrolls to what it reaches. The main window's default size has no room for it, so opening it grows the window to at least 520 × 620, moved up if that would pass the bottom of the screen, and closing it puts the window back, unless the user has resized it meanwhile.
+This page replaces the list inside the main window, as the settings page does. A ← back button or Esc returns to the list. While the page is up, the selection is its profile, so Enter, Ctrl+Enter, Ctrl+E and Del act on it.
 
-- **Advanced** is drawn as `+ Advanced` / `– Advanced`, as the mock-up's arrow is in no font Slint falls back to on Windows 10. It opens by itself when something in it needs correcting, and stays open until that is done.
-- **Drive:** lines of free letters read `Z: (free)`. Finding them does not hold up the dialog, so the marks come a moment after it opens.
+```
+┌──────────────────────────────────────────────────────────────────┐
+│ [←]  (!) Dev box                                          [Retry] │
+│          Failed                                                  │
+│ ┌──────────────────────────────────────────────────────────────┐ │
+│ │ (!) Authentication failed for me@devbox.                     │ │  ← only with a problem
+│ │     Check the user name and password or key.                 │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│ ┌──────────────────────────────────────────────────────────────┐ │
+│ │ Host            devbox                                       │ │
+│ │ Port            22                                           │ │
+│ │ User            me                                           │ │
+│ │ Authentication  Key file: C:\Users\me\.ssh\id_ed25519        │ │
+│ │ Remote path     /home/me                                     │ │
+│ │ Drive           W:                                           │ │
+│ │ Jump host       gate                       (only if set)     │ │
+│ │ Mount at start, Reconnect, Read-only, Cache, Keep-alive      │ │
+│ └──────────────────────────────────────────────────────────────┘ │
+│ [✎ Edit] [🗑 Delete]                                              │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+- **Header:** the state icon, the name, the state in words ("Mounted on Z:", "Connecting…", "Failed", "Not mounted"), and the row's primary button. There is no *Open in Explorer* button: Ctrl+Enter and the row's right-click menu do that.
+- **Size:** the settings are at 14 px, one tight line each, and the buttons come right under them. Opening the page grows the window to at least 600 × 680 so that nothing scrolls, as §7.2 does.
+- **Problem:** what happened and what to do (§7.8). It is red for an error, and amber for a moved letter or a profile that needs correcting.
+- **Settings:** read-only. No secret is ever shown.
+- **Edit** opens the Add/Edit page (§7.2) in its place, and Cancel or Save returns to it. **Delete** asks first (FR-PROF-07), and the page closes when the profile is gone.
+- An entry of the file that cannot be read shows why it cannot be read, and offers only *Delete*.
+
+### 7.2 Add/Edit page
+
+A page in the list's place, built like the connection page (§7.1.1): a ← back button (the same as Cancel) and the title, then a card of label and box rows, then *Test connection*, *Cancel* and *Save*. The toolbar stays, disabled. The fields scroll when they do not fit, and Tab scrolls to what it reaches. The main window's default size has no room for it, so opening it grows the window to at least 600 × 680, moved up if that would pass the bottom of the screen. Once neither this page nor the connection page is up, the window goes back as it was, unless the user has resized it meanwhile.
+
+- **Advanced** is a button with a chevron icon, pointing right when closed and down when open. It opens by itself when something in it needs correcting, and stays open until that is done.
+- **Drive:** lines of free letters read `Z: (free)`. Finding them does not hold up the page, so the marks come a moment after it opens.
 - **Passwords:** a password is never read back. A box left empty keeps what is saved. *Remember* starts ticked in a new profile. A jump host's password box has no *Remember*: filled, it is stored; empty, it is asked for at each mount. A key's passphrase has no box, as the mock-up shows: it is asked for at the first use.
-- **Saving:** Save waits for the file, and Cancel and Esc wait with it. If it fails, the dialog stays with what was typed and says why.
-- **Test connection** needs no name. Any edit stops a test under way and clears what the last one said, and so does closing the dialog. Cancelling a prompt during a test says nothing.
-- **Hint "Unmount to change"** shows at the top, and locked fields are disabled. If a mount starts with the dialog open, the locked fields go back to what is saved.
+- **Saving:** Save waits for the file, and Cancel and Esc wait with it. If it fails, the page stays with what was typed and says why.
+- **Test connection** needs no name. Any edit stops a test under way and clears what the last one said, and so does leaving the page. Cancelling a prompt during a test says nothing.
+- **Hint "Unmount to change"** shows at the top, and locked fields are disabled. If a mount starts with the page open, the locked fields go back to what is saved.
 
 - **v1:** shows SSH fields only.
 - **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it.
@@ -971,8 +1004,9 @@ This page replaces the list area inside the main window; a ← back arrow return
 | Ctrl+E | Edit selected |
 | Enter | Mount/Unmount selected |
 | Ctrl+Enter | Open selected in Explorer |
+| Space, Ctrl+I | Open the selected connection's page (§7.1.1) |
 | Del | Delete selected (asks first) |
-| Esc | Close dialog / hide window to tray |
+| Esc | Close dialog / leave the connection page / hide window to tray |
 | Del, in the question it asks | Focus starts on *Cancel*, so Enter keeps the profile; Esc does too |
 | ↑ ↓ | Move selection |
 

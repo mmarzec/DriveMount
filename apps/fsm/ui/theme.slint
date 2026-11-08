@@ -1,0 +1,232 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The look of the whole UI: warm surfaces and a grey-blue accent for light and dark, and the controls drawn in them. Icons are
+// Lucide SVGs (ISC, `icons/LICENSE`), drawn in one colour with `colorize` so that one file serves both
+// themes. Only the connecting icon asks for frames, so nothing runs while idle (NFR-PERF-05).
+
+import { Palette } from "std-widgets.slint";
+
+export global Theme {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+
+    // Surfaces.
+    out property <color> bg: dark ? #262624 : #FAF9F5;
+    out property <color> surface: dark ? #30302E : #FFFFFF;
+    out property <color> sunken: dark ? #1F1E1D : #F0EEE6;
+    out property <color> hover: dark ? #FFFFFF0F : #1F1E1D0A;
+    out property <color> selected: dark ? #FFFFFF1C : #1F1E1D14;
+    out property <color> border: dark ? #FFFFFF1F : #1F1E1D21;
+    out property <color> scrim: #00000070;
+
+    // Text.
+    out property <color> text: dark ? #F3F1EA : #29261B;
+    out property <color> text-muted: dark ? #B4B1A5 : #6E6B5E;
+    out property <color> text-disabled: dark ? #FFFFFF4D : #1F1E1D59;
+
+    // The accent, a grey-blue, for the one button that matters and for focus.
+    out property <color> accent: dark ? #5B83B0 : #44678C;
+    out property <color> accent-hover: dark ? #6A91BD : #3A5978;
+    out property <color> on-accent: #FFFFFF;
+
+    // Buttons.
+    out property <color> button: dark ? #3A3A37 : #FFFFFF;
+    out property <color> button-hover: dark ? #45443F : #F5F3EC;
+    out property <color> button-pressed: dark ? #4F4E48 : #ECE9E0;
+    out property <color> button-border: dark ? #FFFFFF26 : #1F1E1D2E;
+
+    // States.
+    out property <color> green: dark ? #5CC47A : #2E9E4F;
+    out property <color> amber: dark ? #E5A33A : #B97A12;
+    out property <color> red: dark ? #EF6B63 : #C2413A;
+    out property <color> grey: dark ? #8F8D83 : #A3A094;
+    out property <color> red-tint: dark ? #4A2523 : #FBE7E4;
+    out property <color> amber-tint: dark ? #48391E : #FBF0DA;
+
+    // Sizes.
+    out property <length> radius: 8px;
+    out property <length> card-radius: 12px;
+    out property <length> title-size: 20px;
+    out property <length> small-size: 13px;
+    // The pages, which have more to show than the list.
+    out property <length> page-size: 14px;
+}
+
+export global Icons {
+    out property <image> circle: @image-url("icons/circle.svg");
+    out property <image> circle-check: @image-url("icons/circle-check.svg");
+    out property <image> circle-alert: @image-url("icons/circle-alert.svg");
+    out property <image> circle-x: @image-url("icons/circle-x.svg");
+    out property <image> loader: @image-url("icons/loader-circle.svg");
+    out property <image> triangle-alert: @image-url("icons/triangle-alert.svg");
+    out property <image> chevron-right: @image-url("icons/chevron-right.svg");
+    out property <image> chevron-down: @image-url("icons/chevron-down.svg");
+    out property <image> plus: @image-url("icons/plus.svg");
+    out property <image> play: @image-url("icons/play.svg");
+    out property <image> square: @image-url("icons/square.svg");
+    out property <image> settings: @image-url("icons/settings.svg");
+    out property <image> arrow-left: @image-url("icons/arrow-left.svg");
+    out property <image> pencil: @image-url("icons/pencil.svg");
+    out property <image> trash: @image-url("icons/trash-2.svg");
+    out property <image> folder-open: @image-url("icons/folder-open.svg");
+    out property <image> hard-drive: @image-url("icons/hard-drive.svg");
+}
+
+export component Icon inherits Image {
+    in property <color> colour: Theme.text;
+    in property <length> size: 18px;
+
+    width: root.size;
+    height: root.size;
+    colorize: root.colour;
+    image-fit: contain;
+    accessible-role: none;
+}
+
+// A button in the theme's colours. Space and Enter press it when it has the focus (NFR-UX-04), and
+// its label is its text unless the user of it says otherwise.
+export component AppButton {
+    in property <string> text;
+    in property <image> icon;
+    in property <bool> primary;
+    in property <bool> danger;
+    in property <bool> enabled: true;
+    in property <bool> checkable;
+    in property <bool> checked;
+    // Icon only, square.
+    in property <bool> icon-only;
+    in property <length> icon-size: 18px;
+
+    callback clicked();
+
+    public function focus-me() {
+        scope.focus();
+    }
+
+    property <bool> has-icon: root.icon.width > 0;
+    property <bool> filled: root.primary || (root.checkable && root.checked);
+    property <color> fill: !root.enabled ? (root.filled ? Theme.accent.with-alpha(0.4) : Theme.button)
+        : root.filled ? (touch.pressed ? Theme.accent-hover.darker(0.1) : touch.has-hover ? Theme.accent-hover : Theme.accent)
+        : touch.pressed ? Theme.button-pressed
+        : touch.has-hover ? Theme.button-hover
+        : Theme.button;
+    property <color> ink: !root.enabled ? (root.filled ? Theme.on-accent.with-alpha(0.8) : Theme.text-disabled)
+        : root.filled ? Theme.on-accent
+        : root.danger ? Theme.red
+        : Theme.text;
+
+    min-height: 32px;
+    min-width: root.icon-only ? 32px : 0;
+    horizontal-stretch: 0;
+    vertical-stretch: 0;
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-enabled: root.enabled;
+    accessible-checkable: root.checkable;
+    accessible-checked: root.checked;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            border-radius: Theme.radius;
+            background: root.fill;
+            border-width: scope.has-focus ? 2px : root.filled ? 0 : 1px;
+            border-color: scope.has-focus ? (root.filled ? Theme.text : Theme.accent) : Theme.button-border;
+            animate background { duration: 80ms; }
+        }
+
+        touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                root.clicked();
+            }
+        }
+
+        HorizontalLayout {
+            padding-left: root.icon-only ? 7px : 12px;
+            padding-right: root.icon-only ? 7px : 14px;
+            spacing: 6px;
+            alignment: center;
+
+            if root.has-icon: VerticalLayout {
+                alignment: center;
+
+                Icon {
+                    source: root.icon;
+                    size: root.icon-size;
+                    colour: root.ink;
+                }
+            }
+
+            if !root.icon-only: Text {
+                text: root.text;
+                color: root.ink;
+                vertical-alignment: center;
+                font-weight: root.primary ? 600 : 400;
+                accessible-role: none;
+            }
+        }
+    }
+}
+
+// A rounded panel on the background.
+export component Card inherits Rectangle {
+    background: Theme.surface;
+    border-radius: Theme.card-radius;
+    border-width: 1px;
+    border-color: Theme.border;
+}
+
+// A line of a page: a label and what goes with it.
+export component Field {
+    in property <string> label;
+    in property <string> value;
+    in property <bool> last;
+
+    accessible-role: text;
+    accessible-label: root.label + ": " + root.value;
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding-top: 5px;
+            padding-bottom: 5px;
+            spacing: 12px;
+
+            Text {
+                text: root.label;
+                width: 130px;
+                font-size: Theme.page-size;
+                color: Theme.text-muted;
+                accessible-role: none;
+            }
+
+            Text {
+                text: root.value;
+                horizontal-stretch: 1;
+                font-size: Theme.page-size;
+                color: Theme.text;
+                wrap: char-wrap;
+                accessible-role: none;
+            }
+        }
+
+        if !root.last: Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}

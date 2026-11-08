@@ -13,9 +13,8 @@ use fsm_vfs::{DriveLetter, MountError};
 use uuid::Uuid;
 
 /// Logical pixels. Fixed, so that where a row is can be worked out without laying it out, which is
-/// how the selection is kept in view.
-const ROW_HEIGHT: f32 = 40.0;
-const LINE_HEIGHT: f32 = 20.0;
+/// how the selection is kept in view. Every row is one line: what does not fit is on its page.
+const ROW_HEIGHT: f32 = 44.0;
 
 /// Which thing a list item is, so that the selection stays on it when the list changes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -39,7 +38,7 @@ pub(super) enum Primary {
     Retry,
 }
 
-/// The second line of a row.
+/// What a row has to say beyond its state, on its page and in its tooltip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Line {
     /// There is none.
@@ -111,11 +110,12 @@ pub(super) struct Item {
 
 impl Item {
     /// How high it is, in logical pixels.
-    pub(super) fn height(&self) -> f32 {
-        match &self.body {
-            Body::Profile(row) if row.line == Line::None => ROW_HEIGHT,
-            Body::Profile(_) | Body::Unreadable { .. } => ROW_HEIGHT + LINE_HEIGHT,
-        }
+    #[expect(
+        clippy::unused_self,
+        reason = "rows were not always one height, and may not stay so"
+    )]
+    pub(super) const fn height(&self) -> f32 {
+        ROW_HEIGHT
     }
 }
 
@@ -634,7 +634,7 @@ mod tests {
     }
 
     #[test]
-    fn a_moved_letter_and_an_error_each_take_a_second_line() {
+    fn a_moved_letter_and_an_error_each_have_a_line_and_the_row_stays_one_high() {
         let saved = profile("a");
         let id = saved.id;
         let mut state = state_with(vec![saved]);
@@ -656,7 +656,7 @@ mod tests {
                 wanted: letter('Z'),
             }
         );
-        assert_eq!(state.items()[0].height(), ROW_HEIGHT + LINE_HEIGHT);
+        assert_eq!(state.items()[0].height(), ROW_HEIGHT);
 
         let error = MountError::Connect(ConnectError::SftpUnavailable);
         state.apply(&in_state(id, MountState::Error(error.clone())));

@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# NFR-PERF-03: fails when the release fsm.exe is not under 15 MB. Prints the size on every run, so
+# NFR-PERF-03: fails when the release fsm.exe is not under 30 MB. Prints the size on every run, so
 # growth shows up when it happens. Build it first: cargo build --release -p fsm
 
 param(
     [string]$Path = (Join-Path $PSScriptRoot '..\target\release\fsm.exe'),
-    [long]$LimitBytes = 15000000
+    [long]$LimitBytes = 30000000
 )
 
 if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {

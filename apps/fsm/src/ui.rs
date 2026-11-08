@@ -13,6 +13,7 @@ mod dialog;
 pub mod errors;
 mod form;
 mod list;
+mod page;
 mod prompts;
 mod remembered;
 
@@ -37,6 +38,7 @@ use uuid::Uuid;
 use self::dialog::{Dialog, Room};
 use self::errors::{read_only_text, setting_problems_text, shown_error};
 use self::list::{Body, Item, Key, Line, ListState, Primary, ProfileItem};
+use self::page::{Details, Login};
 pub use self::prompts::UiPrompter;
 use self::prompts::{Mailbox, Prompts};
 use self::remembered::{Placement, Remembered};
@@ -54,7 +56,9 @@ mod generated {
     slint::include_modules!();
 }
 
-use self::generated::{EntryKind, ListEntry, PrimaryAction, RowStatus, ThemeChoice};
+use self::generated::{
+    EntryKind, ListEntry, LoginKind, PageView, PrimaryAction, RowStatus, ThemeChoice,
+};
 pub use self::generated::{KeyFileBox, MainWindow, Texts};
 
 /// Where the *Download WinFsp* button goes (FR-APP-06).
@@ -146,6 +150,8 @@ struct Inner {
     list: RefCell<ListState>,
     /// What the question on screen is about.
     deleting: RefCell<Option<Key>>,
+    /// What the connection page is showing, while it is up.
+    page: RefCell<Option<Key>>,
     /// The profile dialog, while it is open.
     dialog: RefCell<Option<Dialog>>,
     drive_items: Rc<VecModel<SharedString>>,
@@ -217,6 +223,7 @@ impl MainUi {
             entries,
             list: RefCell::new(ListState::new()),
             deleting: RefCell::new(None),
+            page: RefCell::new(None),
             dialog: RefCell::new(None),
             drive_items,
             next_attempt: Cell::new(0),
@@ -361,12 +368,17 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_download_winfsp_pressed(on(|inner| inner.send(UiCommand::DownloadWinFsp)));
     window.on_hide_pressed(on(Inner::hide));
 
-    window.on_row_pressed(on_row(Inner::select));
-    window.on_row_double_clicked(on_row(Inner::double_click));
+    window.on_row_pressed(on_row(Inner::open_page_at));
     window.on_row_primary(on_row(Inner::primary_of));
     window.on_row_open(on_row(Inner::open_of));
     window.on_row_edit(on_row(Inner::edit_of));
     window.on_row_delete(on_row(Inner::ask_to_delete_at));
+
+    window.on_page_back(on(Inner::close_page));
+    window.on_page_primary(on(Inner::activate_selected));
+    window.on_page_edit(on(Inner::edit_selected));
+    window.on_page_delete(on(Inner::delete_selected));
+    window.on_open_page_selected(on(Inner::open_page_selected));
 
     window.on_activate_selected(on(Inner::activate_selected));
     window.on_open_selected(on(Inner::open_selected));
@@ -450,24 +462,35 @@ impl Inner {
         list.items().into_iter().find(|item| &item.key == selected)
     }
 
-    fn select(&self, index: usize) {
-        self.list.borrow_mut().select_place(index);
+    /// A click on a row: it is selected, and its page shows. While the page is up, the selection is
+    /// what it shows, so that the keys and the page's buttons act on it.
+    fn open_page_at(&self, index: usize) {
+        let key = {
+            let mut list = self.list.borrow_mut();
+            list.select_place(index);
+            list.selected().cloned()
+        };
+        if key.is_some() {
+            *self.page.borrow_mut() = key;
+            self.make_room();
+        }
         self.refresh();
     }
 
-    fn double_click(&self, index: usize) {
-        let Some(Item {
-            body: Body::Profile(row),
-            ..
-        }) = self.item(index)
-        else {
-            return;
-        };
-        if self.open(&row) {
-            return;
+    fn open_page_selected(&self) {
+        let key = self.list.borrow().selected().cloned();
+        if key.is_some() {
+            *self.page.borrow_mut() = key;
+            self.make_room();
+            self.refresh();
         }
-        if matches!(row.primary, Primary::Mount | Primary::Retry) {
-            self.primary(&row);
+    }
+
+    fn close_page(&self) {
+        if self.page.borrow_mut().take().is_some() {
+            self.room_follows_pages();
+            self.refresh();
+            self.keep_selection_in_view();
         }
     }
 
@@ -597,6 +620,12 @@ impl Inner {
         if !yes {
             return;
         }
+        // An unreadable entry is known by its place, which the next one takes once it is gone.
+        if self.page.borrow().is_some() && *self.page.borrow() == key {
+            *self.page.borrow_mut() = None;
+            self.room_follows_pages();
+            self.refresh();
+        }
         let command = match key {
             Some(Key::Profile(id)) => Some(UiCommand::Delete(id)),
             Some(Key::Unreadable(place)) => {
@@ -712,10 +741,30 @@ impl Inner {
         window.set_selected_top(selected_top);
         window.set_selected_height(selected_height);
         window.set_no_connections(list.is_empty());
+
+        // The page goes with what it shows.
+        let shown = self
+            .page
+            .borrow()
+            .as_ref()
+            .and_then(|key| items.iter().find(|item| &item.key == key));
+        match shown {
+            Some(item) => {
+                window.set_page_view(page_view(&texts, &list, item));
+                window.set_page_open(true);
+            }
+            None => {
+                window.set_page_open(false);
+            }
+        }
+        let gone = shown.is_none();
         window.set_can_add(list.can_add());
         window.set_can_mount_all(!list.mountable().is_empty());
         window.set_can_unmount_all(!list.unmountable().is_empty());
 
+        if gone && self.page.borrow_mut().take().is_some() {
+            self.room_follows_pages();
+        }
         let counts = list.counts();
         let number = |value: usize| i32::try_from(value).unwrap_or(i32::MAX);
         let parts: Vec<SharedString> = [
@@ -811,6 +860,73 @@ fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntr
             ..placed
         },
     }
+}
+
+/// The connection page's view of a list item.
+fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
+    let entry = list_entry(texts, item, 0.0, 0.0);
+    let mut view = PageView {
+        kind: entry.kind,
+        name: entry.name,
+        status: entry.status,
+        letter: entry.letter,
+        primary: entry.primary,
+        primary_enabled: entry.primary_enabled,
+        can_open: entry.can_open,
+        can_edit: entry.can_edit,
+        can_delete: entry.can_delete,
+        ..PageView::default()
+    };
+    match &item.body {
+        Body::Profile(row) => {
+            match &row.line {
+                Line::None => {}
+                Line::Failed(error) => {
+                    let shown = shown_error(texts, error);
+                    view.problem = shown.text;
+                    view.problem_hint = shown.hint;
+                    view.problem_is_error = true;
+                }
+                line => {
+                    let (text, is_problem) = line_text(texts, line);
+                    view.problem = text;
+                    view.problem_is_error = is_problem;
+                }
+            }
+            if let Some(profile) = list.profile(row.id) {
+                let details = Details::of(profile);
+                view.host = details.host.into();
+                view.port = details.port.to_string().into();
+                view.user = details.user.into();
+                view.login = match details.login {
+                    Login::Password => LoginKind::Password,
+                    Login::KeyFile(path) => {
+                        view.key_file = path.into();
+                        LoginKind::KeyFile
+                    }
+                    Login::Agent => LoginKind::Agent,
+                    Login::Ask => LoginKind::Ask,
+                };
+                view.remote_path = details.remote_path.into();
+                view.drive = details
+                    .drive
+                    .map(|letter| letter.to_string())
+                    .unwrap_or_default()
+                    .into();
+                view.jump_host = details.jump_host.into();
+                view.mount_on_start = details.mount_on_start;
+                view.auto_reconnect = details.auto_reconnect;
+                view.read_only = details.read_only;
+                view.cache = details.cache_secs.to_string().into();
+                view.keep_alive = details.keepalive_secs.to_string().into();
+            }
+        }
+        Body::Unreadable { .. } => {
+            view.problem = entry.line;
+            view.problem_is_error = true;
+        }
+    }
+    view
 }
 
 fn line_text(texts: &Texts<'_>, line: &Line) -> (SharedString, bool) {

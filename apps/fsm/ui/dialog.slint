@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The Add/Edit dialog (spec 7.2). It lives in the main window, with the window dimmed behind it, as
-// the delete question does. `fsm_app::ui::form` says what is wrong with what is typed: this file only
+// The Add/Edit page (spec 7.2). It takes the list's place in the main window, as the connection page
+// does, and looks like it with boxes in place of the values. `fsm_app::ui::form` says what is wrong with what is typed: this file only
 // draws that, and reports that something changed.
 
-import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView } from "std-widgets.slint";
-import { Colours } from "rows.slint";
+import { CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
+import { Theme, Icons, AppButton, Card } from "theme.slint";
 
 export enum AuthChoice { key-file, password, agent, ask }
 export enum KeyFileBox { profile, jump, login }
@@ -80,7 +80,7 @@ component FormRow {
 
         VerticalLayout {
             alignment: start;
-            width: 88px;
+            width: 130px;
 
             Rectangle {
                 height: 32px;
@@ -89,6 +89,8 @@ component FormRow {
                     x: 0;
                     width: parent.width;
                     text: root.label;
+                    font-size: Theme.page-size;
+                    color: Theme.text-muted;
                     vertical-alignment: center;
                     accessible-role: none;
                 }
@@ -107,13 +109,13 @@ component FormRow {
 
             if root.problem != "": Text {
                 text: root.problem;
-                color: Colours.red;
+                color: Theme.red;
                 wrap: word-wrap;
             }
 
             if root.warning != "": Text {
                 text: root.warning;
-                color: Colours.amber;
+                color: Theme.amber;
                 wrap: word-wrap;
             }
         }
@@ -172,13 +174,13 @@ component Radio {
                     height: 16px;
                     border-radius: 8px;
                     border-width: scope.has-focus ? 2px : 1px;
-                    border-color: root.enabled ? Palette.foreground : Palette.border;
+                    border-color: root.enabled ? Theme.text-muted : Theme.border;
 
                     if root.checked: Rectangle {
                         width: 8px;
                         height: 8px;
                         border-radius: 4px;
-                        background: root.enabled ? Palette.accent-background : Palette.border;
+                        background: root.enabled ? Theme.accent : Theme.border;
                     }
                 }
             }
@@ -186,7 +188,7 @@ component Radio {
             Text {
                 text: root.text;
                 vertical-alignment: center;
-                color: root.enabled ? Palette.foreground : Palette.border;
+                color: root.enabled ? Theme.text : Theme.text-disabled;
                 accessible-role: none;
             }
         }
@@ -222,46 +224,67 @@ export component ProfileDialog {
         name-box.focus();
     }
 
-    // Nothing behind it can be reached by mouse.
-    TouchArea { }
+    VerticalLayout {
+        padding: 16px;
+        padding-top: 8px;
+        padding-bottom: 12px;
+        spacing: 10px;
 
-    Rectangle {
-        background: #00000060;
-    }
+        // The header, as on the connection page.
+        HorizontalLayout {
+            spacing: 12px;
 
-    Rectangle {
-        width: min(parent.width - 24px, 480px);
-        height: min(parent.height - 24px, 580px);
-        border-radius: 8px;
-        border-width: 1px;
-        border-color: Palette.border;
-        background: Palette.background;
+            VerticalLayout {
+                alignment: center;
 
-        VerticalLayout {
-            padding: 16px;
-            padding-right: 8px;
-            spacing: 8px;
-
-            Text {
-                text: root.view.title;
-                font-size: 16px;
-                font-weight: 600;
+                AppButton {
+                    icon: Icons.arrow-left;
+                    icon-only: true;
+                    icon-size: 20px;
+                    text: @tr("Back");
+                    enabled: root.interactive && !root.view.saving;
+                    clicked => {
+                        root.cancel();
+                    }
+                }
             }
 
-            if root.view.locked: Text {
-                text: @tr("Unmount to change");
-                color: Colours.amber;
-                wrap: word-wrap;
-            }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                spacing: 2px;
 
-            ScrollView {
-                vertical-stretch: 1;
-                content-width: self.visible-width;
-                content-height: column.preferred-height;
+                Text {
+                    text: root.view.title;
+                    font-size: 18px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    overflow: elide;
+                }
+
+                if root.view.locked: Text {
+                    text: @tr("Unmount to change");
+                    font-size: Theme.small-size;
+                    color: Theme.amber;
+                }
+            }
+        }
+
+        // As high as the card, so that the buttons come right under it, and less when it does not fit.
+        ScrollView {
+            vertical-stretch: 0;
+            preferred-height: card.preferred-height + 2px;
+            content-width: self.visible-width;
+            content-height: card.preferred-height + 2px;
+
+            card := Card {
+                width: parent.width;
+                height: self.preferred-height;
 
                 column := VerticalLayout {
-                    width: parent.width;
-                    padding-right: 8px;
+                    padding: 12px;
+                    padding-left: 16px;
+                    padding-right: 16px;
                     spacing: 6px;
                     alignment: start;
 
@@ -391,9 +414,9 @@ export component ProfileDialog {
                             }
                         }
 
-                        Button {
-                            text: "…";
-                            horizontal-stretch: 0;
+                        AppButton {
+                            icon: Icons.folder-open;
+                            icon-only: true;
                             enabled: root.editable;
                             accessible-label: @tr("Choose key file");
                             clicked => {
@@ -484,9 +507,9 @@ export component ProfileDialog {
                     HorizontalLayout {
                         alignment: start;
 
-                        Button {
-                            // Not the mock-up's arrow, which is in no font Slint falls back to on Windows 10.
-                            text: (root.advanced-open ? "– " : "+ ") + @tr("Advanced");
+                        AppButton {
+                            icon: root.advanced-open ? Icons.chevron-down : Icons.chevron-right;
+                            text: @tr("Advanced");
                             enabled: root.interactive;
                             accessible-label: @tr("Advanced");
                             clicked => {
@@ -538,9 +561,9 @@ export component ProfileDialog {
                                 }
                             }
 
-                            Button {
-                                text: "…";
-                                horizontal-stretch: 0;
+                            AppButton {
+                                icon: Icons.folder-open;
+                                icon-only: true;
                                 enabled: root.editable;
                                 accessible-label: @tr("Choose jump host key file");
                                 clicked => {
@@ -617,61 +640,63 @@ export component ProfileDialog {
                     }
                 }
             }
+        }
 
-            HorizontalLayout {
-                padding-right: 8px;
-                spacing: 8px;
+        HorizontalLayout {
+            spacing: 8px;
 
-                test-button := Button {
-                    horizontal-stretch: 0;
-                    text: root.view.testing ? @tr("Cancel test") : @tr("Test connection");
-                    enabled: root.interactive && (root.view.testing || root.view.can-test);
-                    clicked => {
-                        if (root.view.testing) {
-                            root.cancel-test();
-                        } else {
-                            root.test();
-                        }
+            test-button := AppButton {
+                horizontal-stretch: 0;
+                text: root.view.testing ? @tr("Cancel test") : @tr("Test connection");
+                enabled: root.interactive && (root.view.testing || root.view.can-test);
+                clicked => {
+                    if (root.view.testing) {
+                        root.cancel-test();
+                    } else {
+                        root.test();
                     }
-                }
-
-                Text {
-                    text: root.view.test-text;
-                    color: root.view.test-failed ? Colours.red : Palette.foreground;
-                    wrap: word-wrap;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
                 }
             }
 
-            if root.view.message != "": Text {
-                text: root.view.message;
-                color: Colours.red;
+            Text {
+                text: root.view.test-text;
+                color: root.view.test-failed ? Theme.red : Theme.text;
                 wrap: word-wrap;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
             }
+        }
 
-            HorizontalLayout {
-                padding-right: 8px;
-                alignment: end;
-                spacing: 8px;
+        if root.view.message != "": Text {
+            text: root.view.message;
+            color: Theme.red;
+            wrap: word-wrap;
+        }
 
-                Button {
-                    text: @tr("Cancel");
-                    enabled: root.interactive && !root.view.saving;
-                    clicked => {
-                        root.cancel();
-                    }
-                }
+        HorizontalLayout {
+            alignment: end;
+            spacing: 8px;
 
-                Button {
-                    text: @tr("Save");
-                    primary: true;
-                    enabled: root.interactive && root.view.can-save;
-                    clicked => {
-                        root.save();
-                    }
+            AppButton {
+                text: @tr("Cancel");
+                enabled: root.interactive && !root.view.saving;
+                clicked => {
+                    root.cancel();
                 }
             }
+
+            AppButton {
+                text: @tr("Save");
+                primary: true;
+                enabled: root.interactive && root.view.can-save;
+                clicked => {
+                    root.save();
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
         }
     }
 }

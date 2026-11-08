@@ -2,6 +2,20 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-08: UI redesign (owner's request, not a plan task)
+
+**Status: done, committed on `main`.** `fmt`, `clippy --workspace -D warnings`, the SPDX check and `cargo test -p fsm` pass (170 unit tests, up from 161). Screenshots of `examples/main_window.rs` (list light and dark, empty, the connection page, the Add page) were taken and shown to the owner.
+
+- **Size limit raised to 30 MB (NFR-PERF-03)** by the owner, to leave room for the UI and later features. `scripts/check-exe-size.ps1`, the spec and the README follow. `fsm.exe` is now 15.27 MB (+0.40 MB for the font, icons and page), so it would have broken the old limit.
+- **Look (spec §7):** a warm palette (`ui/theme.slint`), **Inter** Regular and SemiBold embedded (OFL, subset with `pyftsubset` to Latin and Latin Extended-A, 107 KB for both), 15 px text, and **Lucide** icons (ISC, 17 SVGs). The window's buttons are our own `AppButton`, while Fluent's text boxes, check boxes and drop-downs keep its blue focus line.
+- **One-line rows:** status icon, name, button, letter. A click on a row opens the new **connection page** (§7.1.1), which replaces the list. It holds the state, the full error with what to do, the settings, *Edit* and *Delete*. The `···` button and double-click are gone. Space or Ctrl+I opens the page from the keyboard, and Esc leaves it. The address and any problem also show in a tooltip after 0.7 s. Its timer runs only while a row is hovered and the tip is not yet up.
+- **Second round, from the owner's review:** the accent is grey-blue (`#44678C`, dark `#5B83B0`). The toolbar's *Add* is always there and the empty state has no button. The page has no *Open in Explorer* button (Ctrl+Enter and the menu remain). It is tighter (14 px, 5 px padding), with its buttons right under the card. The rows have 1 px separators. **The Add/Edit dialog is now a page** in the list's place, built like the connection page. `dialog.rs` is unchanged but for the room: both pages grow the window to 600 × 680, and it goes back once neither is up.
+- **For the owner to check:**
+  - The tooltip, by eye. The screenshots have no pointer over a row.
+  - The page at 150 % scaling.
+  - The page closes as soon as the delete question is answered *Delete*. If the engine then fails the delete, the row stays and the existing banner says why, but the page does not come back.
+- **Not done:** the third-party licence file does not exist yet (NFR-LIC-04, M2). Inter's and Lucide's licences must go in it.
+
 ## 2026-11-06: M1-18 App wiring (branch `feat/m1-18-app-wiring`)
 
 **Status: done locally, not yet committed; the CI workflow has still never run** (H-02, S-05). `fmt`, `clippy`, `deny`, `audit`, `test` and both script checks pass on Windows. `clippy` and `test` for `fsm-core` and `fsm` also pass in a `rust:1.99.1` container. The workspace has 940 passing and 149 ignored. `fsm`'s 161 unit tests passed 6 runs of 6, one of them on one thread. Against the S-03 server, `tests/mount_one.rs` (7), `tests/fsm_exe.rs` (2) and `tests/real_drive.rs` (6) pass. **Not run:** the other ignored server and desktop tests, as nothing they use changed. `Cargo.lock` gains `tracing-appender`, `tracing-subscriber` and what they need, and no version of anything already there changed.

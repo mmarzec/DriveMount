@@ -3,13 +3,18 @@
 // The main window (spec 7.1), and its keys (spec 7.7). `fsm_app::ui` holds what it means: this file
 // only draws what it is given, and reports what was pressed.
 
-import { Button, Palette, ScrollView } from "std-widgets.slint";
+import "fonts/Inter-Regular.ttf";
+import "fonts/Inter-SemiBold.ttf";
+
+import { Palette, ScrollView } from "std-widgets.slint";
+import { Theme, Icons, Icon, AppButton, Card } from "theme.slint";
 import { EntryKind, ListEntry, PrimaryAction, ProfileRow, RowStatus } from "rows.slint";
+import { LoginKind, PageView, ConnectionPage } from "connection_page.slint";
 import { Texts } from "texts.slint";
 import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog } from "dialog.slint";
 import { PromptInput, PromptKind, PromptPanel, PromptView } from "prompts.slint";
 
-export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, Texts }
+export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, Texts }
 
 export enum ThemeChoice { system, light, dark }
 
@@ -23,32 +28,50 @@ component Banner {
     accessible-role: groupbox;
     accessible-label: text;
 
-    Rectangle {
-        background: Palette.alternate-background;
-    }
-
     HorizontalLayout {
-        padding: 8px;
         padding-left: 12px;
-        spacing: 12px;
+        padding-right: 12px;
+        padding-bottom: 8px;
 
-        Text {
-            text: "⚠ " + root.text;
-            wrap: word-wrap;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-            accessible-role: none;
-        }
+        Rectangle {
+            border-radius: Theme.radius;
+            background: Theme.amber-tint;
 
-        if root.button-text != "": VerticalLayout {
-            alignment: center;
-            horizontal-stretch: 0;
+            HorizontalLayout {
+                padding: 10px;
+                padding-left: 12px;
+                spacing: 10px;
 
-            Button {
-                text: root.button-text;
-                enabled: root.interactive;
-                clicked => {
-                    root.clicked();
+                VerticalLayout {
+                    alignment: center;
+
+                    Icon {
+                        source: Icons.triangle-alert;
+                        colour: Theme.amber;
+                        size: 18px;
+                    }
+                }
+
+                Text {
+                    text: root.text;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    accessible-role: none;
+                }
+
+                if root.button-text != "": VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 0;
+
+                    AppButton {
+                        text: root.button-text;
+                        enabled: root.interactive;
+                        clicked => {
+                            root.clicked();
+                        }
+                    }
                 }
             }
         }
@@ -61,6 +84,9 @@ export component MainWindow inherits Window {
     preferred-height: 420px;
     min-width: 480px;
     min-height: 320px;
+    background: Theme.bg;
+    default-font-family: "Inter";
+    default-font-size: 15px;
 
     // The list.
     in property <[ListEntry]> entries;
@@ -71,6 +97,10 @@ export component MainWindow inherits Window {
     // Whether there is nothing to list at all.
     in property <bool> no-connections;
     in property <string> status-text;
+
+    // The connection page, in place of the list.
+    in property <bool> page-open;
+    in property <PageView> page-view;
 
     // What is allowed.
     in property <bool> can-add: true;
@@ -109,16 +139,22 @@ export component MainWindow inherits Window {
     callback settings-pressed();
     callback download-winfsp-pressed();
 
+    // A click on a row, which opens its page.
     callback row-pressed(index: int);
-    callback row-double-clicked(index: int);
     callback row-primary(index: int);
     callback row-open(index: int);
     callback row-edit(index: int);
     callback row-delete(index: int);
 
+    callback page-back();
+    callback page-primary();
+    callback page-edit();
+    callback page-delete();
+
     callback move-selection(delta: int);
     callback activate-selected();
     callback open-selected();
+    callback open-page-selected();
     callback edit-selected();
     callback delete-selected();
     callback hide-pressed();
@@ -177,7 +213,30 @@ export component MainWindow inherits Window {
     property <bool> refocus-dialog;
     property <bool> asking: root.question != "";
     property <bool> interactive: !root.asking && !root.dialog-open && !root.prompt-open;
+    // Neither the connection page nor the Add/Edit page is in the list's place.
+    property <bool> showing-list: !root.page-open && !root.dialog-open;
     out property <bool> is-dark: Palette.color-scheme == ColorScheme.dark;
+
+    // The tooltip of the row under the mouse. Its timer runs only while a row is hovered and the tip
+    // is not yet up, so nothing wakes up at idle (NFR-PERF-05).
+    property <int> tip-index: -1;
+    property <bool> tip-shown;
+    property <length> tip-top;
+    property <length> tip-bottom;
+    property <bool> tip-wanted: root.tip-index >= 0 && root.tip-index < root.entries.length
+        && root.interactive && !root.page-open;
+    property <string> tip-text: !root.tip-wanted ? ""
+        : root.entries[root.tip-index].address
+            + (root.entries[root.tip-index].address != "" && root.entries[root.tip-index].line != "" ? "\n" : "")
+            + root.entries[root.tip-index].line;
+
+    Timer {
+        interval: 700ms;
+        running: root.tip-wanted && !root.tip-shown;
+        triggered => {
+            root.tip-shown = true;
+        }
+    }
 
     init => {
         keys.focus();
@@ -209,14 +268,19 @@ export component MainWindow inherits Window {
                 return reject;
             }
             if (event.text == Key.Escape) {
-                root.hide-pressed();
+                if (root.page-open) {
+                    root.page-back();
+                    keys.focus();
+                } else {
+                    root.hide-pressed();
+                }
                 return accept;
             }
-            if (event.text == Key.UpArrow) {
+            if (!root.page-open && event.text == Key.UpArrow) {
                 root.move-selection(-1);
                 return accept;
             }
-            if (event.text == Key.DownArrow) {
+            if (!root.page-open && event.text == Key.DownArrow) {
                 root.move-selection(1);
                 return accept;
             }
@@ -227,6 +291,10 @@ export component MainWindow inherits Window {
                 }
                 if (event.text == "e" || event.text == "E") {
                     root.edit-selected();
+                    return accept;
+                }
+                if (event.text == "i" || event.text == "I") {
+                    root.open-page-selected();
                     return accept;
                 }
                 if (event.text == Key.Return) {
@@ -244,13 +312,17 @@ export component MainWindow inherits Window {
             return reject;
         }
 
-        // What the focused control did not want, so that Enter stays a focused button's.
+        // What the focused control did not want, so that Enter and Space stay a focused button's.
         key-pressed(event) => {
             if (!root.interactive) {
                 return reject;
             }
             if (event.text == Key.Return) {
                 root.activate-selected();
+                return accept;
+            }
+            if (event.text == " " && !root.page-open) {
+                root.open-page-selected();
                 return accept;
             }
             if (event.text == Key.Delete) {
@@ -261,16 +333,25 @@ export component MainWindow inherits Window {
         }
 
         VerticalLayout {
+            // The toolbar.
             HorizontalLayout {
-                padding: 8px;
+                padding: 12px;
+                padding-left: 16px;
                 spacing: 8px;
 
-                Rectangle {
+                Text {
+                    text: "FS Manager";
+                    font-size: 17px;
+                    font-weight: 600;
+                    color: Theme.text;
+                    vertical-alignment: center;
                     horizontal-stretch: 1;
+                    accessible-role: none;
                 }
 
-                Button {
-                    text: @tr("+ Add");
+                AppButton {
+                    icon: Icons.plus;
+                    text: @tr("Add");
                     enabled: root.interactive && root.can-add;
                     accessible-label: @tr("Add connection");
                     clicked => {
@@ -278,7 +359,9 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                Button {
+                AppButton {
+                    icon: Icons.play;
+                    icon-size: 16px;
                     text: @tr("Mount all");
                     enabled: root.interactive && root.can-mount-all;
                     clicked => {
@@ -286,7 +369,9 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                Button {
+                AppButton {
+                    icon: Icons.square;
+                    icon-size: 15px;
                     text: @tr("Unmount all");
                     enabled: root.interactive && root.can-unmount-all;
                     clicked => {
@@ -294,10 +379,12 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                Button {
-                    text: "⚙";
+                AppButton {
+                    icon: Icons.settings;
+                    icon-only: true;
+                    icon-size: 20px;
+                    text: @tr("Settings");
                     enabled: root.interactive;
-                    accessible-label: @tr("Settings");
                     clicked => {
                         root.settings-pressed();
                     }
@@ -329,17 +416,19 @@ export component MainWindow inherits Window {
                 vertical-stretch: 1;
 
                 list := ScrollView {
-                    enabled: root.interactive;
+                    visible: root.showing-list;
+                    enabled: root.interactive && root.showing-list;
                     content-width: self.visible-width;
                     content-height: root.list-height;
 
                     for entry[index] in root.entries: Rectangle {
                         y: entry.top;
-                        x: 4px;
-                        width: parent.width - 8px;
+                        x: 8px;
+                        width: parent.width - 16px;
                         height: entry.height;
 
-                        ProfileRow {
+                        // Gone while a page is up, so that only the page's buttons can be found.
+                        if root.showing-list: ProfileRow {
                             width: parent.width;
                             height: parent.height;
                             entry: entry;
@@ -348,11 +437,10 @@ export component MainWindow inherits Window {
                             position: index;
                             total: root.entries.length;
                             pressed => {
+                                root.tip-index = -1;
+                                root.tip-shown = false;
                                 root.row-pressed(index);
                                 keys.focus();
-                            }
-                            double-clicked => {
-                                root.row-double-clicked(index);
                             }
                             primary => {
                                 root.row-primary(index);
@@ -366,68 +454,177 @@ export component MainWindow inherits Window {
                             delete => {
                                 root.row-delete(index);
                             }
+                            hover-changed(hovering) => {
+                                if (hovering) {
+                                    root.tip-index = index;
+                                    root.tip-shown = false;
+                                    root.tip-top = self.absolute-position.y;
+                                    root.tip-bottom = self.absolute-position.y + self.height;
+                                } else if (root.tip-index == index) {
+                                    root.tip-index = -1;
+                                    root.tip-shown = false;
+                                }
+                            }
+                        }
+
+                        // A hairline between rows.
+                        if root.showing-list && index < root.entries.length - 1: Rectangle {
+                            x: 8px;
+                            y: parent.height - 1px;
+                            width: parent.width - 16px;
+                            height: 1px;
+                            background: Theme.border;
                         }
                     }
                 }
 
-                if root.no-connections: VerticalLayout {
+                if root.no-connections && root.showing-list: VerticalLayout {
                     alignment: center;
-                    spacing: 12px;
-
-                    Text {
-                        text: @tr("No connections yet.");
-                        horizontal-alignment: center;
-                    }
+                    spacing: 10px;
 
                     HorizontalLayout {
                         alignment: center;
 
-                        Button {
-                            text: @tr("Add connection");
-                            primary: true;
-                            enabled: root.interactive && root.can-add;
-                            clicked => {
-                                root.add-pressed();
-                            }
+                        Icon {
+                            source: Icons.hard-drive;
+                            size: 44px;
+                            colour: Theme.text-muted;
                         }
+                    }
+
+                    Text {
+                        text: @tr("No connections yet.");
+                        color: Theme.text;
+                        horizontal-alignment: center;
+                    }
+
+                    Text {
+                        text: @tr("Choose Add to set one up.");
+                        font-size: Theme.small-size;
+                        color: Theme.text-muted;
+                        horizontal-alignment: center;
+                    }
+                }
+
+                if root.page-open && !root.dialog-open: ConnectionPage {
+                    width: parent.width;
+                    height: parent.height;
+                    view: root.page-view;
+                    interactive: root.interactive;
+                    back => {
+                        root.page-back();
+                        keys.focus();
+                    }
+                    primary => {
+                        root.page-primary();
+                    }
+                    edit => {
+                        root.page-edit();
+                    }
+                    delete => {
+                        root.page-delete();
+                    }
+                }
+
+                if root.dialog-open: ProfileDialog {
+                    property <bool> refocus: root.refocus-dialog;
+
+                    width: parent.width;
+                    height: parent.height;
+                    form <=> root.form;
+                    marks: root.marks;
+                    view: root.dialog-view;
+                    drive-items: root.drive-items;
+                    advanced-open <=> root.advanced-open;
+                    interactive: !root.asking && !root.prompt-open;
+                    changed refocus => {
+                        self.focus-again();
+                    }
+                    edited => {
+                        root.form-edited();
+                    }
+                    host-edited(text) => {
+                        root.host-edited(text);
+                    }
+                    browse(which) => {
+                        root.browse-key-file(which);
+                    }
+                    test => {
+                        root.test-pressed();
+                    }
+                    cancel-test => {
+                        root.cancel-test-pressed();
+                    }
+                    save => {
+                        root.save-pressed();
+                    }
+                    cancel => {
+                        root.dialog-cancelled();
                     }
                 }
             }
 
             Rectangle {
-                height: 28px;
-                background: Palette.alternate-background;
+                height: 30px;
+                background: Theme.sunken;
+
+                Rectangle {
+                    y: 0;
+                    height: 1px;
+                    background: Theme.border;
+                }
 
                 Text {
-                    x: 12px;
-                    width: parent.width - 24px;
+                    x: 16px;
+                    width: parent.width - 32px;
                     text: root.status-text;
+                    font-size: Theme.small-size;
+                    color: Theme.text-muted;
                     overflow: elide;
                     vertical-alignment: center;
                 }
             }
         }
 
+        if root.tip-shown && root.tip-wanted && root.tip-text != "": Rectangle {
+            property <length> below: root.tip-bottom + 4px;
+            property <bool> fits-below: self.below + self.height < root.height - 34px;
+
+            x: 56px;
+            y: self.fits-below ? self.below : root.tip-top - self.height - 4px;
+            width: min(tip-label.preferred-width + 24px, root.width - 72px);
+            height: tip-label.preferred-height + 14px;
+            border-radius: 6px;
+            background: Theme.dark ? #3E3D39 : #29261B;
+
+            tip-label := Text {
+                x: 12px;
+                width: parent.width - 24px;
+                text: root.tip-text;
+                font-size: Theme.small-size;
+                color: #F3F1EA;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+        }
+
         if root.asking: Rectangle {
-            background: #00000060;
+            background: Theme.scrim;
 
             // Nothing behind it can be reached by mouse, and everything there is disabled for Tab.
             TouchArea { }
 
-            Rectangle {
+            Card {
                 width: min(parent.width - 48px, 400px);
                 height: panel.preferred-height;
-                border-radius: 8px;
-                border-width: 1px;
-                border-color: Palette.border;
-                background: Palette.background;
 
                 panel := VerticalLayout {
-                    padding: 16px;
-                    spacing: 16px;
+                    padding: 20px;
+                    spacing: 18px;
 
                     Text {
                         text: root.question;
+                        color: Theme.text;
                         wrap: word-wrap;
                     }
 
@@ -435,8 +632,9 @@ export component MainWindow inherits Window {
                         alignment: end;
                         spacing: 8px;
 
-                        Button {
+                        AppButton {
                             text: @tr("Delete");
+                            danger: true;
                             enabled: !root.prompt-open;
                             clicked => {
                                 root.question-answered(true);
@@ -445,7 +643,7 @@ export component MainWindow inherits Window {
                         }
 
                         // The safe answer is the one Enter gives.
-                        no := Button {
+                        no := AppButton {
                             text: @tr("Cancel");
                             enabled: !root.prompt-open;
                             init => {
@@ -458,43 +656,6 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-            }
-        }
-
-        if root.dialog-open: ProfileDialog {
-            property <bool> refocus: root.refocus-dialog;
-
-            width: parent.width;
-            height: parent.height;
-            form <=> root.form;
-            marks: root.marks;
-            view: root.dialog-view;
-            drive-items: root.drive-items;
-            advanced-open <=> root.advanced-open;
-            interactive: !root.asking && !root.prompt-open;
-            changed refocus => {
-                self.focus-again();
-            }
-            edited => {
-                root.form-edited();
-            }
-            host-edited(text) => {
-                root.host-edited(text);
-            }
-            browse(which) => {
-                root.browse-key-file(which);
-            }
-            test => {
-                root.test-pressed();
-            }
-            cancel-test => {
-                root.cancel-test-pressed();
-            }
-            save => {
-                root.save-pressed();
-            }
-            cancel => {
-                root.dialog-cancelled();
             }
         }
 

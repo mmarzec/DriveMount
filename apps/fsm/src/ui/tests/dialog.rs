@@ -213,6 +213,34 @@ fn the_window_grows_for_the_dialog_and_goes_back_after() {
     assert_eq!(window.size().to_logical(scale), before);
 }
 
+/// The connection page has the same room, and editing from it keeps that room until the page goes too.
+#[test]
+fn the_window_grows_for_the_connection_page_and_keeps_it_for_editing() {
+    let fixture = Fixture::new(vec![profile("A")]);
+    let window = fixture.ui.window().window();
+    let scale = window.scale_factor();
+    let before = window.size().to_logical(scale);
+
+    fixture.key(Key::DownArrow);
+    fixture.key(" ");
+    assert!(fixture.ui.window().get_page_open());
+    let grown = window.size().to_logical(scale);
+    assert!(grown.height >= 600.0, "{grown:?}");
+
+    fixture.ctrl("e");
+    assert!(fixture.dialog_is_open());
+    fixture.key(Key::Escape);
+    assert_eq!(
+        window.size().to_logical(scale),
+        grown,
+        "the page is still up"
+    );
+
+    fixture.key(Key::Escape);
+    assert!(!fixture.ui.window().get_page_open());
+    assert_eq!(window.size().to_logical(scale), before);
+}
+
 #[test]
 fn a_window_the_user_resized_meanwhile_stays_as_they_left_it() {
     let fixture = Fixture::new(Vec::new());
@@ -236,7 +264,8 @@ fn nothing_behind_the_dialog_can_be_reached_by_keys() {
     fixture.key(Key::UpArrow);
     assert_eq!(fixture.ui.window().get_question(), "");
     assert!(fixture.take_sent().is_empty());
-    assert!(!fixture.is_enabled("Mount A"));
+    // The page is in the list's place, so the rows are not there to be reached.
+    assert!(fixture.labelled("Mount A").is_none());
     assert!(!fixture.is_enabled("Mount all"));
     fixture.key(Key::Escape);
     assert!(fixture.is_enabled("Mount A"));

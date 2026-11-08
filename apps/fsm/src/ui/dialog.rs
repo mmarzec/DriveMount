@@ -34,9 +34,10 @@ use super::generated::{
 use super::prompts::{Entry, Mailbox, Posted, Question, round_message};
 use super::{Inner, MainWindow, TypedSecrets, UiCommand};
 
-/// What the dialog needs to have room for without scrolling, with Advanced closed.
-const ROOM_WIDTH: f32 = 520.0;
-const ROOM_HEIGHT: f32 = 620.0;
+/// What the Add/Edit page and the connection page need to have room for without scrolling, with
+/// Advanced closed and the toolbar and status bar around them.
+const ROOM_WIDTH: f32 = 600.0;
+const ROOM_HEIGHT: f32 = 680.0;
 /// Below the window's own area: its title bar, and the task bar, which winit counts as part of the
 /// monitor.
 const ROOM_BELOW: f32 = 96.0;
@@ -132,7 +133,7 @@ impl Inner {
         window.set_form(DialogForm::default());
         window.set_marks(DialogMarks::default());
         window.set_dialog_view(DialogView::default());
-        self.give_room_back();
+        self.room_follows_pages();
         window.invoke_focus_list();
         if let Some(attempt) = dialog.testing {
             self.send(UiCommand::CancelTest { attempt });
@@ -573,9 +574,9 @@ impl Inner {
         }
     }
 
-    /// Makes the window big enough for the dialog to show without scrolling, as its default size is
-    /// not (spec §7.1, §7.2). It goes back when the dialog closes.
-    fn make_room(&self) {
+    /// Makes the window big enough for a page to show without scrolling, as its default size is not
+    /// (spec §7.1.1, §7.2). It goes back when the last page closes.
+    pub(super) fn make_room(&self) {
         let Some(window) = self.window.upgrade() else {
             return;
         };
@@ -610,6 +611,13 @@ impl Inner {
                 let y = (bottom - needed).max(monitor.position().y);
                 window.set_position(PhysicalPosition::new(position.x, y));
             }
+        }
+    }
+
+    /// Gives the room back once neither page is up.
+    pub(super) fn room_follows_pages(&self) {
+        if self.dialog.borrow().is_none() && self.page.borrow().is_none() {
+            self.give_room_back();
         }
     }
 

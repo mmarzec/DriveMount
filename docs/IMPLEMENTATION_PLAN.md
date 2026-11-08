@@ -229,7 +229,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 6. **AI measures:** cold start to first frame (logged), working set after 60 s, release exe size.
 7. **Manual checks (H-05):** tray menu, close-to-tray, toast click, sleep/resume. The AI then confirms the expected messages in the log.
 
-**Go:** all items work; start < 250 ms; working set < 40 MB; exe size leaves room under 15 MB.
+**Go:** all items work; start < 250 ms; working set < 40 MB; exe size leaves room under 15 MB (raised to 30 MB by the owner on 2026-11-08).
 
 **Fallbacks:**
 - raw `Shell_NotifyIcon` in `fsm-win`;

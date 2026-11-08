@@ -153,7 +153,7 @@ pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
 }
 
 /// `[user@]host[:port]`, as the Jump host box takes it, with no port if it is the usual one.
-fn jump_text(jump: &JumpHost) -> String {
+pub(super) fn jump_text(jump: &JumpHost) -> String {
     let user = jump
         .username
         .as_ref()

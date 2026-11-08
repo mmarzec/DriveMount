@@ -79,7 +79,7 @@ cargo deny --locked check
 cargo audit
 sh scripts/check-spdx.sh
 sh scripts/check-secret-format.sh
-scripts\check-exe-size.ps1    # after a release build; fsm.exe must stay under 15 MB
+scripts\check-exe-size.ps1    # after a release build; fsm.exe must stay under 30 MB
 ```
 
 ### Conventions

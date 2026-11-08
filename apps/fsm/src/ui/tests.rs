@@ -201,10 +201,10 @@ fn a_row_fills_the_list_and_lines_up_with_the_others() {
     assert!(first.size().width > 600.0, "{:?}", first.size());
     assert_eq!(first.absolute_position().x, second.absolute_position().x);
     assert_eq!(first.size().width, second.size().width);
-    assert_eq!(first.size().height, 40.0);
+    assert_eq!(first.size().height, 44.0);
     assert_eq!(
         second.absolute_position().y - first.absolute_position().y,
-        40.0
+        44.0
     );
 }
 
@@ -562,31 +562,177 @@ fn a_file_entry_that_cannot_be_read_has_a_row_and_can_only_be_deleted() {
 }
 
 #[test]
-fn a_click_selects_and_a_double_click_mounts_or_opens() {
+fn a_click_opens_the_page_and_back_or_escape_return_to_the_list() {
     let list = profiles(&["a", "b"]);
-    let id = list[0].id;
+    let id = list[1].id;
     let fixture = Fixture::new(list);
+    let window = fixture.ui.window();
 
     fixture.click_at(&fixture.row("b"), 1);
-    assert_eq!(fixture.ui.window().get_selected_index(), 1);
+    assert!(window.get_page_open());
+    assert_eq!(window.get_page_view().name, "b");
+    assert_eq!(window.get_selected_index(), 1);
     assert!(fixture.take_sent().is_empty());
-    // Taking the focus back is what lets the keys work after using the mouse.
-    fixture.key(Key::UpArrow);
-    assert_eq!(fixture.ui.window().get_selected_index(), 0);
+    // The rows are gone while the page is up, so its buttons are the only ones of their name.
+    assert!(fixture.labelled("Mount a").is_none());
 
-    fixture.click_at(&fixture.row("a"), 2);
+    fixture.press("Mount b");
     assert_eq!(fixture.take_sent(), [UiCommand::Mount(id)]);
+    fixture.key(Key::Return);
+    assert_eq!(fixture.take_sent(), [UiCommand::Mount(id)]);
+    // The arrows do not move what the page shows.
+    fixture.key(Key::UpArrow);
+    assert_eq!(window.get_page_view().name, "b");
 
-    fixture.set_state(id, MountState::Connecting, None);
-    fixture.click_at(&fixture.row("a"), 2);
-    assert!(fixture.take_sent().is_empty(), "already on its way");
+    fixture.key(Key::Escape);
+    assert!(!window.get_page_open());
+    assert!(
+        fixture.take_sent().is_empty(),
+        "Esc on the page does not hide the window"
+    );
 
-    fixture.set_state(id, MountState::Mounted, Some('Z'));
-    fixture.click_at(&fixture.row("a"), 2);
+    fixture.click_at(&fixture.row("a"), 1);
+    assert!(window.get_page_open());
+    fixture.press("Back");
+    assert!(!window.get_page_open());
+    assert_eq!(window.get_selected_index(), 0);
+}
+
+#[test]
+fn a_click_on_a_rows_button_does_not_open_the_page() {
+    let saved = profile("a");
+    let id = saved.id;
+    let fixture = Fixture::new(vec![saved]);
+    let button = fixture.labelled("Mount a").unwrap();
+    let at = button.absolute_position();
+    let size = button.size();
+    let position = LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+    fixture.dispatch(WindowEvent::PointerMoved { position });
+    fixture.dispatch(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Left,
+    });
+    fixture.dispatch(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Left,
+    });
+    assert_eq!(fixture.take_sent(), [UiCommand::Mount(id)]);
+    assert!(!fixture.ui.window().get_page_open());
+}
+
+#[test]
+fn space_and_ctrl_i_open_the_page_of_the_selection() {
+    let fixture = Fixture::new(profiles(&["a", "b"]));
+    let window = fixture.ui.window();
+    fixture.key(" ");
+    assert!(!window.get_page_open(), "nothing is selected");
+
+    fixture.key(Key::DownArrow);
+    fixture.key(" ");
+    assert!(window.get_page_open());
+    assert_eq!(window.get_page_view().name, "a");
+    fixture.key(Key::Escape);
+
+    fixture.key(Key::DownArrow);
+    fixture.ctrl("i");
+    assert_eq!(window.get_page_view().name, "b");
+}
+
+#[test]
+fn the_page_shows_the_settings_and_follows_the_state() {
+    let mut saved = profile("Prod");
+    saved.drive = DriveChoice::Letter(letter('X'));
+    let id = saved.id;
+    let fixture = Fixture::new(vec![saved]);
+    let window = fixture.ui.window();
+    fixture.click_at(&fixture.row("Prod"), 1);
+
+    let view = window.get_page_view();
+    assert_eq!(view.host, "host");
+    assert_eq!(view.port, "22");
+    assert_eq!(view.user, "me");
+    assert_eq!(view.login, super::LoginKind::Agent);
+    assert_eq!(view.drive, "X:");
+    assert_eq!(view.problem, "");
+
+    fixture.set_state(id, MountState::Mounted, Some('X'));
+    assert_eq!(window.get_page_view().status, RowStatus::Mounted);
+    // The page has no button for it, but the key works there as on the list.
+    assert!(fixture.labelled("Open in Explorer").is_none());
+    fixture.ctrl(Key::Return);
     assert_eq!(
         fixture.take_sent(),
-        [UiCommand::OpenInExplorer(letter('Z'))]
+        [UiCommand::OpenInExplorer(letter('X'))]
     );
+
+    fixture.set_state(
+        id,
+        MountState::Error(MountError::LetterTaken(letter('X'))),
+        None,
+    );
+    let view = window.get_page_view();
+    assert_eq!(view.problem, "Drive X: is already in use.");
+    assert_eq!(
+        view.problem_hint,
+        "Choose another letter or set Drive to Auto."
+    );
+    assert!(view.problem_is_error);
+    fixture.press("Retry Prod");
+    assert_eq!(fixture.take_sent(), [UiCommand::Mount(id)]);
+}
+
+#[test]
+fn edit_and_delete_on_the_page_act_on_its_profile() {
+    let list = profiles(&["a", "b"]);
+    let id = list[1].id;
+    let fixture = Fixture::new(list);
+    let window = fixture.ui.window();
+    fixture.click_at(&fixture.row("b"), 1);
+
+    fixture.press("Edit b");
+    assert!(window.get_dialog_open());
+    assert_eq!(window.get_form().name, "b");
+    fixture.key(Key::Escape);
+    assert!(
+        window.get_page_open(),
+        "the page is still behind the dialog"
+    );
+    fixture.take_sent();
+
+    fixture.press("Delete b");
+    assert!(window.get_question().contains("\"b\""));
+    fixture.press("Delete");
+    assert_eq!(fixture.take_sent(), [UiCommand::Delete(id)]);
+    assert!(!window.get_page_open());
+}
+
+#[test]
+fn the_page_closes_when_its_profile_goes() {
+    let list = profiles(&["a", "b"]);
+    let fixture = Fixture::new(list.clone());
+    fixture.click_at(&fixture.row("b"), 1);
+    assert!(fixture.ui.window().get_page_open());
+    fixture.ui.set_config(Config {
+        profiles: vec![list[0].clone()],
+        ..Config::default()
+    });
+    assert!(!fixture.ui.window().get_page_open());
+}
+
+#[test]
+fn there_is_one_add_button_on_the_toolbar_whether_or_not_the_list_is_empty() {
+    let fixture = Fixture::new(Vec::new());
+    let adds =
+        ElementHandle::find_by_accessible_label(fixture.ui.window(), "Add connection").count();
+    assert_eq!(adds, 1, "the toolbar's, and none in the middle");
+    fixture.ui.set_config(Config {
+        profiles: profiles(&["a"]),
+        ..Config::default()
+    });
+    fixture.make_what_appeared();
+    let adds =
+        ElementHandle::find_by_accessible_label(fixture.ui.window(), "Add connection").count();
+    assert_eq!(adds, 1, "still only the toolbar's");
 }
 
 /// Otherwise Enter goes on pressing the button that had the focus, on another row.
@@ -644,7 +790,6 @@ fn every_button_has_a_name_for_screen_readers() {
     }
     // What is on each row's buttons says which row it is.
     assert!(labels.iter().any(|label| label == "Unmount a"));
-    assert!(labels.iter().any(|label| label == "More actions for b"));
     assert!(labels.iter().any(|label| label == "Settings"));
 }
 
