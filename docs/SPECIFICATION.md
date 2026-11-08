@@ -1,11 +1,11 @@
-# FS Manager: Software Specification
+# DriveMount: Software Specification
 
 | | |
 |---|---|
 | Document | Software specification |
 | Status | Draft 2 (licence decided: GPLv3) |
 | Date | 2026-11-03 |
-| Product | FS Manager (working title), executable `fsm.exe` |
+| Product | DriveMount (working title), executable `drivemount.exe` |
 | Companion | [ANALYSIS.md](ANALYSIS.md): reference program, problems, technology rationale |
 
 **Requirement keywords.** "Must" = required for the milestone. "Should" = expected unless there is a documented reason not to. "May" = optional.
@@ -16,7 +16,7 @@
 
 ### 1.1 Purpose
 
-FS Manager is a Windows desktop application that mounts remote disks as **drive letters**:
+DriveMount is a Windows desktop application that mounts remote disks as **drive letters**:
 - it keeps a list of connections;
 - it mounts or unmounts each one with a single click;
 - it restores mounts at start-up and after network drops;
@@ -66,7 +66,7 @@ It replaces tools such as NEO SSH-Win Manager with a native Rust program. That p
 
 ### 2.1 Typical use
 
-1. The user installs FS Manager. The installer checks for WinFsp and offers to install it.
+1. The user installs DriveMount. The installer checks for WinFsp and offers to install it.
 2. The user clicks **+ Add** and enters a host, user, authentication method, remote path and drive letter, then saves.
 3. The user clicks **Mount**. On first contact, the user confirms the server's key fingerprint. Drive `Z:` appears in Explorer under *Network locations* with the profile's name as its label.
 4. The user closes the window. The app stays in the tray, and the drive stays mounted.
@@ -96,7 +96,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-PROF-04 | M | All fields are validated before save (rules in §7.3). Invalid fields are marked inline and Save is disabled. | Each rule in §7.3 has a unit test. |
 | FR-PROF-05 | M | Pasting `user@host:port/path` or `sftp://user@host:port/path` into the Host field splits it into the matching fields. | Pasting `deploy@10.0.4.21:2222/var/www` fills user, host, port and path. |
 | FR-PROF-06 | M | **Test connection** connects, authenticates and checks that the remote path exists and is a directory, without mounting. It reports the result in the dialog: OK with round-trip time, or the error from §7.8. | Wrong password → "Authentication failed"; missing path → "Remote path not found". |
-| FR-PROF-07 | M | Deleting a profile also deletes its Credential Manager entries. A mounted profile is unmounted first, after confirmation. | After delete, no `FsManager:<uuid>:*` credentials remain. |
+| FR-PROF-07 | M | Deleting a profile also deletes its Credential Manager entries. A mounted profile is unmounted first, after confirmation. | After delete, no `DriveMount:<uuid>:*` credentials remain. |
 | FR-PROF-08 | M | While a profile is mounted, connection fields are read-only, with the hint "Unmount to change". These fields are protocol, host, port, user, authentication, remote path, drive letter, jump host and read-only. Name and the start/reconnect flags stay editable. The same goes for a mount in progress. Cache and keep-alive are locked too, as a drive takes them when it starts. | Editing the host of a mounted profile is impossible; renaming is possible. |
 
 ### 3.2 SSH/SFTP backend (FR-SSH), v1
@@ -113,7 +113,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-SSH-08 | M | **Host keys** are checked against known hosts, with plain and hashed entries and the `[host]:port` form. `@revoked` lines must be honoured. | See FR-SSH-09/10. |
 | FR-SSH-09 | M | **Unknown host key**: the trust dialog (§7.4.2) offers *Trust and save*, *Trust once* and *Cancel*. *Trust and save* appends a line to known hosts. | After *Trust and save*, a second mount asks nothing. `ssh.exe` also accepts the server without asking. |
 | FR-SSH-10 | M | **Changed host key**: the connection is refused (E-HOSTKEY-CHANGED). The message shows the old and new SHA256 fingerprints and the file and line number. There is no override button. | Replacing the server key causes a refusal, and no data is sent after key exchange. |
-| FR-SSH-11 | M | **Jump host** (optional, one hop): host, port, user and its own auth (agent, key file or password). The password is stored as `FsManager:<uuid>:jump-password`. The jump host's key is verified like any other host. | Mount through a bastion succeeds, and the bastion's key appears in known hosts. |
+| FR-SSH-11 | M | **Jump host** (optional, one hop): host, port, user and its own auth (agent, key file or password). The password is stored as `DriveMount:<uuid>:jump-password`. The jump host's key is verified like any other host. | Mount through a bastion succeeds, and the bastion's key appears in known hosts. |
 | FR-SSH-12 | M | **Keep-alive**: an SSH keep-alive is sent every `keepalive_secs` (default 15 s, 0 = off). Three unanswered keep-alives mark the connection as lost. | With the network cable pulled, the state changes to *Reconnecting* within 60 s. |
 | FR-SSH-13 | M | **Remote path**: `~` (the default) means the user's home directory, resolved with SFTP `realpath`. Paths are absolute POSIX paths. For Windows OpenSSH servers, `C:/data` or `C:\data` is normalised to `/C:/data`. | Mounting `~` on Windows OpenSSH shows the user's profile folder. |
 | FR-SSH-14 | M | **SFTP extensions** are used when the server advertises them, with fallbacks: `limits@openssh.com` (packet sizes), `posix-rename@openssh.com` (atomic rename-replace), `fsync@openssh.com` (flush), `statvfs@openssh.com` (free space). | Tests pass against OpenSSH (has extensions) and ProFTPD mod_sftp (lacks them). |
@@ -127,7 +127,7 @@ Each requirement has an ID, a priority (M = must, S = should, May) and an accept
 | FR-MNT-02 | M | Each mount gets its drive letter: the profile's letter, or *Auto*, which picks the highest free letter from Z downwards. | *Auto* with Z: free → Z:. |
 | FR-MNT-03 | M | **Free letter** means not present in `GetLogicalDrives()` *and* not a remembered network connection (`WNetGetConnectionW` ≠ `ERROR_NOT_CONNECTED`). A, B and C are never used. | A disconnected persistent `net use Y:` mapping makes Y: count as taken. |
 | FR-MNT-04 | M | **Letter taken** at mount time: behaviour depends on the `letter_conflict` setting. *auto* (default) mounts on the next free letter, shows "Y: (Z: was in use)" in the row and sends a notification. *fail* stops with E-LETTER-TAKEN. | Both behaviours are covered by tests. |
-| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\fsm\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. Explorer names network drives after the UNC path ("slug (\\fsm)"), not the volume label, so the profile name is also written to `_LabelFromReg` under `HKCU\…\Explorer\MountPoints2\##fsm#<slug>` before Explorer hears of the drive, and removed on unmount (§5.8). | Explorer shows "Production (Z:)" with a network-drive icon. |
+| FR-MNT-05 | M | Mounts appear as **network drives**: WinFsp volume prefix `\drivemount\<profile-slug>`, shown in Explorer under *Network locations*. The volume label is the profile name, truncated to 32 characters. Explorer names network drives after the UNC path ("slug (\\drivemount)"), not the volume label, so the profile name is also written to `_LabelFromReg` under `HKCU\…\Explorer\MountPoints2\##drivemount#<slug>` before Explorer hears of the drive, and removed on unmount (§5.8). | Explorer shows "Production (Z:)" with a network-drive icon. |
 | FR-MNT-06 | M | An already-running Explorer is told about drive changes at once. A WinFsp letter stays invisible to a running Explorer, and `SHChangeNotify` alone does not help. So `WM_DEVICECHANGE` goes to Explorer's desktop window alone, limited to 500 ms, alongside `SHChangeNotify(SHCNE_DRIVEADD / SHCNE_DRIVEREMOVED)` (§5.8). Broadcasts of `WM_DEVICECHANGE` are forbidden, because they hang on unresponsive windows. | An open Explorer window shows the drive within 1 s and hides it in about 1.2 s, without restarting Explorer. The owner accepted the time for hiding on 2026-11-05. |
 | FR-MNT-07 | M | **Read-only** profiles mount a read-only volume. Writes fail with "media is write protected" (`STATUS_MEDIA_WRITE_PROTECTED`). | Copying into a read-only drive fails cleanly. |
 | FR-MNT-08 | M | **Mount on start**: profiles with `mount_on_start` are mounted in parallel when the app starts. Profiles that need a prompt queue their prompts one at a time. | 5 such profiles mount in parallel at start-up. |
@@ -155,9 +155,9 @@ States, transitions and events are defined in §5.5.
 | ID | Pri | Requirement | Acceptance criterion |
 |---|---|---|---|
 | FR-TRAY-01 | M | Tray icon is always present while the app runs. Its icon variant shows the overall state: *idle* (no mounts), *mounted*, *reconnecting* (any), *error* (any). | With a mock backend driven through the four states, the icon variant matches each state. |
-| FR-TRAY-02 | M | Tooltip: "FS Manager: 2 mounted, 1 reconnecting". | Tooltip counts always equal the status-bar counts. |
+| FR-TRAY-02 | M | Tooltip: "DriveMount: 2 mounted, 1 reconnecting". | Tooltip counts always equal the status-bar counts. |
 | FR-TRAY-03 | M | Left click shows or hides the main window. | A hidden window is shown and focused; a visible one is hidden. |
-| FR-TRAY-04 | M | Right-click menu (§7.6): one item per profile with a check mark when mounted (click toggles), *Unmount all*, *Open FS Manager*, *Quit*. | Toggling a profile from the tray mounts it without opening the window, unless a prompt is needed. |
+| FR-TRAY-04 | M | Right-click menu (§7.6): one item per profile with a check mark when mounted (click toggles), *Unmount all*, *Open DriveMount*, *Quit*. | Toggling a profile from the tray mounts it without opening the window, unless a prompt is needed. |
 
 ### 3.6 Notifications (FR-NOT)
 
@@ -172,10 +172,10 @@ States, transitions and events are defined in §5.5.
 
 | ID | Pri | Requirement | Acceptance criterion |
 |---|---|---|---|
-| FR-APP-01 | M | **Single instance** per Windows user, enforced with the named mutex `Local\FsManager`. A second launch brings the existing window to the front and exits. | Starting `fsm.exe` twice leaves one process, with its window in front. |
+| FR-APP-01 | M | **Single instance** per Windows user, enforced with the named mutex `Local\DriveMount`. A second launch brings the existing window to the front and exits. | Starting `drivemount.exe` twice leaves one process, with its window in front. |
 | FR-APP-02 | M | **Close to tray** (default on): the window's close button hides the window. With it off, closing quits (FR-APP-04). | With the setting on, × hides the window and the mounts stay; with it off, × starts the quit flow. |
-| FR-APP-03 | M | **Start with Windows** (default off) writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\FsManager = "<exe>" --tray`. `--tray` starts without showing the window. | After sign-in, the tray icon appears, no window is shown, and mount-on-start profiles are mounted. Turning the setting off removes the Run value. |
-| FR-APP-04 | M | **Quit** with mounts present asks "Unmount N drives and quit?". On confirm, it unmounts everything and exits. | After confirming, no FS Manager drive letters remain and the process has exited. Cancel keeps everything as it was. |
+| FR-APP-03 | M | **Start with Windows** (default off) writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DriveMount = "<exe>" --tray`. `--tray` starts without showing the window. | After sign-in, the tray icon appears, no window is shown, and mount-on-start profiles are mounted. Turning the setting off removes the Run value. |
+| FR-APP-04 | M | **Quit** with mounts present asks "Unmount N drives and quit?". On confirm, it unmounts everything and exits. | After confirming, no DriveMount drive letters remain and the process has exited. Cancel keeps everything as it was. |
 | FR-APP-05 | M | **Windows sign-out or shutdown** (`WM_QUERYENDSESSION`/`WM_ENDSESSION`): flush and unmount everything without asking, within 5 s. | Signing out while a file is being written does not block sign-out. The written part of the file is intact on the server. |
 | FR-APP-06 | M | **WinFsp missing or too old**: the main window shows a banner "WinFsp 2.1 or later is required to mount SSH drives" with a *Download WinFsp* button that opens https://winfsp.dev/rel/. Mount actions for WinFsp-backed profiles are disabled. | With WinFsp uninstalled, the banner shows and Mount buttons are disabled; profiles can still be edited. |
 | FR-APP-07 | M | **Crash handling**: a panic hook writes `crash-<timestamp>.txt` to the logs folder. The next start shows a notice with *Open logs folder*. | A forced panic (debug build) produces the file, and the notice appears on the next start. |
@@ -236,7 +236,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 |---|---|---|
 | NFR-PERF-01 | Cold start to window visible (from process creation to first frame, logged) | < 250 ms |
 | NFR-PERF-02 | Cold start with `--tray` to tray icon visible | < 150 ms |
-| NFR-PERF-03 | Size of `fsm.exe` (release, stripped) | < 30 MB |
+| NFR-PERF-03 | Size of `drivemount.exe` (release, stripped) | < 30 MB |
 | NFR-PERF-04 | Idle working set after 60 s: no mounts / each additional idle mount | < 40 MB / < 8 MB |
 | NFR-PERF-05 | CPU while idle with 5 mounts | < 0.1% average over 10 min; no periodic wake-ups apart from keep-alives |
 | NFR-PERF-06 | Sequential read and write of a 1 GB file through Explorer copy, compared with OpenSSH `sftp` get/put on the same link | ≥ 90% (LAN and WAN) |
@@ -252,7 +252,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-REL-01 | **Data integrity**: for any file written through the drive, close → reopen → SHA-256 equals the source. This is tested for sizes 0 B, 1 B, 4095 B, 4 KiB, 1 MiB + 1 B and 1 GiB, and with `fsx` (§10.3). |
 | NFR-REL-02 | **Visibility**: a file created, renamed or deleted through the drive shows in the very next directory listing (no stale cache from our own changes). |
 | NFR-REL-03 | **Bounded waits**: no WinFsp callback blocks longer than `op_timeout_secs`. |
-| NFR-REL-04 | **No orphans**: after the process exits for any reason, including a crash or a kill from Task Manager, no FS Manager drive letter remains. |
+| NFR-REL-04 | **No orphans**: after the process exits for any reason, including a crash or a kill from Task Manager, no DriveMount drive letter remains. |
 | NFR-REL-05 | **Config safety**: config writes are atomic (write a temp file in the same folder, flush it, then replace the file with `MoveFileExW`, through `tempfile`'s `persist`). The previous good file is kept as `config.toml.bak`. A config that cannot be parsed is never overwritten; the app starts read-only and shows an error. |
 | NFR-REL-06 | **Soak**: 72 h with 5 mounts, periodic network drops and sleep/resume cycles. There must be no leak (working set growth < 10%) and no stuck state. |
 
@@ -260,7 +260,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 
 | ID | Requirement |
 |---|---|
-| NFR-SEC-01 | Passwords and passphrases are stored **only** in Windows Credential Manager. They use `CRED_TYPE_GENERIC` and `CRED_PERSIST_LOCAL_MACHINE` (stored only on this PC, not synced as a roaming credential), with targets `FsManager:<uuid>:password`, `FsManager:<uuid>:passphrase` and `FsManager:<uuid>:jump-password`. |
+| NFR-SEC-01 | Passwords and passphrases are stored **only** in Windows Credential Manager. They use `CRED_TYPE_GENERIC` and `CRED_PERSIST_LOCAL_MACHINE` (stored only on this PC, not synced as a roaming credential), with targets `DriveMount:<uuid>:password`, `DriveMount:<uuid>:passphrase` and `DriveMount:<uuid>:jump-password`. |
 | NFR-SEC-02 | Secrets are never written to config files or logs and never passed on command lines. In code, secrets are wrapped in a type whose `Debug`/`Display` prints `***` and which zeroes its memory on drop (`zeroize`). |
 | NFR-SEC-03 | Decrypted private keys and passphrases are held in memory only while the profile is mounted, and are zeroed on unmount. |
 | NFR-SEC-04 | Host keys are always verified (FR-SSH-08 to FR-SSH-10). There is no option to turn verification off. |
@@ -276,7 +276,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-UX-02 | The UI consists of the main window, three pages that each take the list's place (the connection page, the Add/Edit page and the settings page), and small prompts. There are no other windows. |
 | NFR-UX-03 | Every error message says what happened and what to do (catalogue in §7.8). No raw error codes appear without explanation. |
 | NFR-UX-04 | Everything can be done with the keyboard (§7.7). Every control has an accessible name for screen readers. |
-| NFR-UX-05 | English only in v1. All strings are wrapped in Slint `@tr()` so translations can be added without code changes. `slint` has no `tr!` for Rust, so what Rust has to show comes from the `Texts` global in `apps/fsm/ui/texts.slint`. |
+| NFR-UX-05 | English only in v1. All strings are wrapped in Slint `@tr()` so translations can be added without code changes. `slint` has no `tr!` for Rust, so what Rust has to show comes from the `Texts` global in `apps/drivemount/ui/texts.slint`. |
 
 ### 4.5 Maintainability (NFR-MAINT)
 
@@ -284,12 +284,12 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 |---|---|
 | NFR-MAINT-01 | Rust stable, edition 2024. The minimum Rust version (MSRV) is pinned in `rust-toolchain.toml`. |
 | NFR-MAINT-02 | CI runs `cargo fmt --check` and `cargo clippy -- -D warnings`. |
-| NFR-MAINT-03 | Protocol crates (`fsm-vfs`, `fsm-sftp`, `fsm-nfs`) must not depend on Windows APIs, so they build and test on Linux. |
+| NFR-MAINT-03 | Protocol crates (`drivemount-vfs`, `drivemount-sftp`, `drivemount-nfs`) must not depend on Windows APIs, so they build and test on Linux. |
 | NFR-MAINT-04 | Structured logging with `tracing`; each mount is a span carrying the profile ID and name. |
 
 ### 4.6 Licensing (NFR-LIC)
 
-FS Manager is open source under **GPL-3.0-or-later**, with WinFsp used through the `winfsp` crate. See [ADR-0003](adr/0003-licence-gplv3.md).
+DriveMount is open source under **GPL-3.0-or-later**, with WinFsp used through the `winfsp` crate. See [ADR-0003](adr/0003-licence-gplv3.md).
 
 | ID | Requirement | Acceptance criterion |
 |---|---|---|
@@ -307,12 +307,12 @@ FS Manager is open source under **GPL-3.0-or-later**, with WinFsp used through t
 ### 5.1 Overview
 
 ```
-┌────────────────────────────── fsm.exe (one unelevated process) ──────────────────────────────┐
+┌────────────────────────────── drivemount.exe (one unelevated process) ──────────────────────────────┐
 │                                                                                              │
 │  UI thread                          Tokio runtime (2–4 workers)        WinFsp dispatcher      │
 │  ┌──────────────────────┐  commands ┌──────────────────────────┐       threads (per mount)    │
 │  │ Slint main window     │─────────▶│ MountManager             │       ┌──────────────────┐  │
-│  │ Profile dialog        │          │  • state machine/profile │       │ fsm-winfsp       │  │
+│  │ Profile dialog        │          │  • state machine/profile │       │ drivemount-winfsp       │  │
 │  │ Prompts               │◀─────────│  • reconnect scheduler   │       │ FileSystemContext│  │
 │  │ tray-icon             │  events  │  • letter allocator      │       │  → RemoteFs      │  │
 │  │ Win32 msgs (power,    │          │ ConfigStore  SecretStore │       │  (block_on with  │  │
@@ -320,10 +320,10 @@ FS Manager is open source under **GPL-3.0-or-later**, with WinFsp used through t
 │  └──────────────────────┘                        │ MountBackend        └────────┬─────────┘  │
 │                                    ┌─────────────┼───────────────┐              │            │
 │                                    ▼             ▼               ▼              │            │
-│                              fsm-sftp       fsm-nfs (M4)    fsm-smb (M3)        │            │
+│                              drivemount-sftp       drivemount-nfs (M4)    drivemount-smb (M3)        │            │
 │                              RemoteFs       RemoteFs        native WNet         │            │
 │                              (russh)        (nfs3_client)   mapping             │            │
-│                                    └──── fsm-vfs: caches, timeouts, names ◀──────┘            │
+│                                    └──── drivemount-vfs: caches, timeouts, names ◀──────┘            │
 └──────────────────────────────────────────────────────────────────────────────────────────────┘
           ▲ SSH :22                ▲ NFS :2049/:111                ▲ SMB :445 (by Windows)
 ```
@@ -331,7 +331,7 @@ FS Manager is open source under **GPL-3.0-or-later**, with WinFsp used through t
 ### 5.2 Workspace layout
 
 ```
-fs-manager/
+drivemount/
   Cargo.toml                 workspace: pinned dependencies, lints, release profile
   rust-toolchain.toml  rustfmt.toml  clippy.toml  .cargo/config.toml
   deny.toml                  cargo-deny config (licences, advisories)
@@ -339,21 +339,21 @@ fs-manager/
   .github/workflows/ci.yml   CI (GitHub-Actions-compatible; run by Gitea Actions)
   scripts/                   CI checks: SPDX headers, exe size
   crates/
-    fsm-vfs/                 Shared traits and types, at the bottom of the graph: RemoteFs, Connector,
+    drivemount-vfs/                 Shared traits and types, at the bottom of the graph: RemoteFs, Connector,
                              MountBackend, Prompter, Secret, SecretStore, Attr/DirEntry; caches, read-ahead, name and
                              permission mapping, operation deadlines, error model     (no Windows deps)
-    fsm-core/                Profile model, ConfigStore (TOML), MountManager, state
+    drivemount-core/                Profile model, ConfigStore (TOML), MountManager, state
                              machine, letter allocator, event bus. Gets its backends from a factory
                              supplied by the app                                      (no Windows deps)
-    fsm-sftp/                RemoteFs over russh + russh-sftp; connector (auth, jump host, host keys,
+    drivemount-sftp/                RemoteFs over russh + russh-sftp; connector (auth, jump host, host keys,
                              keep-alive)                                                (no Windows deps)
-    fsm-winfsp/              Adapter RemoteFs → winfsp::FileSystemContext; volume params; mount/unmount
-    fsm-smb/                 [M3] WNetAddConnection2W / WNetCancelConnection2W / health check
-    fsm-nfs/                 [M4] RemoteFs over nfs3_client (MOUNT, NFSv3, portmap, AUTH_SYS)
-    fsm-win/                 Small Windows helpers: Credential Manager, Run key, SHChangeNotify, power,
+    drivemount-winfsp/              Adapter RemoteFs → winfsp::FileSystemContext; volume params; mount/unmount
+    drivemount-smb/                 [M3] WNetAddConnection2W / WNetCancelConnection2W / health check
+    drivemount-nfs/                 [M4] RemoteFs over nfs3_client (MOUNT, NFSv3, portmap, AUTH_SYS)
+    drivemount-win/                 Small Windows helpers: Credential Manager, Run key, SHChangeNotify, power,
                              session and network notifications, single-instance mutex, toasts
   apps/
-    fsm/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring.
+    drivemount/                     GUI binary (windows subsystem): Slint UI (.slint files), tray, wiring.
                              A library beside it holds BackendFactory (Profile → Box<dyn MountBackend>)
   docs/
     ANALYSIS.md  SPECIFICATION.md  IMPLEMENTATION_PLAN.md  TRACEABILITY.md  PROGRESS.md  adr/  spikes/
@@ -361,14 +361,14 @@ fs-manager/
   tests/                     cross-crate integration tests, Docker compose files for test servers
 ```
 
-Dependencies between the crates. Only `fsm-vfs` is shared, so there is no cycle, and `fsm-core` stays platform-independent, with its tests running on Linux:
+Dependencies between the crates. Only `drivemount-vfs` is shared, so there is no cycle, and `drivemount-core` stays platform-independent, with its tests running on Linux:
 
 ```
-fsm-vfs ◀── fsm-sftp, fsm-nfs                 (portable)
-fsm-vfs ◀── fsm-core                          (portable)
-fsm-vfs ◀── fsm-winfsp, fsm-smb, fsm-win      (Windows; empty crates on other platforms)
-fsm-win ◀── fsm-winfsp                        (the Explorer label and notifications)
-apps/fsm ──▶ all of the above
+drivemount-vfs ◀── drivemount-sftp, drivemount-nfs                 (portable)
+drivemount-vfs ◀── drivemount-core                          (portable)
+drivemount-vfs ◀── drivemount-winfsp, drivemount-smb, drivemount-win      (Windows; empty crates on other platforms)
+drivemount-win ◀── drivemount-winfsp                        (the Explorer label and notifications)
+apps/drivemount ──▶ all of the above
 ```
 
 ### 5.3 Process and threading model
@@ -382,10 +382,10 @@ apps/fsm ──▶ all of the above
   - State events come back over a `broadcast` channel: `MountEvent { id, state, detail }`. The UI applies them with `slint::invoke_from_event_loop`.
 - **Prompts**: backends never touch the UI. They call the `Prompter` trait, which the GUI implements by showing a dialog and awaiting a `oneshot` reply. Prompts are serialised, so there is one dialog at a time.
 
-### 5.4 Core abstractions (summary; `fsm-vfs` holds the signatures and their full contract)
+### 5.4 Core abstractions (summary; `drivemount-vfs` holds the signatures and their full contract)
 
 ```rust
-/// Async file system operations on a remote. Implemented by fsm-sftp and fsm-nfs.
+/// Async file system operations on a remote. Implemented by drivemount-sftp and drivemount-nfs.
 #[async_trait]
 pub trait RemoteFs: Send + Sync + 'static {
     async fn stat(&self, path: &RemotePath) -> FsResult<Attr>;            // follows symlinks
@@ -460,7 +460,7 @@ States: `Disconnected`, `Connecting`, `Mounted`, `Reconnecting`, `Unmounting`, `
 
 Every transition is emitted as a `MountEvent` and logged at Info level.
 
-What the table leaves open (`fsm_core::manager`). The Reconnecting rows are M2-01's:
+What the table leaves open (`drivemount_core::manager`). The Reconnecting rows are M2-01's:
 
 - **A backend for each mount.** It is made when the mount starts and dropped when it ends, however it ends, and before the state is announced, so what the user typed goes with it (NFR-SEC-03). Going back to *Disconnected* or *Error* is what zeroes secrets.
 - **One task for each profile,** so a dialog holds up no other profile. Cancel is a `CancellationToken`, and reaches a mount at any point.
@@ -472,7 +472,7 @@ What the table leaves open (`fsm_core::manager`). The Reconnecting rows are M2-0
 - **What is not mounted:** a profile that breaks a rule of §7.3 (only a key file's name is looked at), and one the file holds but the model cannot (§6.1). Both are refused with no event.
 - **Test connection** has nothing to do with this table, and stores nothing, whatever the user ticks: the profile may never be saved.
 
-### 5.6 VFS layer (fsm-vfs)
+### 5.6 VFS layer (drivemount-vfs)
 
 **Caching.** All caches are per mount and in memory.
 
@@ -533,7 +533,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 | Owner/ACLs | Not mapped. Every file has one fixed security descriptor: full control for the current user. Access is decided by the server. Setting a descriptor gets `STATUS_NOT_SUPPORTED`, so that nobody believes a file was protected. `ReplaceFile` works without it. |
 | New files and directories | Created without explicit permissions, so the server's umask applies |
 
-### 5.7 SFTP backend (fsm-sftp)
+### 5.7 SFTP backend (drivemount-sftp)
 
 - **Transport:** `russh` client over TCP with the `ring` crypto backend (its default, `aws-lc-rs`, needs NASM to build on Windows). The default algorithm preferences are curve25519 key exchange, Ed25519 host keys, and AES-256-GCM then chacha20-poly1305 ciphers (AES-GCM was 20–35% faster in spike M0-2). Compression is off.
 - **Setting up a connection:** each stage has `op_timeout_secs` to finish: name lookup and TCP, the SSH handshake, the login, and the SFTP setup. Time in the trust dialog (§7.4.2) does not count, and the handshake's limit starts again after it. Dropping the connect call at any point, including during the dialog, abandons the connection (FR-MNT-11).
@@ -580,7 +580,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
   - **Names are decoded as lossy UTF-8 too.** A name that is not UTF-8 is listed with U+FFFD in it and cannot be reached: opening it gives `NotFound`, and two such names can look the same. It stays listed, so a folder that cannot be removed does not look empty.
 - **Symbolic links:** `read_dir` and `lstat` report the link, as `RemoteFs` promises, and `stat` the target. Showing a link as its target (§5.6) is the WinFsp adapter's work: `stat` each `Symlink` entry, and list a broken one (M1-12a).
 
-### 5.8 WinFsp adapter (fsm-winfsp)
+### 5.8 WinFsp adapter (drivemount-winfsp)
 
 **Volume parameters**
 
@@ -589,10 +589,10 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 | Sector size / sectors per allocation unit | 4096 / 1 |
 | `MaxComponentLength` | 255 |
 | `CaseSensitiveSearch` / `CasePreservedNames` / `UnicodeOnDisk` | false / true / true |
-| `PersistentAcls` | false; fixed security descriptor giving the mounting user alone full control, and naming that user as owner and group: `O:<sid>G:<sid>D:P(A;;FA;;;<sid>)`. Not the Everyone descriptor of spike M0-1: `\\fsm\<slug>` is reachable by other users of the PC, and they would act with this user's server login. |
+| `PersistentAcls` | false; fixed security descriptor giving the mounting user alone full control, and naming that user as owner and group: `O:<sid>G:<sid>D:P(A;;FA;;;<sid>)`. Not the Everyone descriptor of spike M0-1: `\\drivemount\<slug>` is reachable by other users of the PC, and they would act with this user's server login. |
 | `ReadOnlyVolume` | `read_only`. This only tells programs: WinFsp's driver still passes changes down, so the adapter refuses them with `STATUS_MEDIA_WRITE_PROTECTED`. Opening a file with write access works, so that a program asking for `MAXIMUM_ALLOWED` is not turned away; the write itself fails. |
-| `VolumePrefix` | `\fsm\<profile-slug>` (network-drive mode). The slug is the name in lower-case ASCII, up to 32 characters, with anything else as `-`, then the first 8 hex digits of the id: `nas-backup-6f1c2c1e`. The id keeps it unique, since "a b" and "a-b" are different names, and it is taken at each mount. |
-| `FileSystemName` | `FSM-SFTP` / `FSM-NFS` |
+| `VolumePrefix` | `\drivemount\<profile-slug>` (network-drive mode). The slug is the name in lower-case ASCII, up to 32 characters, with anything else as `-`, then the first 8 hex digits of the id: `nas-backup-6f1c2c1e`. The id keeps it unique, since "a b" and "a-b" are different names, and it is taken at each mount. |
+| `FileSystemName` | `DM-SFTP` / `DM-NFS` |
 | Volume label | profile name, ≤ 32 chars |
 | `FileInfoTimeout` | 1000 ms (see §5.6) |
 | `PostCleanupWhenModifiedOnly` | true |
@@ -644,7 +644,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **Mounting.** `MountBackend::mount` connects, writes the Explorer label, starts the drive and tells Explorer. Dropping the future cancels it at any point, and what was set up by then goes with it (FR-MNT-11). A letter in use gives `LetterTaken`. Each mount makes its own connection, and `unmount` drops it.
 - **Unmounting.** `unmount` stops the host, tells Explorer, removes the label, then flushes and closes on the server what programs still had open, in one `op_timeout_secs` at most. WinFsp calls no `Close` for those. Failures go to the log, and unmounting never fails over them (FR-MNT-10). The programs get an error at their next use of the handle.
 - **Health.** Each rise of the suspect signal asks `Connector::probe`, and its answer sets `Health`. That is the third trigger of FR-REC-01. Keep-alive timeouts, transport errors and reconnecting are M2-01's, so until then a dropped connection fails calls without `Health` showing it.
-- **Explorer.** WinFsp sets the letter without telling anyone, and keeps it tied to the process so that a kill removes it (NFR-REL-04), so the letter stays WinFsp's. `WNetAddConnection2W` through `WinFsp.Np` is not an option: it gives error 67 unless the class `fsm` is registered as a launcher service under `HKLM`, which needs administrator rights. What works is `SendMessageTimeoutW(Progman, WM_DEVICECHANGE, DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE)` with a `DEV_BROADCAST_VOLUME`, with `SMTO_ABORTIFHUNG` and 500 ms. It reaches one window, so no other program can hold it up. It is not sent after a crash, so an open window can list a dead drive until the next mount or unmount of that letter. Windows set to open folders in a separate process were not tried.
+- **Explorer.** WinFsp sets the letter without telling anyone, and keeps it tied to the process so that a kill removes it (NFR-REL-04), so the letter stays WinFsp's. `WNetAddConnection2W` through `WinFsp.Np` is not an option: it gives error 67 unless the class `drivemount` is registered as a launcher service under `HKLM`, which needs administrator rights. What works is `SendMessageTimeoutW(Progman, WM_DEVICECHANGE, DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE)` with a `DEV_BROADCAST_VOLUME`, with `SMTO_ABORTIFHUNG` and 500 ms. It reaches one window, so no other program can hold it up. It is not sent after a crash, so an open window can list a dead drive until the next mount or unmount of that letter. Windows set to open folders in a separate process were not tried.
 - **`.` and `..`** are listed outside the root, and `..` shows the directory's own details rather than cost a round trip for its parent's.
 
 **Error mapping**
@@ -663,7 +663,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 | The session's limit on open files | `STATUS_TOO_MANY_OPENED_FILES` |
 | Anything else | `STATUS_UNEXPECTED_NETWORK_ERROR`, logged with details |
 
-### 5.9 SMB backend (fsm-smb), M3
+### 5.9 SMB backend (drivemount-smb), M3
 
 - **Mount:** `WNetAddConnection2W` with:
   - `NETRESOURCEW { dwType: RESOURCETYPE_DISK, lpLocalName: "Z:", lpRemoteName: "\\server\share" }`;
@@ -679,7 +679,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
   - there is no app-side reconnect loop, because the Windows SMB client handles it.
 - **Error mapping** for WNet calls: `ERROR_SESSION_CREDENTIAL_CONFLICT` (1219) → E-SMB-1219; `ERROR_LOGON_FAILURE` → E-AUTH; `ERROR_BAD_NET_NAME` → E-SMB-SHARE-NOT-FOUND; `ERROR_BAD_NETPATH` → E-HOST-UNREACHABLE; `ERROR_ALREADY_ASSIGNED` → E-LETTER-TAKEN.
 
-### 5.10 NFS backend (fsm-nfs), M4
+### 5.10 NFS backend (drivemount-nfs), M4
 
 - `nfs3_client` over TCP; MOUNT v3 gets the root handle. Ports come from the portmapper (111) unless they are fixed in the profile.
 - AUTH_SYS credentials use the profile's UID/GID. The source port is bound from 1023 downwards (FR-NFS-03).
@@ -697,7 +697,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 
 ### 6.1 Configuration file
 
-`%APPDATA%\FsManager\config.toml` is UTF-8 and contains no secrets. Writes are atomic (NFR-REL-05).
+`%APPDATA%\DriveMount\config.toml` is UTF-8 and contains no secrets. Writes are atomic (NFR-REL-05).
 
 ```toml
 schema_version = 1
@@ -751,7 +751,7 @@ key_path = ""
 ```
 
 - **`ui-state.toml`,** beside this file, holds the window's size and position (§7.1). It is apart because moving a window should not rewrite and back up the profiles, and because it still works when this file is read-only. Anything wrong with it costs only what it held.
-- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer FS Manager". Its profiles can still be mounted, read by this version's rules; Save and Delete are off.
+- **Migrations:** when `schema_version` is older, the file is migrated in code with one function per version step, in memory on opening and on disk at the first save. The old file is kept as `config.v<N>.bak`. A failed migration leaves the app read-only. A newer `schema_version` than the app understands → the app starts read-only and says "This configuration was written by a newer DriveMount". Its profiles can still be mounted, read by this version's rules; Save and Delete are off.
 - **Unknown keys** are kept on save, for forward compatibility, at the top of the file, in `[settings]`, in a profile and in its `jump`. Comments are not kept, and known keys are written in the order above.
 - **A damaged file:** one that is not UTF-8 or TOML, has no `schema_version` (so an empty file too), or has `settings` or `profiles` of the wrong type. The app starts read-only with nothing loaded (NFR-REL-05). A save also refuses, and the app turns read-only, if the file has become like this since it was read.
 - **One bad value does not cost the whole file:**
@@ -786,8 +786,8 @@ The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so
 
 ### 6.4 Logs
 
-- **Location:** `%LOCALAPPDATA%\FsManager\logssm.log`, rolled at midnight UTC and at 5 MiB to `fsm.log.1`, up to `fsm.log.6`, so 7 files of at most 5 MiB each. A log that cannot be written never stops the app.
-- **Format and secrets:** text with timestamp (UTC), level, span (profile) and message. Secrets cannot appear (NFR-SEC-02). The *Log level* setting applies to FS Manager's own crates; other crates log Warn and above at most, as their debug output is not ours to vouch for.
+- **Location:** `%LOCALAPPDATA%\DriveMount\logssm.log`, rolled at midnight UTC and at 5 MiB to `drivemount.log.1`, up to `drivemount.log.6`, so 7 files of at most 5 MiB each. A log that cannot be written never stops the app.
+- **Format and secrets:** text with timestamp (UTC), level, span (profile) and message. Secrets cannot appear (NFR-SEC-02). The *Log level* setting applies to DriveMount's own crates; other crates log Warn and above at most, as their debug output is not ours to vouch for.
 - **Crash reports:** `crash-<timestamp>.txt` in the same folder.
 
 ---
@@ -796,15 +796,15 @@ The value is stored as UTF-16LE. Credential Manager holds at most 2560 bytes, so
 
 Built with **Slint** (Fluent style, software renderer). Theme: System / Light / Dark.
 
-**Look.** Both themes use a warm palette: off-white or warm dark grey surfaces, and a grey-blue accent for focus and for the one main button in view. It is defined in `apps/fsm/ui/theme.slint`. Text is **Inter** (SIL OFL 1.1) at 15 px, in Regular and SemiBold, subset to Latin and Latin Extended-A and embedded in the exe. Icons are **Lucide** SVGs (ISC), tinted to the theme. Both licences ship as `apps/fsm/ui/fonts/OFL.txt` and `apps/fsm/ui/icons/LICENSE`, and belong in the third-party licence file (NFR-LIC-04). FS Manager draws the window's own buttons. Text boxes, check boxes and drop-downs are Fluent's, and keep its blue focus line.
+**Look.** Both themes use a warm palette: off-white or warm dark grey surfaces, and a grey-blue accent for focus and for the one main button in view. It is defined in `apps/drivemount/ui/theme.slint`. Text is **Inter** (SIL OFL 1.1) at 15 px, in Regular and SemiBold, subset to Latin and Latin Extended-A and embedded in the exe. Icons are **Lucide** SVGs (ISC), tinted to the theme. Both licences ship as `apps/drivemount/ui/fonts/OFL.txt` and `apps/drivemount/ui/icons/LICENSE`, and belong in the third-party licence file (NFR-LIC-04). DriveMount draws the window's own buttons. Text boxes, check boxes and drop-downs are Fluent's, and keep its blue focus line.
 
 ### 7.1 Main window (default 640 × 420, minimum 480 × 320; size and position remembered)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  FS Manager                                           ─   □   ×  │
+│  DriveMount                                           ─   □   ×  │
 ├──────────────────────────────────────────────────────────────────┤
-│  FS Manager           [+ Add] [▷ Mount all] [□ Unmount all] [⚙]  │
+│  DriveMount           [+ Add] [▷ Mount all] [□ Unmount all] [⚙]  │
 ├──────────────────────────────────────────────────────────────────┤
 │  ⚠ WinFsp 2.1 or later is required…        [ Download WinFsp ]   │  ← only if missing
 ├──────────────────────────────────────────────────────────────────┤
@@ -898,7 +898,7 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 │             [✓] Remember passphrase               │
 │ Remote path [ /var/www                         ]  │
 │ Drive       [ Z: ▾ ]   (Auto, D:…Z:, free ones marked) │
-│ [✓] Mount when FS Manager starts                  │
+│ [✓] Mount when DriveMount starts                  │
 │ ▸ Advanced                                        │
 │   Jump host  [ user@host:port ] Auth [Agent ▾]    │
 │   [✓] Reconnect automatically                     │
@@ -952,7 +952,7 @@ An *Ask each time* profile first shows a prompt offering a password, or a key fi
 
 ```
 ┌ Unknown server ──────────────────────────────────────────┐
-│ FS Manager has not connected to 10.0.4.21:22 before.     │
+│ DriveMount has not connected to 10.0.4.21:22 before.     │
 │                                                          │
 │ Key type:    ssh-ed25519                                 │
 │ Fingerprint: SHA256:Xq3Vb…4Q8                            │
@@ -991,7 +991,7 @@ This page replaces the list area inside the main window; a ← back arrow return
    NAS backup (X:)
  ─────────────────────
    Unmount all
-   Open FS Manager
+   Open DriveMount
  ─────────────────────
    Quit
 ```
@@ -1057,15 +1057,15 @@ This page replaces the list area inside the main window; a ← back arrow return
 
 - **Build:** `cargo build --release` with `lto = "fat"`, `codegen-units = 1`, `panic = "abort"` (after the crash hook runs) and `strip = true`. The C runtime is statically linked (`+crt-static`), so there is no VC++ redistributable dependency.
 - **Installer:** MSI built with WiX (`cargo-wix`).
-  - Per-machine install to `C:\Program Files\FS Manager\`; requires admin, which is also needed for WinFsp.
+  - Per-machine install to `C:\Program Files\DriveMount\`; requires admin, which is also needed for WinFsp.
   - Checks the WinFsp version in the registry (`HKLM\SOFTWARE\WOW6432Node\WinFsp`, `InstallDir` + DLL version). If WinFsp is missing or older than 2.1, it offers the official, **unmodified** WinFsp MSI as a chained install (allowed by WinFsp's FLOSS exception, ADR-0003) or a link (OD-5).
   - Start-menu shortcut; optional *Start with Windows* checkbox (writes the HKCU Run key for the installing user).
-  - Uninstall removes the program. It keeps `%APPDATA%\FsManager` and the credentials unless "Remove my settings" is ticked.
+  - Uninstall removes the program. It keeps `%APPDATA%\DriveMount` and the credentials unless "Remove my settings" is ticked.
 - **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\<id>` with a `DisplayName`. Spike M0-3 showed this is what makes toasts appear; a shortcut with an AUMID alone did not.
-- **Portable:** a zip with `fsm.exe`. It needs WinFsp installed separately.
-- **Signing:** Authenticode for `fsm.exe` and the MSI (OD-3).
+- **Portable:** a zip with `drivemount.exe`. It needs WinFsp installed separately.
+- **Signing:** Authenticode for `drivemount.exe` and the MSI (OD-3).
 - **Updates:** none in v1. Users install a newer MSI over the old one. Settings and profiles are kept and migrated (§6.1).
-- **Licence:** FS Manager is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE` and `THIRD-PARTY-LICENSES.html`. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
+- **Licence:** DriveMount is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE` and `THIRD-PARTY-LICENSES.html`. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
 
 ---
 
@@ -1096,16 +1096,16 @@ The `RemoteFs` contract-test suite (one generic suite run against each backend) 
 - connection kill mid-read with reconnect and handle reopen;
 - deadline expiry.
 
-The generic part is `fsm_vfs::contract` (feature `testing`): everything down to large files. It needs a server that allows any POSIX name and a user who is not root, and it cannot cover symbolic links because `RemoteFs` cannot create them. The last three items depend on the backend or on other layers and are tested with them.
+The generic part is `drivemount_vfs::contract` (feature `testing`): everything down to large files. It needs a server that allows any POSIX name and a user who is not root, and it cannot cover symbolic links because `RemoteFs` cannot create them. The last three items depend on the backend or on other layers and are tested with them.
 
 ### 10.3 Windows integration tests (Windows CI runner with WinFsp installed)
 
 - Mount an **in-memory `RemoteFs`** and an **in-process russh SFTP server** (from the `russh-sftp` server side) as drives, then run:
   - `winfsp-tests-x64.exe` with the test subset that applies to a network file system without ACLs and streams. The excluded tests are in `tests/winfsp-tests-exclusions.txt` with reasons. It is not in the WinFsp installer, so `scripts/get-winfsp-tests.ps1` fetches it, pinned by hash. Each test runs alone, in its own folder and with a time limit, as the suite stops at its first failure and can hang;
-  - `fsx` (file system exerciser), 100k operations, for data integrity (NFR-REL-01). There is no ready Windows build, so this is `crates/fsm-winfsp/tests/fsx.rs`: the same operations and limits through Win32, mapped reads and writes included, with `FSX_OPS` and `FSX_SEED` to set the length and repeat a run;
+  - `fsx` (file system exerciser), 100k operations, for data integrity (NFR-REL-01). There is no ready Windows build, so this is `crates/drivemount-winfsp/tests/fsx.rs`: the same operations and limits through Win32, mapped reads and writes included, with `FSX_OPS` and `FSX_SEED` to set the length and repeat a run;
   - scripted Explorer-like operations through Win32 `CopyFileEx`, `MoveFileEx`, `FindFirstFile` and `ReplaceFile`;
   - NEO regression cases: write → close → reopen → hash; a new file visible in the next listing; a host-key prompt for an unknown server; no drive left after the process is killed.
-- Crash test: kill `fsm.exe` with a mount active, then check with `GetLogicalDrives` that the letter is gone (NFR-REL-04).
+- Crash test: kill `drivemount.exe` with a mount active, then check with `GetLogicalDrives` that the letter is gone (NFR-REL-04).
 
 ### 10.4 Manual and lab test matrix (before each release)
 
@@ -1140,10 +1140,10 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 | Milestone | Content | Exit criteria |
 |---|---|---|
 | **M0 Spikes** | **M0-1:** `winfsp` crate mounts an in-memory FS as an unelevated network drive; Explorer copy/rename/delete/drag-drop work; volume flags settled. **M0-2:** `russh` + `russh-sftp` pipelined read/write throughput vs OpenSSH `sftp` on LAN and 50 ms WAN; decide write-behind (§5.6). **M0-3:** Slint + `tray-icon` on one event loop; close-to-tray; hidden message window receives power and session messages. | Each spike has a short report in `docs/spikes/` with numbers and a go/no-go. A no-go triggers the fallback in §12. |
-| **M1 Core mount** | Workspace, fsm-core, fsm-vfs, fsm-sftp, fsm-winfsp, main window, profile dialog, prompts, Credential Manager, known hosts | Mount an SFTP profile from the UI; NFR-REL-01/02 pass; FR-PROF, FR-SSH and FR-MNT acceptance criteria pass |
+| **M1 Core mount** | Workspace, drivemount-core, drivemount-vfs, drivemount-sftp, drivemount-winfsp, main window, profile dialog, prompts, Credential Manager, known hosts | Mount an SFTP profile from the UI; NFR-REL-01/02 pass; FR-PROF, FR-SSH and FR-MNT acceptance criteria pass |
 | **M2 v1 release** | Reconnect (FR-REC), tray, notifications, settings, lifecycle (FR-APP), MSI, signing, user guide | All v1 requirements' acceptance criteria pass; NFR-PERF budgets met; 72 h soak passes |
-| **M3 SMB** | fsm-smb, SMB form fields, E-SMB errors | FR-SMB acceptance criteria pass on Windows 10 Home and 11 Pro against Samba and Windows Server |
-| **M4 NFS** | fsm-nfs (NFSv3), NFS form fields | FR-NFS acceptance criteria pass against knfsd, Synology and TrueNAS on Windows 10 Home |
+| **M3 SMB** | drivemount-smb, SMB form fields, E-SMB errors | FR-SMB acceptance criteria pass on Windows 10 Home and 11 Pro against Samba and Windows Server |
+| **M4 NFS** | drivemount-nfs (NFSv3), NFS form fields | FR-NFS acceptance criteria pass against knfsd, Synology and TrueNAS on Windows 10 Home |
 
 **Later (only on request):**
 - NFSv4.1;
@@ -1165,7 +1165,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 | `russh-sftp` too slow or buggy | Medium / High | Spike M0-2 found the speed fine. M1-10 found three decoding limits (§5.7), worked around for now. Fallback: our own minimal SFTP v3 client on `russh` channels (the protocol is small: about 20 packet types). |
 | Network-drive mode or some volume flags misbehave from an unelevated process | Low / High | Spike M0-1. Fallback: a plain drive-letter mount (not network mode). |
 | Explorer is slow on high-latency links (many metadata calls) | Medium / Medium | Attribute, directory and negative caches; noise names; read-ahead; a configurable cache TTL |
-| Slint and tray integration issues | Low / Medium | Spike M0-3. Fallback: a raw Win32 `Shell_NotifyIcon` in `fsm-win`. |
+| Slint and tray integration issues | Low / Medium | Spike M0-3. Fallback: a raw Win32 `Shell_NotifyIcon` in `drivemount-win`. |
 | A dependency with a GPLv3-incompatible licence (e.g. `GPL-2.0-only`, proprietary) is added | Low / Medium | `cargo deny` allow-list in CI (NFR-LIC-05). Licence model itself is decided (ADR-0003). |
 | NFS crates are young (no NFSv4, no Kerberos) | Medium / Medium | M4 is NFSv3 only, isolated behind `RemoteFs`. Fallback: our own ONC-RPC/NFSv3 client (a well-documented protocol). |
 | SMB error 1219 confuses users | High / Low | A clear message (E-SMB-1219). Later: a pure-Rust SMB fallback. |

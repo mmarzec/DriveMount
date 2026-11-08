@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "drivemount-vfs"
+description = "Shared traits and types, caches, read-ahead, name mapping and deadlines"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[features]
+# MemFs, the RemoteFs contract suite and MemorySecretStore, for tests in this and other crates.
+testing = []
+
+[dependencies]
+async-trait = { workspace = true }
+bytes = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# Depending on itself turns `testing` on for this crate's own tests, so plain `cargo test` runs them.
+drivemount-vfs = { path = ".", features = ["testing"] }
+proptest = { workspace = true }
+# test-util lets the cache tests pause the clock.
+tokio = { workspace = true, features = ["test-util"] }
+
+[lints]
+workspace = true

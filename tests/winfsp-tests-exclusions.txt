@@ -2,7 +2,7 @@
 #
 # The tests of winfsp-tests that do not run against our drives, each with its reason (spec §10.3).
 # Format: name  # reason, or sftp: name  # reason for one that only applies over SFTP.
-# crates/fsm-winfsp/tests/winfsp_tests.rs refuses a line with no reason, or a name the suite lacks.
+# crates/drivemount-winfsp/tests/winfsp_tests.rs refuses a line with no reason, or a name the suite lacks.
 # Each reason was checked against the assertion that fails, in WinFsp's tst/winfsp-tests at v2.2B5.
 
 # Windows attributes other than read-only: SFTP v3 has nowhere to keep them (spec §5.6).

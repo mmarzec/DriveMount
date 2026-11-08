@@ -92,13 +92,13 @@ jobs:
         run: scripts\install-winfsp.ps1
       - name: The drive tests over SFTP
         env:
-          FSM_TEST_SERVER: sftp
-        run: cargo test -p fsm-winfsp --locked --test read_path --test write_path --test fsx
+          DRIVEMOUNT_TEST_SERVER: sftp
+        run: cargo test -p drivemount-winfsp --locked --test read_path --test write_path --test fsx
       - name: Fetch winfsp-tests
         shell: powershell
         run: scripts\get-winfsp-tests.ps1
       - name: winfsp-tests, less tests/winfsp-tests-exclusions.txt
-        run: cargo test -p fsm-winfsp --locked --test winfsp_tests -- --ignored --test-threads=1 --nocapture
+        run: cargo test -p drivemount-winfsp --locked --test winfsp_tests -- --ignored --test-threads=1 --nocapture
 
   # The tests marked #[ignore]: they need the S-03 servers, which this job starts with Docker Engine.
   integration:
@@ -108,13 +108,13 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup toolchain install
       - name: Build the tests
-        run: cargo test -p fsm-sftp --locked --no-run
+        run: cargo test -p drivemount-sftp --locked --no-run
       - name: Start the test servers
         run: |
           bash tests/docker/gen-keys.sh
           docker compose -f tests/docker-compose.yml up -d --build --wait
       - name: test
-        run: cargo test -p fsm-sftp --locked -- --ignored
+        run: cargo test -p drivemount-sftp --locked -- --ignored
 
   exe-size:
     runs-on: windows-latest
@@ -122,8 +122,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
-      - name: Build release fsm.exe
-        run: cargo build --release -p fsm --locked
+      - name: Build release drivemount.exe
+        run: cargo build --release -p drivemount --locked
       - name: Check size (NFR-PERF-03)
         shell: powershell
         run: scripts\check-exe-size.ps1

@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# NFR-PERF-03: fails when the release fsm.exe is not under 30 MB. Prints the size on every run, so
-# growth shows up when it happens. Build it first: cargo build --release -p fsm
+# NFR-PERF-03: fails when the release drivemount.exe is not under 30 MB. Prints the size on every run, so
+# growth shows up when it happens. Build it first: cargo build --release -p drivemount
 
 param(
-    [string]$Path = (Join-Path $PSScriptRoot '..\target\release\fsm.exe'),
+    [string]$Path = (Join-Path $PSScriptRoot '..\target\release\drivemount.exe'),
     [long]$LimitBytes = 30000000
 )
 
@@ -15,7 +15,7 @@ if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
 
 $size = (Get-Item -LiteralPath $Path).Length
 $culture = [Globalization.CultureInfo]::InvariantCulture
-$message = [string]::Format($culture, 'fsm.exe: {0} bytes ({1:F2} MB), limit {2} bytes, margin {3} bytes',
+$message = [string]::Format($culture, 'drivemount.exe: {0} bytes ({1:F2} MB), limit {2} bytes, margin {3} bytes',
     $size, ($size / 1000000), $LimitBytes, ($LimitBytes - $size))
 Write-Output $message
 

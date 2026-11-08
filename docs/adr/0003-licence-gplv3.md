@@ -9,7 +9,7 @@
 
 ## Context
 
-FS Manager creates drives by loading **WinFsp** into its own process, through the **`winfsp` Rust crate**. NEO SSH-Win Manager is different: it only starts SSHFS-Win as a separate program. Because of this, the licences of WinFsp and of the crate apply to FS Manager whenever it is distributed.
+DriveMount creates drives by loading **WinFsp** into its own process, through the **`winfsp` Rust crate**. NEO SSH-Win Manager is different: it only starts SSHFS-Win as a separate program. Because of this, the licences of WinFsp and of the crate apply to DriveMount whenever it is distributed.
 
 | Component | Licence | Effect |
 |---|---|---|
@@ -20,7 +20,7 @@ FS Manager creates drives by loading **WinFsp** into its own process, through th
 
 ## Decision
 
-1. FS Manager's own source code is licensed **GPL-3.0-or-later**. Distributed binaries include GPL-3.0-only dependencies, so they are conveyed under GPLv3.
+1. DriveMount's own source code is licensed **GPL-3.0-or-later**. Distributed binaries include GPL-3.0-only dependencies, so they are conveyed under GPLv3.
 2. Use **WinFsp** with the **`winfsp` crate** as planned. Slint is used under its GPLv3 option.
 3. We **also meet the conditions of WinFsp's FLOSS exception**: the attribution notice and no proprietary components. It costs nothing, and it gives a clear right to bundle the unmodified WinFsp installer (OD-5).
 
@@ -67,8 +67,8 @@ Exceptions need a new ADR.
 
 **Negative / accepted**
 - Anyone who receives the app can get, modify and redistribute the source. Forks must also be GPLv3.
-- Companies cannot embed FS Manager code in closed-source products.
-- Going closed-source later would mean replacing `fsm-winfsp` (Dokany, or a commercial WinFsp licence with our own bindings) and relicensing any third-party contributions.
+- Companies cannot embed DriveMount code in closed-source products.
+- Going closed-source later would mean replacing `drivemount-winfsp` (Dokany, or a commercial WinFsp licence with our own bindings) and relicensing any third-party contributions.
 
 **Note:** these obligations apply only when the program is **distributed**. Personal or in-house use triggers none of them.
 

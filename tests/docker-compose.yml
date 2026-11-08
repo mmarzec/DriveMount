@@ -1,10 +1,10 @@
 # Test servers for backend integration tests (spec §10.2).
 # Keys come from docker/gen-keys.sh; start everything with docker/servers.ps1 up.
-name: fsm-test
+name: drivemount-test
 
 x-sshd: &sshd
   build: ./docker/sshd
-  image: fsm-test-sshd
+  image: drivemount-test-sshd
   volumes:
     - ./docker/keys:/keys:ro
 
@@ -68,7 +68,7 @@ services:
   # FR-SSH-14: a server without the OpenSSH extensions.
   proftpd:
     build: ./docker/proftpd
-    image: fsm-test-proftpd
+    image: drivemount-test-proftpd
     volumes:
       - ./docker/keys:/keys:ro
     ports:

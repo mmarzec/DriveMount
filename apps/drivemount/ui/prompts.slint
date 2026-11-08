@@ -1,0 +1,316 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The small questions a connection asks, in front of everything else (spec 7.4). One shows at a time:
+// `drivemount_app::ui::prompts` keeps the queue, and this file draws the one it is given.
+
+import { CheckBox, LineEdit } from "std-widgets.slint";
+import { Theme, Icons, AppButton } from "theme.slint";
+import { KeyFileBox } from "dialog.slint";
+
+export enum PromptKind { secret, login, host-key, changed-key }
+
+export struct PromptView {
+    kind: PromptKind,
+    // Changes with each prompt, as two in a row can be of one kind.
+    serial: int,
+    title: string,
+    // Above the box, or the whole of the changed-key dialog's text.
+    message: string,
+    // For a secret.
+    can-remember: bool,
+    // The server said the answer may be shown as it is typed.
+    echo: bool,
+    // The server asked, so an empty answer is for it to judge.
+    may-be-empty: bool,
+    // For a host key.
+    key-type: string,
+    fingerprint: string,
+    old-fingerprint: string,
+    new-fingerprint: string,
+    // Where the old key is, and what to do about it.
+    known-hosts-line: string,
+    advice: string,
+}
+
+// What is typed. Rust takes it and empties it when the prompt ends.
+export struct PromptInput {
+    secret: string,
+    remember: bool,
+    use-key-file: bool,
+    key-file: string,
+}
+
+component Caption {
+    in property <string> label;
+    in property <string> value;
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Text {
+            width: 104px;
+            text: root.label;
+            accessible-role: none;
+        }
+
+        Text {
+            horizontal-stretch: 1;
+            text: root.value;
+            // A fingerprint or a path has no spaces to break at.
+            wrap: char-wrap;
+        }
+    }
+}
+
+export component PromptPanel {
+    in property <PromptView> view;
+    in-out property <PromptInput> input;
+    in property <bool> caps-lock;
+
+    callback ok();
+    callback cancel();
+    callback trust-once();
+    callback trust-save();
+    callback open-location();
+    callback browse(which: KeyFileBox);
+
+    property <bool> asks-for-text: root.view.kind == PromptKind.secret || root.view.kind == PromptKind.login;
+    property <bool> by-key: root.view.kind == PromptKind.login && root.input.use-key-file;
+    property <bool> can-answer: root.by-key
+        ? root.input.key-file != ""
+        : root.view.may-be-empty || root.input.secret != "";
+
+    TouchArea { }
+
+    Rectangle {
+        background: Theme.scrim;
+    }
+
+    // Sized through layouts, as `preferred-height` read from outside a layout counts wrapped text as one
+    // line, and the buttons would fall out of the bottom of the panel.
+    VerticalLayout {
+        alignment: center;
+        padding: 12px;
+
+        HorizontalLayout {
+            alignment: center;
+
+            frame := Rectangle {
+                width: min(root.width - 24px, 480px);
+                border-radius: Theme.card-radius;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: Theme.surface;
+
+                panel := VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: root.view.title;
+                        color: Theme.text;
+                        font-size: 18px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
+                    if root.view.message != "": Text {
+                        text: root.view.message;
+                        wrap: word-wrap;
+                    }
+
+                    if root.view.kind == PromptKind.login: HorizontalLayout {
+                        spacing: 8px;
+
+                        AppButton {
+                            text: @tr("Password");
+                            checkable: true;
+                            checked: !root.input.use-key-file;
+                            accessible-label: @tr("Use a password");
+                            clicked => {
+                                root.input.use-key-file = false;
+                            }
+                        }
+
+                        AppButton {
+                            text: @tr("Key file");
+                            checkable: true;
+                            checked: root.input.use-key-file;
+                            accessible-label: @tr("Use a key file");
+                            clicked => {
+                                root.input.use-key-file = true;
+                            }
+                        }
+                    }
+
+                    if root.by-key: HorizontalLayout {
+                        spacing: 8px;
+
+                        LineEdit {
+                            text <=> root.input.key-file;
+                            placeholder-text: @tr("Key file");
+                            accessible-label: @tr("Key file");
+                            accepted => {
+                                if (root.can-answer) {
+                                    root.ok();
+                                }
+                            }
+                        }
+
+                        AppButton {
+                            icon: Icons.folder-open;
+                            icon-only: true;
+                            accessible-label: @tr("Choose key file");
+                            clicked => {
+                                root.browse(KeyFileBox.login);
+                            }
+                        }
+                    }
+
+                    if root.asks-for-text: LineEdit {
+                        property <int> serial: root.view.serial;
+
+                        text <=> root.input.secret;
+                        input-type: root.view.echo ? InputType.text : InputType.password;
+                        placeholder-text: root.by-key ? @tr("Passphrase, if it has one") : "";
+                        accessible-label: root.by-key ? @tr("Passphrase") : root.view.title;
+                        init => {
+                            self.focus();
+                        }
+                        // Not on its way out: it would take the focus along, and the next prompt would have
+                        // none, so that even Esc went nowhere.
+                        changed serial => {
+                            if (root.asks-for-text) {
+                                self.focus();
+                            }
+                        }
+                        accepted => {
+                            if (root.can-answer) {
+                                root.ok();
+                            }
+                        }
+                    }
+
+                    if root.caps-lock && root.asks-for-text: Text {
+                        text: @tr("Caps Lock is on");
+                        color: Theme.amber;
+                    }
+
+                    if root.view.kind == PromptKind.secret && root.view.can-remember: CheckBox {
+                        text: @tr("Remember");
+                        checked <=> root.input.remember;
+                    }
+
+                    if root.asks-for-text: HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        AppButton {
+                            text: @tr("Cancel");
+                            clicked => {
+                                root.cancel();
+                            }
+                        }
+
+                        AppButton {
+                            text: @tr("OK");
+                            primary: true;
+                            enabled: root.can-answer;
+                            clicked => {
+                                root.ok();
+                            }
+                        }
+                    }
+
+                    // Each its own `if` in this one layout, as wrapped text inside a nested one is counted as one line.
+                    if root.view.kind == PromptKind.host-key: Caption {
+                        label: @tr("Key type:");
+                        value: root.view.key-type;
+                    }
+
+                    if root.view.kind == PromptKind.host-key: Caption {
+                        label: @tr("Fingerprint:");
+                        value: root.view.fingerprint;
+                    }
+
+                    if root.view.kind == PromptKind.host-key: Text {
+                        text: @tr("Check that this fingerprint matches the server before trusting it.");
+                        wrap: word-wrap;
+                    }
+
+                    if root.view.kind == PromptKind.host-key: HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        // The safe answer is the one Enter gives.
+                        AppButton {
+                            text: @tr("Cancel");
+                            init => {
+                                self.focus();
+                            }
+                            clicked => {
+                                root.cancel();
+                            }
+                        }
+
+                        AppButton {
+                            text: @tr("Trust once");
+                            clicked => {
+                                root.trust-once();
+                            }
+                        }
+
+                        AppButton {
+                            text: @tr("Trust and save");
+                            clicked => {
+                                root.trust-save();
+                            }
+                        }
+                    }
+
+                    if root.view.kind == PromptKind.changed-key: Caption {
+                        label: @tr("Old fingerprint:");
+                        value: root.view.old-fingerprint;
+                    }
+
+                    if root.view.kind == PromptKind.changed-key: Caption {
+                        label: @tr("New fingerprint:");
+                        value: root.view.new-fingerprint;
+                    }
+
+                    if root.view.kind == PromptKind.changed-key: Text {
+                        text: root.view.known-hosts-line;
+                        wrap: char-wrap;
+                    }
+
+                    if root.view.kind == PromptKind.changed-key: Text {
+                        text: root.view.advice;
+                        wrap: word-wrap;
+                    }
+
+                    if root.view.kind == PromptKind.changed-key: HorizontalLayout {
+                        alignment: end;
+                        spacing: 8px;
+
+                        AppButton {
+                            text: @tr("Open file location");
+                            clicked => {
+                                root.open-location();
+                            }
+                        }
+
+                        AppButton {
+                            text: @tr("Close");
+                            init => {
+                                self.focus();
+                            }
+                            clicked => {
+                                root.cancel();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

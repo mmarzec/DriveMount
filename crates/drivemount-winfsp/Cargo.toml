@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "drivemount-winfsp"
+description = "Adapter from RemoteFs to a WinFsp drive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+drivemount-vfs = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+drivemount-win = { workspace = true }
+futures = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+windows = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+winfsp = { workspace = true }
+winfsp-sys = { workspace = true }
+
+# Link arguments reach this package's own tests. A binary from another package needs its own build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winfsp = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+drivemount-sftp = { workspace = true }
+drivemount-vfs = { workspace = true, features = ["testing"] }
+russh = { workspace = true }
+russh-sftp = { workspace = true }
+tempfile = { workspace = true }
+windows = { workspace = true, features = ["Win32_System_Memory"] }

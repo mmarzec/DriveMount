@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
-# Installs WinFsp with its Developer feature, which building fsm-winfsp needs, on a CI runner.
+# Installs WinFsp with its Developer feature, which building drivemount-winfsp needs, on a CI runner.
 # Does nothing where it is there already, as on a runner set up by hand. Needs administrator rights.
 # Pinned by version and hash: a new WinFsp release means updating both here.
 

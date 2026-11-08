@@ -5,7 +5,7 @@
 | Status | **Accepted** |
 | Date | 2026-11-04 |
 | Decided by | AI agent, as plan task M1-02 asks; the owner reviews it at merge |
-| Applies to | `RemoteFs`, `Connector`, `MountBackend`, `Prompter` in `fsm-vfs` |
+| Applies to | `RemoteFs`, `Connector`, `MountBackend`, `Prompter` in `drivemount-vfs` |
 
 ## Context
 
@@ -38,7 +38,7 @@ A `stat` over SFTP takes 450,000 ns on a LAN and 50,700,000 ns on the WAN profil
 
 ## Decision
 
-Use **`async-trait`** on all four traits. The cost is the same as boxing by hand, so the choice is about code, and the macro removes the most repetition from the traits that are implemented most often. `fsm-vfs` re-exports the macro, so implementors use the same version.
+Use **`async-trait`** on all four traits. The cost is the same as boxing by hand, so the choice is about code, and the macro removes the most repetition from the traits that are implemented most often. `drivemount-vfs` re-exports the macro, so implementors use the same version.
 
 ## Consequences
 

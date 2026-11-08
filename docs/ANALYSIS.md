@@ -1,4 +1,4 @@
-# FS Manager: Analysis
+# DriveMount: Analysis
 
 | | |
 |---|---|
@@ -182,11 +182,11 @@ The tray uses the `tray-icon` crate on the same Windows message loop, proven in 
 | russh, russh-sftp, tokio, windows-rs, serde, toml, tracing | Apache-2.0 / MIT | No constraint |
 
 **Decision (2026-11-03): GPLv3 open source.**
-- FS Manager is licensed GPL-3.0-or-later and uses WinFsp through the `winfsp` crate, as specified.
+- DriveMount is licensed GPL-3.0-or-later and uses WinFsp through the `winfsp` crate, as specified.
 - It also meets the FLOSS exception's conditions (attribution, no proprietary components), so the unmodified WinFsp installer can be bundled.
 - Details and obligations: [ADR-0003](adr/0003-licence-gplv3.md).
 
-The drive layer stays isolated in one crate (`fsm-winfsp`). A later switch to Dokany or a commercial WinFsp licence would therefore not affect the rest of the design.
+The drive layer stays isolated in one crate (`drivemount-winfsp`). A later switch to Dokany or a commercial WinFsp licence would therefore not affect the rest of the design.
 
 ## 7. Conclusions
 

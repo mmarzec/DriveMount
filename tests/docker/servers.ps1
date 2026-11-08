@@ -14,7 +14,7 @@ function Invoke-Wsl {
 }
 
 function Test-SftpLogin([string]$Name, [string]$User, [string]$Key) {
-    $tmp = Join-Path $env:TEMP 'fsm-test-keys'
+    $tmp = Join-Path $env:TEMP 'drivemount-test-keys'
     # A batch file, not a pipe: PowerShell 5.1 prefixes piped text with a BOM that sftp rejects.
     $batch = Join-Path $tmp 'batch.txt'
     [IO.File]::WriteAllText($batch, "pwd`n")
@@ -37,7 +37,7 @@ switch ($Action) {
     }
     'check' {
         # Windows OpenSSH refuses private keys readable by other users, so use private copies.
-        $tmp = Join-Path $env:TEMP 'fsm-test-keys'
+        $tmp = Join-Path $env:TEMP 'drivemount-test-keys'
         New-Item -ItemType Directory -Force $tmp | Out-Null
         foreach ($f in 'id_ed25519', 'id_cert', 'id_cert-cert.pub') {
             Remove-Item (Join-Path $tmp $f) -Force -ErrorAction SilentlyContinue
