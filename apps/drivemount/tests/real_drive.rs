@@ -11,6 +11,7 @@
 
 use std::env;
 use std::fs;
+use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -26,6 +27,7 @@ use drivemount_vfs::{
     SecretSlot, SecretStore, async_trait,
 };
 use drivemount_win::drives::is_letter_free;
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::sync::{Notify, broadcast};
 use tokio::time::timeout;
@@ -330,4 +332,113 @@ async fn two_names_that_look_alike_mount_together_on_their_own_letters() {
         "the other stays"
     );
     world.unmounted(two_id).await;
+}
+
+/// A file of pseudo-random bytes, never the same twice in a row, and its SHA-256.
+fn random_file(path: &Path, size: u64, seed: u64) -> Vec<u8> {
+    let mut file = io::BufWriter::new(fs::File::create(path).unwrap());
+    let mut hash = Sha256::new();
+    let mut state = seed | 1;
+    let mut block = vec![0u8; 1 << 20];
+    let mut left = size;
+    while left > 0 {
+        for chunk in block.as_chunks_mut::<8>().0 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *chunk = state.to_le_bytes();
+        }
+        let take = usize::try_from(left.min(block.len() as u64)).unwrap();
+        file.write_all(&block[..take]).unwrap();
+        hash.update(&block[..take]);
+        left -= take as u64;
+    }
+    file.flush().unwrap();
+    hash.finalize().to_vec()
+}
+
+fn sha256_of(path: &Path) -> Vec<u8> {
+    let mut file = fs::File::open(path).unwrap();
+    let mut hash = Sha256::new();
+    let mut block = vec![0u8; 1 << 20];
+    loop {
+        let read = file.read(&mut block).unwrap();
+        if read == 0 {
+            return hash.finalize().to_vec();
+        }
+        hash.update(&block[..read]);
+    }
+}
+
+fn listed(folder: &Path) -> Vec<String> {
+    fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect()
+}
+
+/// Plan §9.2, NFR-REL-01 and NFR-REL-02 on a real drive over real SFTP: 1 GiB and 10,000 small files
+/// in and out through Win32 calls (`CopyFileExW`, `CreateFileW`, `FindFirstFileW`), hashes compared.
+/// Set `DRIVEMOUNT_TEST_HOST` to the WSL address (`wsl hostname -I`), as the localhost relay is slow.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S-03 server and WinFsp; takes minutes and 2 GiB of local disk"]
+async fn a_gibibyte_and_ten_thousand_small_files_go_in_and_out_unchanged() {
+    const SMALL_FILES: u64 = 10_000;
+    let saved = profile("M1-19 copy", SftpAuth::Password { remember: false });
+    let id = saved.id;
+    let mut world = world(vec![saved], Typist::new("tester"));
+    let local = TempDir::new().unwrap();
+    let letter = world.mounted(id).await;
+    let remote = on_drive(letter, &format!("m1-19-{}", Uuid::new_v4().simple()));
+
+    tokio::task::block_in_place(|| {
+        fs::create_dir(&remote).unwrap();
+
+        // 1 GiB.
+        let original = local.path().join("big-in");
+        let expected = random_file(&original, 1 << 30, 19);
+        let start = Instant::now();
+        fs::copy(&original, remote.join("big")).unwrap();
+        let copied_in = start.elapsed();
+        assert!(listed(&remote).contains(&"big".to_owned()), "NFR-REL-02");
+        let back = local.path().join("big-out");
+        let start = Instant::now();
+        fs::copy(remote.join("big"), &back).unwrap();
+        let copied_out = start.elapsed();
+        assert!(sha256_of(&back) == expected, "the GiB came back different");
+        println!("1 GiB in {copied_in:?}, out {copied_out:?}, hashes match");
+        fs::remove_file(&original).unwrap();
+        fs::remove_file(&back).unwrap();
+        fs::remove_file(remote.join("big")).unwrap();
+
+        // 10,000 small files, from empty to a little over a page.
+        let small = local.path().join("small");
+        fs::create_dir(&small).unwrap();
+        let start = Instant::now();
+        let mut expected = Vec::new();
+        for index in 0..SMALL_FILES {
+            let name = format!("f{index:05}");
+            let path = small.join(&name);
+            expected.push(random_file(&path, index % 4100, index));
+            fs::copy(&path, remote.join(&name)).unwrap();
+        }
+        let copied_in = start.elapsed();
+        let mut names = listed(&remote);
+        names.sort();
+        assert_eq!(names.len() as u64, SMALL_FILES, "NFR-REL-02");
+        let start = Instant::now();
+        for (index, name) in names.iter().enumerate() {
+            let back = small.join(format!("{name}.back"));
+            fs::copy(remote.join(name), &back).unwrap();
+            assert!(
+                sha256_of(&back) == expected[index],
+                "{name} came back different"
+            );
+        }
+        let copied_out = start.elapsed();
+        println!("{SMALL_FILES} files in {copied_in:?}, out {copied_out:?}, hashes match");
+        fs::remove_dir_all(&remote).unwrap();
+    });
+
+    world.unmounted(id).await;
 }

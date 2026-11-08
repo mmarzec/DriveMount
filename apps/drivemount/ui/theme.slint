@@ -7,7 +7,10 @@
 import { Palette } from "std-widgets.slint";
 
 export global Theme {
-    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    // Dark exactly when Fluent draws its own controls dark. `Palette.color-scheme` alone is not enough:
+    // under *System* it is `unknown`, which Fluent takes as "follow Windows", so a test of `== dark`
+    // drew light pages around dark-mode text boxes, whose borders then vanished (H-07).
+    out property <bool> dark: Palette.background.to-hsv().value < 0.5;
 
     // Surfaces.
     out property <color> bg: dark ? #262624 : #FAF9F5;

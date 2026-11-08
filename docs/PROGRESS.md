@@ -2,6 +2,16 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-08: M1-19 M1 exit verification
+
+**Status: done locally, not yet committed. The owner checked H-07's items 1–5 (fine after one fix), and item 6, the Windows agent, passes.** The results and the owner's steps are in [spikes/m1-exit.md](spikes/m1-exit.md). Every automated item of plan §9.2 passes, though "in CI" cannot be met until H-02. `fmt`, `clippy --workspace -D warnings`, both script checks and the workspace's non-ignored tests pass (949 passing, 158 ignored). Against S-03: `mount_one.rs` 15/15, `drivemount_exe.rs` 3/3, `real_drive.rs` 7/7, `fsx` and `winfsp_tests` on `MemFs` and over SFTP. **Not run:** the Linux container check, as only Windows-only tests and an example changed. The other ignored suites were also not run, as no product code changed.
+
+- **Added:** auth-method, jump-host and host-key tests through `examples/mount_one.rs`, including `ssh.exe -o BatchMode=yes` accepting what *Trust and save* wrote. Also a `taskkill /F` of `drivemount.exe` with a drive up, and 1 GiB and 10,000 small files in and out of a real drive with SHA-256 compared. `mount_one`'s `--answers-env` answers are now used in order across rounds.
+- **The agent:** the `ssh-agent` service was disabled on this PC, and only an administrator can start it. The owner started it, and `the_windows_agent_mounts` (`mount_one.rs`) then passed: the key goes in through standard input and comes out again at the end. Pageant is not installed here, so it was not tried. The theme fix's `StyleMetrics.window-background` was deprecated, so it reads `Palette.background` now.
+- **For M2-08: a new file costs a listing of its whole folder.** 10,000 files took 44 minutes to copy in, against 2.5 to copy out. Each create drops the parent's cached listing, and the next new name is looked up case-insensitively in a fresh listing. That costs ~50 µs per entry per file, so filling a folder is quadratic. It breaks NFR-PERF-07. The figures and the likely fix are in `m1-exit.md` §4.
+- **H-07 found so far:** text boxes with no border under *System* in a dark Windows, as our theme read `unknown` as light while Fluent followed Windows. Fixed (`m1-exit.md`, H7-1). The screenshots taken so far all forced `--light` or `--dark`, so none of them showed it. `i-slint-core` (=1.18.1, already in the tree) is now a dev-dependency, as only it can set the system scheme in a test.
+- **Next:** tick M1-19 in the plan, commit, and go on to M2.
+
 ## 2026-11-08: UI redesign (owner's request, not a plan task)
 
 **Status: done, committed on `main`.** `fmt`, `clippy --workspace -D warnings`, the SPDX check and `cargo test -p drivemount` pass (170 unit tests, up from 161). Screenshots of `examples/main_window.rs` (list light and dark, empty, the connection page, the Add page) were taken and shown to the owner.

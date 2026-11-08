@@ -815,7 +815,35 @@ fn the_theme_can_be_forced_either_way_and_handed_back() {
     assert!(!fixture.ui.window().get_is_dark());
     fixture.ui.set_theme(Theme::Dark);
     fixture.ui.set_theme(Theme::System);
-    assert!(!fixture.ui.window().get_is_dark());
+    assert!(
+        !fixture.ui.window().get_is_dark(),
+        "the testing system is light"
+    );
+}
+
+/// Windows in dark mode, the theme left at *System*: our colours and Fluent's text boxes must agree,
+/// or the boxes lose their borders on the page (H-07). Then back again, while running.
+#[test]
+fn under_system_the_page_and_the_text_boxes_follow_windows_together() {
+    use i_slint_core::items::ColorScheme;
+    let set_system = |scheme| {
+        i_slint_core::context::with_global_context(
+            || unreachable!("the testing back-end is up"),
+            |context| context.set_color_scheme(scheme),
+        )
+        .unwrap();
+    };
+    let fixture = Fixture::new(Vec::new());
+    fixture.ui.set_theme(Theme::System);
+
+    set_system(ColorScheme::Dark);
+    let dark = fixture.ui.window().get_is_dark();
+    set_system(ColorScheme::Light);
+    let light = fixture.ui.window().get_is_dark();
+    set_system(ColorScheme::Unknown);
+
+    assert!(dark, "Windows dark, page light");
+    assert!(!light, "Windows light, page dark");
 }
 
 #[test]

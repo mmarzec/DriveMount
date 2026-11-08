@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! `drivemount.exe` itself: M1-18's second criterion. It starts, shows a saved profile, writes its log where
-//! it should, and ends when it is told to close. `APPDATA`, `LOCALAPPDATA` and `USERPROFILE` are pointed
+//! it should, and ends when it is told to close. Killed instead, it leaves no drive (M1-19). `APPDATA`, `LOCALAPPDATA` and `USERPROFILE` are pointed
 //! at a temporary folder, so nothing of the user's is read or changed. It opens a real window, which is
 //! read through UI Automation. No keys or clicks are sent.
 //!
@@ -17,7 +17,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use drivemount_core::config::{Config, ConfigStore};
-use drivemount_core::profile::{Profile, Protocol, SftpAuth, SftpProfile};
+use drivemount_core::profile::{DriveChoice, Profile, Protocol, SftpAuth, SftpProfile};
+use drivemount_vfs::DriveLetter;
+use drivemount_win::drives::is_letter_free;
 use tempfile::TempDir;
 
 const PATIENCE: Duration = Duration::from_secs(30);
@@ -180,12 +182,8 @@ fn it_starts_shows_the_saved_profile_logs_and_closes() {
 
 /// The whole way round on the real event loop: a press goes to the engine, a question comes back from
 /// a real login, the answer goes back to it, the row hears of the drive, and closing leaves no drive.
-#[test]
-#[ignore = "opens a real window, and needs the S-03 server and WinFsp"]
-fn a_mount_from_the_window_asks_about_the_key_and_closing_takes_the_drive_away() {
-    let home = TempDir::new().unwrap();
-    let roaming = home.path().join("Roaming");
-    let local = home.path().join("Local");
+/// A profile for the S-03 server that logs in with a key file, so nothing is typed.
+fn key_profile() -> Profile {
     let key = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/docker/keys/id_ed25519");
     let auth = SftpAuth::KeyFile {
         path: key,
@@ -193,10 +191,82 @@ fn a_mount_from_the_window_asks_about_the_key_and_closing_takes_the_drive_away()
     };
     let mut sftp = SftpProfile::new("localhost", "keyonly", auth);
     sftp.port = 2222;
+    Profile::new(NAME, Protocol::Sftp(sftp))
+}
+
+/// NFR-REL-04 for `drivemount.exe` itself (plan §9.2): killed with a drive up, it leaves none.
+#[test]
+#[ignore = "opens a real window, and needs the S-03 server and WinFsp"]
+fn killing_it_with_a_drive_up_leaves_no_drive() {
+    let home = TempDir::new().unwrap();
+    let roaming = home.path().join("Roaming");
+    let local = home.path().join("Local");
+    let letter = ('D'..='Z')
+        .rev()
+        .filter_map(DriveLetter::new)
+        .find(|letter| is_letter_free(*letter).unwrap())
+        .expect("no free letter");
+    let mut profile = key_profile();
+    profile.drive = DriveChoice::Letter(letter);
     let mut store = ConfigStore::open(roaming.join("DriveMount").join("config.toml"));
     store
         .save(&Config {
-            profiles: vec![Profile::new(NAME, Protocol::Sftp(sftp))],
+            profiles: vec![profile],
+            ..Config::default()
+        })
+        .unwrap();
+    let script = home.path().join("press.ps1");
+    fs::write(&script, PRESS).unwrap();
+
+    let mut app = Running(
+        Command::new(env!("CARGO_BIN_EXE_drivemount"))
+            .env("APPDATA", &roaming)
+            .env("LOCALAPPDATA", &local)
+            .env("USERPROFILE", home.path())
+            .spawn()
+            .unwrap(),
+    );
+    let id = app.0.id();
+    press_when_there(id, &script, &format!("Mount {NAME}"));
+    press_when_there(id, &script, "Trust and save");
+    let start = Instant::now();
+    while is_letter_free(letter).unwrap() {
+        assert!(start.elapsed() < PATIENCE, "{letter} never came up");
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert!(
+        fs::read_dir(format!(r"{letter}\")).is_ok(),
+        "{letter} works"
+    );
+
+    let killed = Command::new("taskkill.exe")
+        .args(["/F", "/PID", &id.to_string()])
+        .output()
+        .unwrap();
+    assert!(killed.status.success(), "{killed:?}");
+    app.0.wait().unwrap();
+
+    let start = Instant::now();
+    while !is_letter_free(letter).unwrap() {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "{letter} is still there after the kill"
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+    println!("{letter} went {:?} after the kill", start.elapsed());
+}
+
+#[test]
+#[ignore = "opens a real window, and needs the S-03 server and WinFsp"]
+fn a_mount_from_the_window_asks_about_the_key_and_closing_takes_the_drive_away() {
+    let home = TempDir::new().unwrap();
+    let roaming = home.path().join("Roaming");
+    let local = home.path().join("Local");
+    let mut store = ConfigStore::open(roaming.join("DriveMount").join("config.toml"));
+    store
+        .save(&Config {
+            profiles: vec![key_profile()],
             ..Config::default()
         })
         .unwrap();

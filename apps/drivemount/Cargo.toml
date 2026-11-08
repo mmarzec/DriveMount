@@ -49,4 +49,8 @@ tokio = { workspace = true }
 uuid = { workspace = true }
 
 [target.'cfg(windows)'.dev-dependencies]
+hmac = { workspace = true }
 i-slint-backend-testing = { workspace = true }
+i-slint-core = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }

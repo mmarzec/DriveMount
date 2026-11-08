@@ -13,7 +13,8 @@
 //!   --logs FOLDER       default: logs beside the configuration; the level is the file's own
 //!   --host-key ANSWER   to an unknown key: reject (default), once or save
 //!   --secret-env VAR    the environment variable holding the password or passphrase
-//!   --answers-env VAR   the one holding keyboard-interactive answers, separated by commas
+//!   --answers-env VAR   the one holding keyboard-interactive answers, separated by commas, used in
+//!                       order across the rounds the server asks
 //!   --login-key FILE    what an *Ask each time* profile logs in with, instead of the secret
 //! ```
 //!
@@ -30,11 +31,12 @@ fn main() -> std::process::ExitCode {
 
 #[cfg(windows)]
 mod real {
+    use std::collections::VecDeque;
     use std::env;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::ExitCode;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex, PoisonError};
     use std::time::Duration;
 
     use anyhow::{Context, Result, anyhow, bail, ensure};
@@ -109,7 +111,7 @@ mod real {
     /// Answers what a user would have, from the arguments. What it was not given, it cancels.
     struct Script {
         secret: Option<String>,
-        answers: Vec<String>,
+        answers: Mutex<VecDeque<String>>,
         login_key: Option<PathBuf>,
         host_key: HostKeyDecision,
     }
@@ -140,11 +142,12 @@ mod real {
             &self,
             request: KbdIntRequest,
         ) -> Option<Vec<Secret<String>>> {
-            if request.prompts.len() > self.answers.len() {
+            let mut answers = self.answers.lock().unwrap_or_else(PoisonError::into_inner);
+            if request.prompts.len() > answers.len() {
                 return None;
             }
-            let answers = self.answers.iter().take(request.prompts.len());
-            Some(answers.cloned().map(Secret::new).collect())
+            let these = answers.drain(..request.prompts.len());
+            Some(these.map(Secret::new).collect())
         }
 
         async fn host_key(&self, request: HostKeyRequest) -> HostKeyDecision {
@@ -260,9 +263,9 @@ mod real {
         let answers = from_environment(arguments.answers_env.as_ref())?;
         let prompter = Arc::new(Script {
             secret: from_environment(arguments.secret_env.as_ref())?,
-            answers: answers.map_or_else(Vec::new, |answers| {
+            answers: Mutex::new(answers.map_or_else(VecDeque::new, |answers| {
                 answers.split(',').map(str::to_owned).collect()
-            }),
+            })),
             login_key: arguments.login_key,
             host_key: arguments.host_key,
         });

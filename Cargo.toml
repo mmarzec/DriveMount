@@ -59,6 +59,8 @@ slint = { version = "=1.18.1", default-features = false, features = [
 ] }
 slint-build = "=1.18.1"
 i-slint-backend-testing = "=1.18.1"
+# Tests only: to turn the system colour scheme dark, which the testing back-end cannot.
+i-slint-core = "=1.18.1"
 tray-icon = "=0.26.1"
 
 # Config and data

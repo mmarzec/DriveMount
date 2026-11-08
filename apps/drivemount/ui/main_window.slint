@@ -215,7 +215,7 @@ export component MainWindow inherits Window {
     property <bool> interactive: !root.asking && !root.dialog-open && !root.prompt-open;
     // Neither the connection page nor the Add/Edit page is in the list's place.
     property <bool> showing-list: !root.page-open && !root.dialog-open;
-    out property <bool> is-dark: Palette.color-scheme == ColorScheme.dark;
+    out property <bool> is-dark: Theme.dark;
 
     // The tooltip of the row under the mouse. Its timer runs only while a row is hovered and the tip
     // is not yet up, so nothing wakes up at idle (NFR-PERF-05).
