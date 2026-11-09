@@ -163,7 +163,7 @@ One Windows limitation must be handled in the UI: **error 1219**. Windows refuse
 | Tauri (webview) | Small exe, but WebView2 processes cost 100 MB+ of RAM | Rejected |
 | Win32 / WinUI directly | Native, but slow to build and harder to maintain | Rejected |
 
-The tray uses the `tray-icon` crate on the same Windows message loop, proven in spike M0-3. Slint 1.18 added its own `SystemTrayIcon`, which M2-03 will compare.
+The spike used the `tray-icon` crate on the same Windows message loop. M2-03 compared it with Slint 1.18's own `SystemTrayIcon` and chose neither: the tray is `Shell_NotifyIconW` in `drivemount_win::tray`, on a thread of its own (spec §5.3 says why).
 
 ### 5.7 Configuration and secrets
 

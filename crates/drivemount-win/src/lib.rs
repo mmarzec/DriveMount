@@ -14,6 +14,7 @@ pub mod credentials;
 pub mod drives;
 pub mod events;
 pub mod shell;
+pub mod tray;
 pub mod winfsp;
 
 #[cfg(test)]

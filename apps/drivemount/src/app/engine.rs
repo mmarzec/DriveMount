@@ -14,7 +14,6 @@ use drivemount_core::manager::{MountEvent, MountManager, MountRefused};
 use drivemount_vfs::DriveLetter;
 use drivemount_win::drives::is_letter_free;
 use drivemount_win::shell;
-use slint::ComponentHandle;
 use tokio::runtime::Handle;
 use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::mpsc;
@@ -235,12 +234,8 @@ impl Engine {
                 });
             }
             UiCommand::OpenSettings => info!("there is no settings page until M2-05"),
-            // Until the tray (M2-03) there would be no way back from hiding, whatever `close_to_tray`
-            // says, so Esc minimizes and the close button quits.
-            UiCommand::HideWindow => {
-                to_ui(Box::new(|ui| ui.window().window().set_minimized(true)));
-            }
-            UiCommand::CloseWindow => {
+            // M2-06 asks first while something is mounted.
+            UiCommand::Quit => {
                 to_ui(Box::new(|_| {
                     if let Err(error) = slint::quit_event_loop() {
                         warn!(%error, "the window's loop could not be ended");

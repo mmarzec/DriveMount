@@ -314,7 +314,7 @@ DriveMount is open source under **GPL-3.0-or-later**, with WinFsp used through t
 │  │ Slint main window     │─────────▶│ MountManager             │       ┌──────────────────┐  │
 │  │ Profile dialog        │          │  • state machine/profile │       │ drivemount-winfsp       │  │
 │  │ Prompts               │◀─────────│  • reconnect scheduler   │       │ FileSystemContext│  │
-│  │ tray-icon             │  events  │  • letter allocator      │       │  → RemoteFs      │  │
+│  │ Tray (own thread)     │  events  │  • letter allocator      │       │  → RemoteFs      │  │
 │  │ Win32 msgs (power,    │          │ ConfigStore  SecretStore │       │  (block_on with  │  │
 │  │ session, net change)  │          └────────────┬─────────────┘       │   deadline)      │  │
 │  └──────────────────────┘                        │ MountBackend        └────────┬─────────┘  │
@@ -374,8 +374,9 @@ apps/drivemount ──▶ all of the above
 ### 5.3 Process and threading model
 
 - **One process** holds the UI and the engine. It runs unelevated in the user's session, so drive letters land in the user's logon session and are visible to their Explorer.
-- **UI thread**: runs the Slint event loop and `tray-icon`. Toast clicks arrive through the toast's `Activated` handler. Everything reaches Slint through `invoke_from_event_loop`.
+- **UI thread**: runs the Slint event loop. Toast clicks arrive through the toast's `Activated` handler. Everything reaches Slint through `invoke_from_event_loop`.
 - **System events thread** (`drivemount_win::events`): a hidden top-level window, not a message-only one, as those get no broadcasts. It receives `WM_POWERBROADCAST`, `WM_QUERYENDSESSION`/`WM_ENDSESSION`, and later the "show window" message from a second instance. It has a thread of its own because the session's end is handled inside `WM_ENDSESSION`: Windows waits for that message, and may end the process once it returns. Network changes come from `NotifyIpInterfaceChange` and `NotifyUnicastIpAddressChange`, on the system's thread pool. Resume and network changes are handled as below (§5.5, "Network changes"); the session's end unmounts everything from that thread, for at most 4 s, then quits the event loop (FR-APP-05).
+- **Tray thread** (`drivemount_win::tray`): the notification-area icon, on `Shell_NotifyIconW` directly, with a hidden top-level window of its own, so that it hears `TaskbarCreated` and puts the icon back when Explorer restarts, and the menu's modal loop holds up nothing else. Clicks and menu choices reach the window through `invoke_from_event_loop`; the window sends the icon, tooltip and menu after every change to its list. If the shell does not take the icon, it is tried again every 2 s for a minute, and on `TaskbarCreated`. M2-03 chose this over Slint's `SystemTrayIcon` (its Windows menu has no check marks, and its window is message-only, so the icon is lost when Explorer restarts) and over `tray-icon` (it ignores a failed `NIM_ADD`, so the app could not know the window has no way back).
 - **Tokio runtime**: multi-threaded with 2–4 workers. All network I/O, the mount manager and the reconnect timers run here.
 - **WinFsp dispatcher threads**: WinFsp calls our `FileSystemContext` on its own thread pool, sized by `winfsp_threads`. Each callback runs `runtime_handle.block_on(timeout(op_deadline, fut))`. Dispatcher threads are not Tokio threads, so `block_on` is allowed there.
 - **UI ↔ engine**:
@@ -1014,6 +1015,13 @@ This page replaces the list area inside the main window; a ← back arrow return
    Quit
 ```
 
+- **Icon** (FR-TRAY-01): a drive, grey when idle and grey-blue otherwise, with a badge: a green tick (*mounted*), an amber ring (*reconnecting*), a red "!" (*error*). Error outranks reconnecting, which outranks mounted. Each is an `.ico` at 16, 20, 24 and 32 px, drawn by `scripts/make-tray-icons.py`; the size nearest the system's small-icon size is used.
+- **Tooltip** (FR-TRAY-02): "DriveMount: " and the status bar's counts joined by commas, or "DriveMount" alone when there is nothing to count.
+- **Profiles:** in the list's order, with the letter the row shows. A check mark when *Mounted* or *Reconnecting*. On the right: *Connecting…*, *Reconnecting…*, *Unmounting…* or *Failed*. Choosing one does what the row's button does (mount, retry, cancel or unmount), and is greyed when that button is. Unreadable entries are not listed.
+- **Unmount all** is greyed when nothing is up. **Open DriveMount** is the default item, in bold.
+- **Clicks:** a left click, or Enter on the icon, hides a window that is on screen, and shows and focuses one that is hidden or minimized (FR-TRAY-03). A double click counts once. The right button, or the menu key, opens the menu.
+- **No icon in the tray:** the window cannot be got back once hidden, so until the shell takes the icon × quits and Esc minimizes, whatever `close_to_tray` says.
+
 ### 7.7 Keyboard
 
 | Key | Action |
@@ -1183,7 +1191,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 | `russh-sftp` too slow or buggy | Medium / High | Spike M0-2 found the speed fine. M1-10 found three decoding limits (§5.7), worked around for now. Fallback: our own minimal SFTP v3 client on `russh` channels (the protocol is small: about 20 packet types). |
 | Network-drive mode or some volume flags misbehave from an unelevated process | Low / High | Spike M0-1. Fallback: a plain drive-letter mount (not network mode). |
 | Explorer is slow on high-latency links (many metadata calls) | Medium / Medium | Attribute, directory and negative caches; noise names; read-ahead; a configurable cache TTL |
-| Slint and tray integration issues | Low / Medium | Spike M0-3. Fallback: a raw Win32 `Shell_NotifyIcon` in `drivemount-win`. |
+| Slint and tray integration issues | Low / Medium | Spike M0-3. M2-03 took the fallback, a raw Win32 `Shell_NotifyIcon` in `drivemount-win` (§5.3). |
 | A dependency with a GPLv3-incompatible licence (e.g. `GPL-2.0-only`, proprietary) is added | Low / Medium | `cargo deny` allow-list in CI (NFR-LIC-05). Licence model itself is decided (ADR-0003). |
 | NFS crates are young (no NFSv4, no Kerberos) | Medium / Medium | M4 is NFSv3 only, isolated behind `RemoteFs`. Fallback: our own ONC-RPC/NFSv3 client (a well-documented protocol). |
 | SMB error 1219 confuses users | High / Low | A clear message (E-SMB-1219). Later: a pure-Rust SMB fallback. |

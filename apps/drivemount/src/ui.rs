@@ -7,7 +7,8 @@
 //!
 //! The markup is in `ui/*.slint`, and only draws what it is given. What the list shows is worked out
 //! in [`list`], what the dialog's boxes mean in [`form`], the queue of prompts is in [`prompts`], and
-//! error texts in [`errors`]. All of this runs on the UI thread but [`UiPrompter`].
+//! error texts in [`errors`], and what the tray shows in [`tray`]. All of this runs on the UI thread
+//! but [`UiPrompter`].
 
 mod dialog;
 pub mod errors;
@@ -16,6 +17,7 @@ mod list;
 mod page;
 mod prompts;
 mod remembered;
+mod tray;
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -29,6 +31,7 @@ use drivemount_core::config::{
 use drivemount_core::manager::{MountEvent, MountState, ProfileChangeError};
 use drivemount_core::profile::Profile;
 use drivemount_vfs::{ConnectError, DriveLetter, HostKeyDecision, MountError, Secret, SecretSlot};
+use drivemount_win::tray::{Tray, TrayContent, TrayEvent};
 use slint::{
     CloseRequestResponse, ComponentHandle, LogicalSize, Model, ModelRc, PhysicalPosition,
     PlatformError, SharedString, VecModel,
@@ -42,6 +45,8 @@ use self::page::{Details, Login};
 pub use self::prompts::UiPrompter;
 use self::prompts::{Mailbox, Prompts};
 use self::remembered::{Placement, Remembered};
+use self::tray::TrayIds;
+pub use self::tray::{TrayChoice, TrayIcon};
 
 #[allow(
     clippy::all,
@@ -137,10 +142,26 @@ pub enum UiCommand {
     OpenSettings,
     /// Open [`WINFSP_DOWNLOAD_URL`].
     DownloadWinFsp,
-    /// Esc with nothing left to close: hide to the tray (spec §7.7).
-    HideWindow,
-    /// The window's close button: hide to the tray or quit, by `close_to_tray` (FR-APP-02).
-    CloseWindow,
+    /// Quit: the close button with `close_to_tray` off or no tray (FR-APP-02), or the tray's *Quit*.
+    Quit,
+}
+
+/// Where the tray's icon goes: [`Tray`] in the app, something that records it in tests.
+pub trait TraySink {
+    /// Show this. It may be what is shown already.
+    fn show(&self, content: TrayContent);
+    /// Whether the icon is in the tray, so that a hidden window can be got back.
+    fn is_in_tray(&self) -> bool;
+}
+
+impl TraySink for Tray {
+    fn show(&self, content: TrayContent) {
+        self.set(content);
+    }
+
+    fn is_in_tray(&self) -> bool {
+        Self::is_in_tray(self)
+    }
 }
 
 struct Inner {
@@ -163,6 +184,8 @@ struct Inner {
     prompt_serial: Cell<i32>,
     remembered: RefCell<Remembered>,
     remembered_path: Option<PathBuf>,
+    tray: RefCell<Option<Box<dyn TraySink>>>,
+    tray_ids: RefCell<TrayIds>,
 }
 
 /// The main window, and what it needs to keep showing the right thing. Dropping it closes the window,
@@ -233,6 +256,8 @@ impl MainUi {
             prompt_serial: Cell::new(0),
             remembered: RefCell::new(remembered),
             remembered_path,
+            tray: RefCell::new(None),
+            tray_ids: RefCell::default(),
         });
         connect(&window, &inner);
         inner.refresh();
@@ -336,6 +361,32 @@ impl MainUi {
         self.window.set_failure_text(text);
     }
 
+    /// Where the tray icon goes, or none. It is shown at once, and kept up to date from then on.
+    pub fn set_tray(&self, tray: Option<Box<dyn TraySink>>) {
+        *self.inner.tray.borrow_mut() = tray;
+        self.inner.refresh();
+    }
+
+    /// What the user did to the tray icon. A click shows or hides the window (FR-TRAY-03), and the
+    /// menu's items act as the window's buttons would (FR-TRAY-04).
+    pub fn tray_event(&self, event: TrayEvent) {
+        match event {
+            TrayEvent::Clicked => self.inner.toggle_window(),
+            TrayEvent::Chosen(id) => {
+                let choice = self.inner.tray_ids.borrow().choice(id);
+                if let Some(choice) = choice {
+                    self.inner.tray_chose(choice);
+                }
+            }
+        }
+    }
+
+    /// Whether the window is on screen: shown and not minimized.
+    #[must_use]
+    pub fn is_window_up(&self) -> bool {
+        self.inner.is_window_up()
+    }
+
     /// The theme (FR-SET-03). *System* follows Windows.
     pub fn set_theme(&self, theme: Theme) {
         self.window.invoke_set_theme(match theme {
@@ -415,8 +466,12 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     let handler = Rc::clone(inner);
     window.window().on_close_requested(move || {
         handler.remember_placement();
-        handler.send(UiCommand::CloseWindow);
-        CloseRequestResponse::KeepWindowShown
+        if handler.list.borrow().close_to_tray() && handler.has_tray() {
+            CloseRequestResponse::HideWindow
+        } else {
+            handler.send(UiCommand::Quit);
+            CloseRequestResponse::KeepWindowShown
+        }
     });
 }
 
@@ -445,9 +500,72 @@ impl Inner {
         }
     }
 
+    /// Esc with nothing left to close: to the tray, or minimized if there is no tray to come back
+    /// from.
     fn hide(&self) {
         self.remember_placement();
-        self.send(UiCommand::HideWindow);
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if self.has_tray() {
+            if let Err(error) = window.hide() {
+                tracing::warn!(%error, "the window could not be hidden");
+            }
+        } else {
+            window.window().set_minimized(true);
+        }
+    }
+
+    fn has_tray(&self) -> bool {
+        self.tray
+            .borrow()
+            .as_ref()
+            .is_some_and(|tray| tray.is_in_tray())
+    }
+
+    fn is_window_up(&self) -> bool {
+        self.window.upgrade().is_some_and(|window| {
+            let window = window.window();
+            window.is_visible() && !window.is_minimized()
+        })
+    }
+
+    /// A click on the tray icon (FR-TRAY-03).
+    fn toggle_window(&self) {
+        if self.is_window_up() {
+            self.hide();
+        } else {
+            self.bring_to_front();
+        }
+    }
+
+    fn tray_chose(&self, choice: TrayChoice) {
+        match choice {
+            TrayChoice::Toggle(id) => {
+                let row = self
+                    .list
+                    .borrow()
+                    .items()
+                    .into_iter()
+                    .find_map(|item| match item.body {
+                        Body::Profile(row) if row.id == id => Some(row),
+                        _ => None,
+                    });
+                if let Some(row) = row {
+                    self.primary(&row);
+                }
+            }
+            TrayChoice::UnmountAll => self.unmount_all(),
+            TrayChoice::Open => self.bring_to_front(),
+            TrayChoice::Quit => self.send(UiCommand::Quit),
+        }
+    }
+
+    fn update_tray(&self, texts: &Texts<'_>, list: &ListState) {
+        if let Some(tray) = self.tray.borrow().as_ref() {
+            let content = tray::content(texts, list, &mut self.tray_ids.borrow_mut());
+            tray.show(content);
+        }
     }
 
     /// The list item on this line. The model is only changed here on this thread, so it is the one the
@@ -766,19 +884,7 @@ impl Inner {
         if gone && self.page.borrow_mut().take().is_some() {
             self.room_follows_pages();
         }
-        let counts = list.counts();
-        let number = |value: usize| i32::try_from(value).unwrap_or(i32::MAX);
-        let parts: Vec<SharedString> = [
-            (counts.mounted > 0).then(|| texts.invoke_count_mounted(number(counts.mounted))),
-            (counts.connecting > 0)
-                .then(|| texts.invoke_count_connecting(number(counts.connecting))),
-            (counts.reconnecting > 0)
-                .then(|| texts.invoke_count_reconnecting(number(counts.reconnecting))),
-            (counts.failed > 0).then(|| texts.invoke_count_failed(number(counts.failed))),
-        ]
-        .into_iter()
-        .flatten()
-        .collect();
+        let parts = tray::count_texts(&texts, list.counts());
         window.set_status_text(if parts.is_empty() {
             texts.invoke_nothing_mounted()
         } else {
@@ -789,6 +895,8 @@ impl Inner {
                 .join(" · ")
                 .into()
         });
+        // The tray follows every change to the list, as the window does.
+        self.update_tray(&texts, &list);
     }
 }
 

@@ -61,7 +61,6 @@ slint-build = "=1.18.1"
 i-slint-backend-testing = "=1.18.1"
 # Tests only: to turn the system colour scheme dark, which the testing back-end cannot.
 i-slint-core = "=1.18.1"
-tray-icon = "=0.26.1"
 
 # Config and data
 serde = { version = "=1.0.229", features = ["derive"] }
@@ -160,8 +159,6 @@ opt-level = "s"
 [profile.release.package.lyon_geom]
 opt-level = "s"
 [profile.release.package.lyon_path]
-opt-level = "s"
-[profile.release.package.muda]
 opt-level = "s"
 [profile.release.package.parley]
 opt-level = "s"

@@ -4,6 +4,7 @@
 //! no screen. What the list holds is tested in `list.rs`, and the profile dialog in `tests/dialog.rs`.
 
 mod dialog;
+mod tray;
 
 use std::cell::{Cell, RefCell};
 use std::fs;
@@ -479,8 +480,10 @@ fn the_shortcuts_of_the_table_work() {
         [UiCommand::OpenInExplorer(letter('Q'))]
     );
 
+    // With no tray to come back from, Esc minimizes.
     fixture.key(Key::Escape);
-    assert_eq!(fixture.take_sent(), [UiCommand::HideWindow]);
+    assert!(fixture.take_sent().is_empty());
+    assert!(fixture.ui.window().window().is_minimized());
 }
 
 #[test]
@@ -874,7 +877,7 @@ fn under_system_the_page_and_the_text_boxes_follow_windows_together() {
 }
 
 #[test]
-fn closing_sends_the_command_and_remembers_the_size_for_next_time() {
+fn closing_with_no_tray_quits_and_remembers_the_size_for_next_time() {
     let folder = tempfile::tempdir().unwrap();
     let path = folder.path().join("ui-state.toml");
 
@@ -885,7 +888,7 @@ fn closing_sends_the_command_and_remembers_the_size_for_next_time() {
         .window()
         .set_size(LogicalSize::new(700.0, 500.0));
     fixture.dispatch(WindowEvent::CloseRequested);
-    assert_eq!(fixture.take_sent(), [UiCommand::CloseWindow]);
+    assert_eq!(fixture.take_sent(), [UiCommand::Quit]);
     drop(fixture);
 
     let text = fs::read_to_string(&path).unwrap();
@@ -908,7 +911,7 @@ fn escape_remembers_the_size_too() {
     let path = folder.path().join("ui-state.toml");
     let fixture = Fixture::with_path(Some(path.clone()));
     fixture.key(Key::Escape);
-    assert_eq!(fixture.take_sent(), [UiCommand::HideWindow]);
+    assert!(fixture.take_sent().is_empty());
     assert!(fs::read_to_string(&path).unwrap().contains("width = 640"));
 }
 

@@ -180,8 +180,7 @@ auth = "agent"
                 config.unreadable.retain(|other| *other != entry);
                 ui.set_config(config.clone());
             }
-            UiCommand::HideWindow | UiCommand::CloseWindow => {
-                // There is no tray to come back from.
+            UiCommand::Quit => {
                 let _ = slint::quit_event_loop();
             }
             UiCommand::Save { profile, .. } => {

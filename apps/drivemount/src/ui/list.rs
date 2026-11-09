@@ -186,6 +186,11 @@ impl ListState {
         &self.config.profiles
     }
 
+    /// Whether the close button hides the window to the tray (FR-APP-02).
+    pub(super) const fn close_to_tray(&self) -> bool {
+        self.config.settings.close_to_tray
+    }
+
     pub(super) const fn is_read_only(&self) -> bool {
         self.read_only
     }

@@ -16,7 +16,7 @@ use std::process::{Child, Command};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use drivemount_core::config::{Config, ConfigStore};
+use drivemount_core::config::{Config, ConfigStore, Settings};
 use drivemount_core::profile::{DriveChoice, Profile, Protocol, SftpAuth, SftpProfile};
 use drivemount_vfs::DriveLetter;
 use drivemount_win::drives::is_letter_free;
@@ -90,6 +90,15 @@ fn press_when_there(process: u32, script: &Path, label: &str) {
     }
 }
 
+/// `close_to_tray` off, so that the close button ends the app (FR-APP-02), as a test cannot reach
+/// the tray's *Quit*.
+fn closing_quits() -> Settings {
+    Settings {
+        close_to_tray: false,
+        ..Settings::default()
+    }
+}
+
 /// Asks it to close, as the close button would, and waits for it to end.
 fn close_and_wait(app: &mut Running) -> Option<i32> {
     // Without /F this is WM_CLOSE.
@@ -143,6 +152,7 @@ fn it_starts_shows_the_saved_profile_logs_and_closes() {
     store
         .save(&Config {
             profiles: vec![saved_profile()],
+            settings: closing_quits(),
             ..Config::default()
         })
         .unwrap();
@@ -178,6 +188,58 @@ fn it_starts_shows_the_saved_profile_logs_and_closes() {
     assert!(log.contains("profiles=1"), "{log}");
     assert!(log.contains("quitting"), "{log}");
     assert!(log.contains("stopped"), "{log}");
+}
+
+/// FR-APP-02 with the setting's default: the close button hides the window and the app goes on, in
+/// the tray. The icon itself can only be seen by a person (spike M0-3), so the log says it is there.
+#[test]
+#[ignore = "opens a real window, and puts an icon in the tray"]
+fn closing_hides_the_window_to_the_tray_and_the_app_goes_on() {
+    let home = TempDir::new().unwrap();
+    let roaming = home.path().join("Roaming");
+    let local = home.path().join("Local");
+    let mut store = ConfigStore::open(roaming.join("DriveMount").join("config.toml"));
+    store
+        .save(&Config {
+            profiles: vec![saved_profile()],
+            ..Config::default()
+        })
+        .unwrap();
+    let script = home.path().join("names.ps1");
+    fs::write(&script, LIST_NAMES).unwrap();
+    let mut app = Running(
+        Command::new(env!("CARGO_BIN_EXE_drivemount"))
+            .env("APPDATA", &roaming)
+            .env("LOCALAPPDATA", &local)
+            .env("USERPROFILE", home.path())
+            .spawn()
+            .unwrap(),
+    );
+    let id = app.0.id();
+    let start = Instant::now();
+    while !names_in_window(id, &script).contains(NAME) {
+        assert!(start.elapsed() < PATIENCE, "not shown");
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    // Without /F this is WM_CLOSE, as the close button sends.
+    let asked = Command::new("taskkill.exe")
+        .args(["/PID", &id.to_string()])
+        .output()
+        .unwrap();
+    assert!(asked.status.success(), "{asked:?}");
+    let start = Instant::now();
+    while names_in_window(id, &script).contains(NAME) {
+        assert!(start.elapsed() < PATIENCE, "the window is still up");
+        thread::sleep(Duration::from_millis(250));
+    }
+    thread::sleep(Duration::from_secs(1));
+    assert!(app.0.try_wait().unwrap().is_none(), "it ended");
+
+    let log =
+        fs::read_to_string(local.join("DriveMount").join("logs").join("drivemount.log")).unwrap();
+    assert!(log.contains("the icon is in the tray"), "{log}");
+    assert!(!log.contains("quitting"), "{log}");
 }
 
 /// The whole way round on the real event loop: a press goes to the engine, a question comes back from
@@ -267,6 +329,7 @@ fn a_mount_from_the_window_asks_about_the_key_and_closing_takes_the_drive_away()
     store
         .save(&Config {
             profiles: vec![key_profile()],
+            settings: closing_quits(),
             ..Config::default()
         })
         .unwrap();

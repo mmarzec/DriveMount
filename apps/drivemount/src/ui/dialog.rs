@@ -683,8 +683,8 @@ impl Inner {
         }
     }
 
-    /// Spec §7.4.1: the user has to see that something waits for them.
-    fn bring_to_front(&self) {
+    /// Spec §7.4.1: the user has to see that something waits for them. Also the tray's way back.
+    pub(super) fn bring_to_front(&self) {
         let Some(window) = self.window.upgrade() else {
             return;
         };

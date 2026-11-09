@@ -18,6 +18,7 @@ use drivemount_core::config::{ConfigStore, LogLevel};
 use drivemount_core::manager::{ManagerParts, MountManager};
 use drivemount_vfs::SecretStore;
 use drivemount_win::credentials::CredentialStore;
+use drivemount_win::tray::{Tray, TrayContent};
 use slint::ComponentHandle;
 use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
@@ -25,7 +26,7 @@ use tokio::sync::mpsc;
 use self::engine::UiAction;
 use crate::backend::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
 use crate::logging::{self, LogGuard};
-use crate::ui::MainUi;
+use crate::ui::{MainUi, TrayIcon};
 
 /// Spec §5.3's limits on the runtime's workers.
 const FEWEST_WORKERS: usize = 2;
@@ -82,6 +83,30 @@ fn post_to_window(action: UiAction) {
     // Only as the app ends.
     if let Err(error) = posted {
         tracing::debug!(%error, "the window has gone");
+    }
+}
+
+/// Puts the icon in the tray (FR-TRAY-01). Without it the window cannot be hidden, so it stays up.
+fn start_tray(ui: &MainUi) {
+    // Filled in from the list at once.
+    let empty = TrayContent {
+        icon: TrayIcon::Idle.file(),
+        tooltip: String::new(),
+        menu: Vec::new(),
+    };
+    let on_event = Box::new(|event| post_to_window(Box::new(move |ui| ui.tray_event(event))));
+    match Tray::start(empty, on_event) {
+        Ok(tray) => {
+            if tray.is_in_tray() {
+                tracing::info!("the icon is in the tray");
+            } else {
+                tracing::warn!(
+                    "the tray did not take the icon, so trying again; the window stays up meanwhile"
+                );
+            }
+            ui.set_tray(Some(Box::new(tray)));
+        }
+        Err(error) => tracing::warn!(%error, "there is no tray icon"),
     }
 }
 
@@ -169,11 +194,13 @@ fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
         Arc::new(post_to_window),
     );
     let system_events = system::start(runtime.handle(), &manager);
+    start_tray(&ui);
 
     ui.show().context("showing the window")?;
     slint::run_event_loop_until_quit().context("running the window")?;
 
     tracing::info!("quitting");
+    ui.set_tray(None);
     drop(system_events);
     if let Err(error) = ui.window().hide() {
         tracing::debug!(%error, "the window could not be hidden");

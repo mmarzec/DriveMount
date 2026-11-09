@@ -5,6 +5,8 @@
 //! back-end has no event loop, which also lets a test see their order.
 
 use std::cell::Cell;
+
+use slint::ComponentHandle;
 use std::fs;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -398,14 +400,6 @@ fn the_free_letters_reach_the_dialog() {
         let items = f.ui.window().get_drive_items();
         items.iter().any(|item| item.contains("free"))
     });
-}
-
-#[test]
-fn escape_minimizes_as_there_is_no_tray_to_hide_in() {
-    let fixture = fixture(Vec::new());
-    fixture.send(UiCommand::HideWindow);
-    fixture.run_next_action();
-    assert!(fixture.ui.window().window().is_minimized());
 }
 
 /// If the broadcast overflows, what was missed is read instead of being lost. The channel always has

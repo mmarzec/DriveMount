@@ -2,6 +2,36 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-03 Tray
+
+**Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX check and the workspace's non-ignored tests pass (1024 passing, 169 ignored). On this desktop, the two ignored tray tests in `drivemount-win` pass, as do `it_starts_shows_the_saved_profile_logs_and_closes` and the new `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`). The release `drivemount.exe` is 15.45 MB against the limit of 30 MB. **Not run:** the S-03 tests of `drivemount_exe.rs`, whose only change is `close_to_tray = false` in its file.
+
+- **The comparison (plan M2-03): neither crate; our own `Shell_NotifyIconW` in `drivemount_win::tray`**, which is spec §12's fallback. Read from the 1.18.1 source, not built:
+  - **Slint's `SystemTrayIcon`:** its Windows menu ignores `checked`, so FR-TRAY-04's check marks would have to be text. Its window is `HWND_MESSAGE`, and message-only windows get no broadcasts, so its `TaskbarCreated` handler never runs and the icon is gone for good after Explorer restarts. A failed `NIM_ADD` only reaches `debug_log!`. Its icon is one RGBA image, scaled by Windows.
+  - **`tray-icon`:** works (spike M0-3), but ignores `NIM_ADD`'s result, and brings `muda`.
+  - **Ours, 780 lines with its tests:** a hidden top-level window on a thread of its own (as `events.rs`), `NOTIFYICON_VERSION_4`, `MF_CHECKED`, the state right-aligned after a tab, `&` doubled, `NIM_ADD` retried every 2 s for a minute and on `TaskbarCreated`, and `is_in_tray()` for the app. The `tray-icon` workspace entry and the `muda` profile line are gone; `Cargo.lock` did not change.
+- **Added:**
+  - `drivemount_win::tray`: `Tray::start(content, on_event)`, `set`, `is_in_tray`. Events are `Clicked` (`NIN_SELECT`, `NIN_KEYSELECT`; a second within the double-click time is dropped) and `Chosen(id)`.
+  - Four icons, `apps/drivemount/ui/tray/{idle,mounted,reconnecting,error}.ico`, PNG at 16, 20, 24 and 32 px, drawn by `scripts/make-tray-icons.py` (standard library only). States differ by shape too: a tick, a ring, a "!".
+  - `ui/tray.rs`: the content from `ListState`, with the status bar's own `count_texts` for the tooltip. `MainUi::set_tray(Option<Box<dyn TraySink>>)`, `tray_event`, `is_window_up`. The tray is updated at the end of every `refresh`; `Tray::set` does nothing if the content is the same.
+  - `UiCommand::HideWindow` and `CloseWindow` are gone, as hiding is the window's own business now; `UiCommand::Quit` replaces them. × hides when `close_to_tray` is on **and** the icon is in the tray, and sends `Quit` otherwise. Esc hides with a tray and minimizes without one.
+- **For the owner to check (H-08):** run `drivemount.exe` (or `cargo run -p drivemount --example connect -- --fresh` with the servers up):
+  - The icon by eye, light and dark taskbar, at 100 % and 150 %: idle grey; after a mount the green tick; *Reconnecting* (stop the server) the amber ring; a failed mount the red "!". New icons start behind the `^` chevron (spike M0-3).
+  - Hover: "DriveMount: 1 mounted", matching the status bar.
+  - Left click hides and shows the window, and it comes to the front. A double click should not flash it.
+  - Right click: the menu of spec §7.6, check marks, "Connecting…" on the right. Choose a profile with the window hidden: it mounts and the window stays hidden, unless a password is asked, which brings the window up. *Unmount all*, *Open DriveMount*, *Quit*.
+  - × hides to the tray; restart Explorer (Task Manager → Windows Explorer → Restart): the icon comes back.
+- **Choices the plan left open (now in the spec, §5.3 and §7.6):** error outranks reconnecting outranks mounted; *Connecting* alone is idle. A profile's line says *Failed* or *Unmounting…* too, beyond the mock-up. *Open DriveMount* is the bold default. The tooltip with nothing to count is "DriveMount". Without an icon in the tray, × quits and Esc minimizes.
+- **Worth knowing:**
+  - **The icon size is read once per Explorer start** (`GetDpiForSystem`), so changing the scale without signing out may leave it a size off until Explorer restarts.
+  - **The tray's events go to the UI thread through `invoke_from_event_loop`**, so a menu choice is never handled inside the tray's own modal loop.
+  - **`bring_to_front`** (from the prompts) is the tray's way back, and uses winit's `focus_window`.
+- **For later tasks:**
+  - **M2-06:** `UiCommand::Quit` in `app/engine.rs` is where the quit question goes; the tray's *Quit* and × (with `close_to_tray` off) both send it. `--tray` (FR-APP-03) is `ui.show()` left out of `app::run` when the icon is in the tray.
+  - **M2-04:** a toast for a mount started from the tray with the window hidden matters most, as nothing else on screen says it failed.
+  - **M2-05:** changing `close_to_tray` needs only `set_config`; the window reads it at each ×.
+- **Next:** H-08 for M2-02 and M2-03, then M2-04.
+
 ## 2026-11-09: M2-02 Windows events
 
 **Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (1007 passing, 166 ignored). **Not run:** the ignored suites against S-03 and WinFsp, as nothing under the drive changed beyond `Volume::mark_suspect`; real sleep, a Wi-Fi switch and a sign-out, which are H-08.

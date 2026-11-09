@@ -121,6 +121,41 @@ export global Texts {
         return @tr("Nothing mounted");
     }
 
+    // The tray (spec 7.6). The tooltip has the status bar's counts, joined by commas.
+    public pure function tray-tooltip(counts: string) -> string {
+        return @tr("DriveMount: {}", counts);
+    }
+    public pure function tray-tooltip-idle() -> string {
+        return @tr("DriveMount");
+    }
+    public pure function tray-count-separator() -> string {
+        return @tr(", ");
+    }
+    public pure function tray-profile(name: string, letter: string) -> string {
+        return @tr("{} ({})", name, letter);
+    }
+    public pure function tray-connecting() -> string {
+        return @tr("Connecting…");
+    }
+    public pure function tray-reconnecting() -> string {
+        return @tr("Reconnecting…");
+    }
+    public pure function tray-unmounting() -> string {
+        return @tr("Unmounting…");
+    }
+    public pure function tray-failed() -> string {
+        return @tr("Failed");
+    }
+    public pure function tray-unmount-all() -> string {
+        return @tr("Unmount all");
+    }
+    public pure function tray-open() -> string {
+        return @tr("Open DriveMount");
+    }
+    public pure function tray-quit() -> string {
+        return @tr("Quit");
+    }
+
     // Banners (NFR-REL-05). What to do goes with what happened.
     public pure function read-only-damaged(detail: string) -> string {
         return @tr("The configuration file is damaged, so nothing can be saved: {} Correct the file, or restore config.toml.bak, and start DriveMount again.", detail);

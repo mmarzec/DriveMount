@@ -51,7 +51,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | The commands: `a_profile_starts_disconnected_and_mounts_through_connecting`, `unmounting_goes_back_to_disconnected`. On a real drive: `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/drivemount/tests/real_drive.rs`). The row's button and Enter: `the_button_follows_the_state_and_sends_the_right_command`, `the_arrows_move_the_selection_and_enter_acts_on_it` (`apps/drivemount/src/ui/tests.rs`). The ⋯ menu by real keys: looked at, in no test. Tray: M2-03 | – |
+| FR-MNT-01 | M1-11, M1-12a–c, M1-15, M2-07 | The commands: `a_profile_starts_disconnected_and_mounts_through_connecting`, `unmounting_goes_back_to_disconnected`. On a real drive: `a_remembered_password_mounts_writes_and_asks_only_once` (`apps/drivemount/tests/real_drive.rs`). The row's button and Enter: `the_button_follows_the_state_and_sends_the_right_command`, `the_arrows_move_the_selection_and_enter_acts_on_it` (`apps/drivemount/src/ui/tests.rs`). The ⋯ menu by real keys: looked at, in no test. The tray: `choosing_a_profile_mounts_or_unmounts_it_without_the_window` | – |
 | FR-MNT-02 | M1-11, M1-12a–c, M1-15, M2-07 | `auto_takes_z_when_it_is_free`, `auto_goes_down_from_z_past_what_is_taken`, `a_free_letter_of_the_profile_is_used_under_either_policy` (`crates/drivemount-core/src/manager/letters.rs`) | – |
 | FR-MNT-03 | M1-11, M1-12a–c, M1-15, M2-07 | The definition of free: `drivemount-win` `drives::tests`, with a `subst` drive and, `#[ignore]`d, `a_remembered_mapping_that_is_down_is_taken`, the acceptance case. Skipping A, B and C: `a_b_and_c_are_never_used_or_even_asked_about`, `a_profile_cannot_ask_for_a_b_or_c` | – |
 | FR-MNT-04 | M1-11, M1-12a–c, M1-15, M2-07 | Both behaviours, below the UI: `a_taken_letter_under_auto_mounts_on_another_and_says_so`, `a_taken_letter_under_fail_stops_before_any_backend_is_made`, `a_profiles_letter_taken_during_the_mount_goes_by_the_setting`. The row note and toast: M2-07 | – |
@@ -80,10 +80,10 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-TRAY-01 | M0-3, M2-03 | – | – |
-| FR-TRAY-02 | M0-3, M2-03 | – | – |
-| FR-TRAY-03 | M0-3, M2-03 | – | – |
-| FR-TRAY-04 | M0-3, M2-03 | – | – |
+| FR-TRAY-01 | M0-3, M2-03 | `the_icon_follows_the_overall_state` (`apps/drivemount/src/ui/tests/tray.rs`). The icon in a real tray, and again after `TaskbarCreated`: `the_icon_goes_into_the_tray_follows_changes_and_comes_out`, `the_icon_is_added_again_when_the_taskbar_is_made_again` (`crates/drivemount-win/src/tray.rs`, ignored, need a desktop). The look: H-08 | – |
+| FR-TRAY-02 | M0-3, M2-03 | `the_tooltip_has_the_status_bars_counts` | – |
+| FR-TRAY-03 | M0-3, M2-03 | `a_click_on_the_icon_hides_or_shows_the_window`, `a_second_click_within_the_double_click_time_is_a_repeat`. Real clicks: H-08 | – |
+| FR-TRAY-04 | M0-3, M2-03 | `the_menu_has_a_line_per_profile_then_its_own_items`, `choosing_a_profile_mounts_or_unmounts_it_without_the_window`, `unmount_all_open_and_quit_do_what_they_say`. The real menu: H-08 | – |
 
 ## Notifications
 
@@ -99,7 +99,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | FR-APP-01 | M1-11, M2-02, M2-06 | – | – |
-| FR-APP-02 | M1-11, M2-02, M2-06 | – | – |
+| FR-APP-02 | M1-11, M2-02, M2-03, M2-06 | `closing_hides_to_the_tray_only_when_set_to_and_there_is_one` (`ui/tests/tray.rs`); on the real binary, `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`, ignored). The quit question: M2-06 | – |
 | FR-APP-03 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | The window hearing a sent `WM_ENDSESSION`: `the_hidden_window_hears_resume_and_session_end_and_stays_hidden` (`drivemount-win` `events::tests`). Unmounting everything: `MountManager::shutdown`'s tests. A real sign-out: H-08 | – |
@@ -183,7 +183,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| NFR-UX-01 | M1-16, M1-17 | One click from the window: `the_button_follows_the_state_and_sends_the_right_command`. The tray: M2-03 | – |
+| NFR-UX-01 | M1-16, M1-17 | One click from the window: `the_button_follows_the_state_and_sends_the_right_command`. From the tray, one choice in the menu: `choosing_a_profile_mounts_or_unmounts_it_without_the_window` | – |
 | NFR-UX-02 | M1-16, M1-17 | By construction: the dialog and prompts are in the main window, and only Windows' own file dialog is another | – |
 | NFR-UX-03 | M1-16, M1-17 | `each_error_has_the_text_and_code_of_the_catalogue`, `details_meant_for_the_log_are_not_shown`, `a_banner_says_what_to_do_and_takes_one_line_of_a_long_detail` (`apps/drivemount/src/ui/tests.rs`) | – |
 | NFR-UX-04 | M1-16, M1-17 | Keys: `the_shortcuts_of_the_table_work`, `the_arrows_move_the_selection_and_enter_acts_on_it`, `the_selection_is_kept_in_view`. Names: `every_button_has_a_name_for_screen_readers`, `a_row_reads_out_its_state_and_address`. In the dialog: `nothing_behind_the_dialog_can_be_reached_by_keys`, `enter_in_the_box_answers_once_something_is_typed`, `the_next_prompt_has_the_keys_whatever_kind_came_before`. The walkthrough: the owner (H-06), confirmed for the dialog on 2026-11-06. A real screen reader: not tried | – |
