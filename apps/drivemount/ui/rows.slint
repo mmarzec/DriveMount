@@ -7,7 +7,7 @@
 import { Theme, Icons, Icon, AppButton } from "theme.slint";
 
 export enum EntryKind { profile, unreadable }
-export enum RowStatus { disconnected, connecting, mounted, unmounting, error }
+export enum RowStatus { disconnected, connecting, mounted, reconnecting, unmounting, error }
 export enum PrimaryAction { none, mount, cancel, unmount, retry }
 
 export struct ListEntry {
@@ -34,6 +34,7 @@ export global RowTexts {
         return kind == EntryKind.unreadable ? @tr("cannot be read")
             : status == RowStatus.mounted ? @tr("mounted")
             : status == RowStatus.connecting ? @tr("connecting")
+            : status == RowStatus.reconnecting ? @tr("reconnecting")
             : status == RowStatus.unmounting ? @tr("unmounting")
             : status == RowStatus.error ? @tr("failed")
             : @tr("not mounted");
@@ -47,13 +48,13 @@ export global RowTexts {
     }
 }
 
-// The state as an icon. Only a connecting one asks for frames.
+// The state as an icon. Only a connecting one asks for frames: reconnecting can last for hours.
 export component StatusIcon {
     in property <RowStatus> status;
     in property <EntryKind> kind: EntryKind.profile;
     in property <length> size: 20px;
 
-    property <bool> busy: root.status == RowStatus.connecting || root.status == RowStatus.unmounting;
+    property <bool> busy: root.status == RowStatus.connecting || root.status == RowStatus.reconnecting || root.status == RowStatus.unmounting;
 
     width: root.size;
     height: root.size;

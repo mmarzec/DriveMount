@@ -791,3 +791,80 @@ async fn with_keep_alives_off_a_dead_link_goes_unnoticed() {
     proxy.set(Link::Stall);
     assert_eq!(closed_within(&session, Duration::from_secs(6)).await, None);
 }
+
+// ---- What reconnecting needs (FR-REC-01, M2-01). ----
+
+/// The session's `ended` resolves within the limit, and how long it took.
+async fn ended_within(session: &SftpSession, limit: Duration) -> Option<Duration> {
+    let start = Instant::now();
+    time::timeout(limit, session.ended()).await.ok()?;
+    Some(start.elapsed())
+}
+
+/// The same 3 intervals as `is_closed`, but woken rather than polled.
+#[tokio::test]
+#[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
+async fn unanswered_keep_alives_end_the_session() {
+    let (proxy, session, _dir) = keepalive_session(1).await;
+    assert_eq!(ended_within(&session, Duration::from_secs(2)).await, None);
+    proxy.set(Link::Stall);
+    let ended = ended_within(&session, Duration::from_secs(10))
+        .await
+        .expect("must notice a dead link");
+    assert!(
+        ended >= Duration::from_secs(2) && ended <= Duration::from_secs(5),
+        "{ended:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
+async fn a_cut_link_ends_the_session_at_once() {
+    let (proxy, session, _dir) = keepalive_session(0).await;
+    proxy.set(Link::Cut);
+    let ended = ended_within(&session, Duration::from_secs(2)).await;
+    assert!(ended.is_some(), "a reset connection must end it");
+}
+
+#[tokio::test]
+#[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
+async fn the_connector_says_when_its_session_has_ended() {
+    use drivemount_vfs::Connector as _;
+
+    let (_dir, path) = empty_dir();
+    let proxy = Proxy::to(PORT).await;
+    let connector = SftpConnector::new(profile("127.0.0.1", proxy.port, &path));
+    let answers = Answers::with(HostKeyDecision::TrustOnce);
+    let fs = connector.connect(&answers).await.unwrap();
+    let ended = time::timeout(Duration::from_secs(2), connector.session_ended()).await;
+    assert!(ended.is_err(), "the session is still up");
+
+    proxy.set(Link::Cut);
+    let ended = time::timeout(Duration::from_secs(5), connector.session_ended()).await;
+    assert!(ended.is_ok(), "the session has ended");
+
+    // With no session at all, there is nothing to wait for.
+    drop(fs);
+    let ended = time::timeout(Duration::from_secs(1), connector.session_ended()).await;
+    assert!(ended.is_ok());
+}
+
+/// A reconnect asks nothing that the mount has answered already (FR-SSH-02, FR-REC-02).
+#[tokio::test]
+#[ignore = "needs the S-03 servers: tests/docker/servers.ps1 up"]
+async fn a_key_trusted_once_is_not_asked_about_again_by_the_same_connector() {
+    let (_dir, path) = empty_dir();
+    let answers = Answers::with(HostKeyDecision::TrustOnce);
+    let connector = SftpConnector::new(profile(HOST, PORT, &path));
+    let first = connector.connect_session(&answers).await.unwrap();
+    drop(first);
+    let _again = connector.connect_session(&answers).await.unwrap();
+    assert_eq!(answers.asked().len(), 1);
+    assert!(!path.exists(), "still saved nowhere");
+
+    // A connector of its own, as the next mount has, asks again.
+    connect_with(profile(HOST, PORT, &path), &answers)
+        .await
+        .unwrap();
+    assert_eq!(answers.asked().len(), 2);
+}

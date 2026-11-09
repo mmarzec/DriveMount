@@ -334,6 +334,178 @@ async fn two_names_that_look_alike_mount_together_on_their_own_letters() {
     world.unmounted(two_id).await;
 }
 
+// ---- Reconnecting (M2-01), against the real OpenSSH. These restart its container. ----
+
+/// Runs `docker compose` with `args` in the S-03 project, as `servers.ps1` does.
+fn compose(args: &[&str]) -> std::process::Output {
+    let tests_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests");
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-d", "Ubuntu-22.04", "-u", "root", "--cd"])
+        .arg(&tests_dir)
+        .args(["--", "docker", "compose"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "docker compose {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// Runs a shell command as root inside the `sshd` container.
+fn in_sshd(command: &str) {
+    compose(&["exec", "-T", "sshd", "sh", "-c", command]);
+}
+
+/// A user of its own, so that changing its password touches no other test. Removed when dropped.
+struct ServerUser(&'static str);
+
+impl ServerUser {
+    fn new(name: &'static str, password: &str) -> Self {
+        in_sshd(&format!(
+            "id {name} >/dev/null 2>&1 || useradd -m {name}; echo '{name}:{password}' | chpasswd"
+        ));
+        Self(name)
+    }
+
+    fn set_password(&self, password: &str) {
+        in_sshd(&format!("echo '{}:{password}' | chpasswd", self.0));
+    }
+
+    /// Ends the user's SSH connections, as a server dropping them would.
+    fn drop_connections(&self) {
+        in_sshd(&format!("pkill -KILL -u {} || true", self.0));
+    }
+}
+
+impl Drop for ServerUser {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("wsl.exe")
+            .args(["-d", "Ubuntu-22.04", "-u", "root", "--", "docker", "exec"])
+            .args(["drivemount-test-sshd-1", "sh", "-c"])
+            .arg(format!("pkill -KILL -u {0}; userdel -r {0}", self.0))
+            .output();
+    }
+}
+
+/// Plan M2-01's first check, and FR-REC-02's and FR-REC-05's criteria: the server restarts in the
+/// middle of a large read, the drive comes back by itself, and the copy's hash matches.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S-03 server and WinFsp; restarts the sshd container"]
+async fn a_server_restart_during_a_large_read_comes_back_by_itself_and_the_hash_matches() {
+    const SIZE: u64 = 64 << 20;
+    let saved = profile("M2-01 restart", SftpAuth::Password { remember: false });
+    let id = saved.id;
+    let mut world = world(vec![saved], Typist::new("tester"));
+    let letter = world.mounted(id).await;
+
+    let local = world.folder.path().join("large.bin");
+    let wanted = random_file(&local, SIZE, 0x2001);
+    let remote = on_drive(letter, &unique_name("large"));
+    fs::copy(&local, &remote).unwrap();
+
+    let read_so_far = Arc::new(AtomicUsize::new(0));
+    let reader = std::thread::spawn({
+        let (remote, read_so_far) = (remote.clone(), Arc::clone(&read_so_far));
+        move || -> io::Result<Vec<u8>> {
+            let mut file = fs::File::open(remote)?;
+            let mut hash = Sha256::new();
+            let mut block = vec![0u8; 1 << 20];
+            loop {
+                let read = file.read(&mut block)?;
+                if read == 0 {
+                    return Ok(hash.finalize().to_vec());
+                }
+                hash.update(&block[..read]);
+                read_so_far.fetch_add(read, Ordering::SeqCst);
+            }
+        }
+    });
+    while read_so_far.load(Ordering::SeqCst) < (SIZE / 4) as usize {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+
+    let restart = Instant::now();
+    compose(&["restart", "-t", "0", "sshd"]);
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Reconnecting, "{event:?}");
+    assert_eq!(event.detail.unwrap().letter, letter, "the letter stays");
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Mounted, "{event:?}");
+    println!("back after {:?}", restart.elapsed());
+
+    let copied = tokio::task::spawn_blocking(move || reader.join().unwrap())
+        .await
+        .unwrap()
+        .expect("the read goes on across the restart");
+    assert_eq!(copied, wanted, "the copy differs");
+    // Nothing was asked again: the password and the key trusted once are kept for the mount.
+    assert_eq!(world.typist.asked.load(Ordering::SeqCst), 1);
+    assert_eq!(sha256_of(&remote), wanted);
+
+    fs::remove_file(&remote).unwrap();
+    world.unmounted(id).await;
+}
+
+/// Plan M2-01's third check and FR-REC-06's criterion: a password changed on the server stops the
+/// reconnect at the first try, with *Error* and the drive gone, and nothing tried again.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S-03 server and WinFsp; adds a user to the sshd container"]
+async fn a_password_changed_on_the_server_is_an_auth_error_with_no_retries() {
+    let user = ServerUser::new("m2rec", "first-password");
+    let mut saved = profile("M2-01 password", SftpAuth::Password { remember: false });
+    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    sftp.username = user.0.to_owned();
+    let id = saved.id;
+    let mut world = world(vec![saved], Typist::new("first-password"));
+    let letter = world.mounted(id).await;
+
+    user.set_password("second-password");
+    user.drop_connections();
+
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Reconnecting, "{event:?}");
+    let event = world.next_event().await;
+    assert!(
+        matches!(
+            event.state,
+            MountState::Error(MountError::Connect(ConnectError::Auth { .. }))
+        ),
+        "{event:?}"
+    );
+    assert!(is_letter_free(letter).unwrap(), "the drive has gone");
+    // No retry loop: nothing more happens, and nothing was asked.
+    let quiet = timeout(Duration::from_secs(5), world.events.recv()).await;
+    assert!(quiet.is_err(), "{quiet:?}");
+    assert_eq!(world.typist.asked.load(Ordering::SeqCst), 1);
+}
+
+/// FR-REC-07's criterion, all but the toast (M2-04): with `auto_reconnect` off, the server going away
+/// removes the drive and the row shows E-CONN-LOST.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the S-03 server and WinFsp; adds a user to the sshd container"]
+async fn without_auto_reconnect_a_dropped_connection_removes_the_drive() {
+    let user = ServerUser::new("m2lost", "password");
+    let mut saved = profile("M2-01 no reconnect", SftpAuth::Password { remember: false });
+    saved.auto_reconnect = false;
+    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    sftp.username = user.0.to_owned();
+    let id = saved.id;
+    let mut world = world(vec![saved], Typist::new("password"));
+    let letter = world.mounted(id).await;
+
+    user.drop_connections();
+    let event = world.next_event().await;
+    assert_eq!(
+        event.state,
+        MountState::Error(MountError::Connect(ConnectError::ConnectionLost)),
+        "{event:?}"
+    );
+    assert!(is_letter_free(letter).unwrap(), "the drive has gone");
+}
+
 /// A file of pseudo-random bytes, never the same twice in a row, and its SHA-256.
 fn random_file(path: &Path, size: u64, seed: u64) -> Vec<u8> {
     let mut file = io::BufWriter::new(fs::File::create(path).unwrap());

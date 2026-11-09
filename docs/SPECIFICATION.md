@@ -411,6 +411,7 @@ pub trait RemoteFs: Send + Sync + 'static {
 pub trait Connector: Send + Sync + 'static {
     async fn connect(&self, prompter: &dyn Prompter) -> Result<Arc<dyn RemoteFs>, ConnectError>;
     async fn probe(&self) -> Result<Duration, ConnectError>;   // keep-alive round trip
+    async fn session_ended(&self);   // the last session ended by itself (keep-alives, transport); default: never
 }
 
 /// What the MountManager drives. Two kinds of implementation:
@@ -420,7 +421,8 @@ pub trait Connector: Send + Sync + 'static {
 pub trait MountBackend: Send + Sync + 'static {
     async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError>;
     async fn unmount(&self) -> Result<(), MountError>;
-    fn health(&self) -> watch::Receiver<Health>;   // Ok | Lost(reason)
+    async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError>;   // same drive, new session
+    fn health(&self) -> watch::Receiver<Health>;   // Ok | Lost(reason): Lost once per loss, until a reconnect works
     fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)>;   // what the user ticked Remember for
 }
 
@@ -460,14 +462,17 @@ States: `Disconnected`, `Connecting`, `Mounted`, `Reconnecting`, `Unmounting`, `
 
 Every transition is emitted as a `MountEvent` and logged at Info level.
 
-What the table leaves open (`drivemount_core::manager`). The Reconnecting rows are M2-01's:
+What the table leaves open (`drivemount_core::manager`):
 
 - **A backend for each mount.** It is made when the mount starts and dropped when it ends, however it ends, and before the state is announced, so what the user typed goes with it (NFR-SEC-03). Going back to *Disconnected* or *Error* is what zeroes secrets.
 - **One task for each profile,** so a dialog holds up no other profile. Cancel is a `CancellationToken`, and reaches a mount at any point.
 - **A user cancelling a prompt** goes to *Disconnected*, as Cancel does. It is not an error.
 - **Commands that do not fit the state:** Mount on a profile connecting or mounted is refused, with no event. Unmount while *Connecting* is a cancel, as that is what *Unmount all* means. Unmount and Cancel otherwise do nothing where there is nothing to stop. While *Unmounting*, commands wait, so a Mount right after an Unmount works.
 - **A failed unmount** goes to *Error* with its reason, and lets go of the backend all the same.
-- **A lost connection with `auto_reconnect`** leaves the drive *Mounted* until M2-01, with calls failing. The flag is read when it happens, as it can change while mounted.
+- **`auto_reconnect`** is read when the connection is lost, as it can change while mounted.
+- **Reconnecting.** The first attempt goes at once, on the same backend, whose connector remembers what was typed and a key trusted once, so nothing is asked again (FR-SSH-02). After each failure it waits 1, 2, 4, 8, 16, 32, then 60 s (FR-REC-02). A secret ticked *Remember* in a prompt during a reconnect is kept, as after a mount. The row keeps its letter, and the event carries it.
+- **What stops the retries** is what the next attempt would meet again: E-AUTH, a changed, revoked or rejected host key, and E-KEY-FORMAT. The drive is unmounted and the profile goes to *Error* (FR-REC-06). A prompt the user cancels during a reconnect unmounts too, to *Disconnected*. Anything else, such as E-DNS, E-HOST-UNREACHABLE or E-PATH-NOT-FOUND, is tried again: a network or a NAS volume can come back.
+- **Commands while *Reconnecting*** are as while *Mounted*: Mount is refused, Save keeps the connection fields locked, and Unmount, Delete and quitting drop the attempt in progress or the wait, and unmount. *Unmount all* includes a profile that is reconnecting.
 - **Letters:** a letter is held from when it is chosen until the mount ends, because a drive only shows as taken once it is up, and profiles mounting together would otherwise all choose Z:. *auto*'s "next free letter" (FR-MNT-04) is the highest one free, as for *Auto*. A letter the backend finds taken after the check, as it may be after a long dialog, is dealt with the same way, without asking the user again. E-LETTER-TAKEN only comes from a profile's own letter under *fail*.
 - **What is not mounted:** a profile that breaks a rule of §7.3 (only a key file's name is looked at), and one the file holds but the model cannot (§6.1). Both are refused with no event.
 - **Test connection** has nothing to do with this table, and stores nothing, whatever the user ticks: the profile may never be saved.
@@ -509,6 +514,12 @@ What the table leaves open (`drivemount_core::manager`). The Reconnecting rows a
 - if the probe also fails, the mount becomes *Reconnecting*.
 
 A timeout reported by the backend itself counts the same as an expired deadline. The deadline layer sits below the caches (`CachedFs<DeadlineFs<…>>`), so a call that timed out still invalidates them.
+
+**Sessions across reconnects** (`SessionFs`, below the deadline layer: `CachedFs<DeadlineFs<SessionFs>>`). It holds the session in use, numbered by generation, in a `watch`, and a reconnect puts the next one there without the layers above noticing.
+- **While there is no session,** calls wait for one. The deadline layer above limits the wait as it limits any call (FR-REC-04), and the WinFsp adapter reports a callback that ran out of time while there was no session as `STATUS_NETWORK_UNREACHABLE`, not `STATUS_IO_TIMEOUT`, and asks for no probe. Once the drive is unmounting, calls fail at once.
+- **A call that finds the connection gone** marks the session lost, which is FR-REC-01's transport-error trigger. A call that is safe to repeat then waits for the next session and goes again: lookups, listings, reads, writes at an offset, flushes, attribute changes and opens that create nothing new. Creating a file exclusively, `mkdir`, removing and renaming are not repeated, as the server may have acted, and fail with `ConnectionLost`.
+- **Handles are its own.** Each knows the generation it was opened in, and is opened again by path on its first use after a reconnect, never creating or truncating (FR-REC-05). Paths follow renames made through the drive. A handle of a session that has gone is closed by going with it, so closing it asks nobody. Several reads after a reconnect open the file once.
+- **Directory enumerations restart** by themselves: each enumeration lists the directory afresh (§5.8).
 
 **Name mapping.**
 - Characters invalid in Windows names (`\ : * ? " < > |` and 0x01–0x1F) and trailing dots or spaces are shown as the Unicode private-use character U+F000 + code. This is the same scheme as Cygwin and SSHFS-Win, so names look the same as in NEO.
@@ -566,6 +577,8 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 - **One SSH connection per mount.** Metadata and data share one SFTP channel with pipelined requests. Spike M0-2 measured head-of-line blocking that grows with bytes in flight; the 4 MiB limit (§5.6) keeps it to about one extra round trip. A second SFTP channel for bulk transfers removes it and stays an option if M2-08 finds browsing during a copy too slow.
 - **Window sizes:** the SSH channel window is 16 MiB (spike M0-2: 2 MiB halves WAN downloads, and 64 MiB gains nothing).
 - **Keep-alive:** a `keepalive@openssh.com` global request every `keepalive_secs`. `keepalive_max` is 2, and `russh` closes at the interval after that many go unanswered, so a dead link is noticed 3 intervals after the last reply: 45 s at the default 15 s, within FR-SSH-12's 60 s. Only 2 keep-alives are actually sent in that time; the third would be due as it closes.
+- **A connection ending by itself,** through unanswered keep-alives, the server closing it or the transport failing, ends `russh`'s task and drops its handler, which `Connector::session_ended` waits for. So an idle drive notices too, with no call going.
+- **Reconnecting** uses the mount's connector, so a key trusted once is still trusted for that mount, and remembered passwords and keys are used again (§5.7, Logging in). The next mount has a connector of its own, and asks again.
 - **Free space:** `statvfs@openssh.com`. Without it, total and free are reported as 1 PiB, so Windows' copy pre-checks never fail.
 - **Rename:** `posix-rename@openssh.com` for rename-with-replace. Without it, a non-atomic fallback, logged at Debug level: first check that the source exists, that the two are the same kind and that a target directory is empty; then move the target aside, rename the source, and remove what was moved aside. If renaming the source fails, the target is moved back, so a failed rename leaves both paths as they were (`RemoteFs::rename`). This differs from the first design, which removed the target first and could lose it.
 - **Windows OpenSSH servers** are not detected, because nothing depends on it: a drive-letter path is normalised on any server (FR-SSH-13), and a server that is not Windows has no such folder, which is E-PATH-NOT-FOUND. The home directory arrives from `realpath` as `/C:/Users/me` and needs nothing done to it.
@@ -643,7 +656,9 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **`Cleanup` cannot report failure,** as Windows has already closed the handle: a failed flush or removal goes to the log. So a failed `DeleteFile` reads as success, and the file is still there in the next listing. The removal never reaches a server on a read-only drive, where `FILE_DELETE_ON_CLOSE` would otherwise get this far unasked.
 - **Mounting.** `MountBackend::mount` connects, writes the Explorer label, starts the drive and tells Explorer. Dropping the future cancels it at any point, and what was set up by then goes with it (FR-MNT-11). A letter in use gives `LetterTaken`. Each mount makes its own connection, and `unmount` drops it.
 - **Unmounting.** `unmount` stops the host, tells Explorer, removes the label, then flushes and closes on the server what programs still had open, in one `op_timeout_secs` at most. WinFsp calls no `Close` for those. Failures go to the log, and unmounting never fails over them (FR-MNT-10). The programs get an error at their next use of the handle.
-- **Health.** Each rise of the suspect signal asks `Connector::probe`, and its answer sets `Health`. That is the third trigger of FR-REC-01. Keep-alive timeouts, transport errors and reconnecting are M2-01's, so until then a dropped connection fails calls without `Health` showing it.
+- **Health.** `Lost` on the first of FR-REC-01's three triggers for the current session: the connection ending by itself (`Connector::session_ended`, which keep-alives drive), a call finding it gone (§5.6, sessions), or a rise of the suspect signal followed by a `Connector::probe` that fails. Timeouts while there was no session do not count for the next one. It stays `Lost` until `reconnect` puts a new session in, which sets `Ok`.
+- **Reconnecting.** `reconnect` connects again through the same connector and hands the session to the drive (§5.6), which stays on its letter throughout. A failed attempt leaves the drive as it was, and dropping the call gives it up. `unmount` while there is no session first ends the calls waiting for one, so that stopping the drive is not held up by them.
+- **Creating a file can take longer than one timeout while the connection hangs.** WinFsp's `FineGuard` lets a `Create` in only once no other callback runs on the drive, and each of those may take a timeout. Each callback still keeps to NFR-REL-03, and browsing (lookups and listings) does not wait like this.
 - **Explorer.** WinFsp sets the letter without telling anyone, and keeps it tied to the process so that a kill removes it (NFR-REL-04), so the letter stays WinFsp's. `WNetAddConnection2W` through `WinFsp.Np` is not an option: it gives error 67 unless the class `drivemount` is registered as a launcher service under `HKLM`, which needs administrator rights. What works is `SendMessageTimeoutW(Progman, WM_DEVICECHANGE, DBT_DEVICEARRIVAL or DBT_DEVICEREMOVECOMPLETE)` with a `DEV_BROADCAST_VOLUME`, with `SMTO_ABORTIFHUNG` and 500 ms. It reaches one window, so no other program can hold it up. It is not sent after a crash, so an open window can list a dead drive until the next mount or unmount of that letter. Windows set to open folders in a separate process were not tried.
 - **`.` and `..`** are listed outside the root, and `..` shows the directory's own details rather than cost a round trip for its parent's.
 
@@ -830,7 +845,8 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 **Rows and menus**
 - **Drive letter:** the row shows it when mounted, and the preferred letter (dimmed) otherwise. *Auto* has none to show until it is mounted.
 - **Toolbar:** *Add*, *Mount all*, *Unmount all* (FR-MNT-09) and Settings, each with an icon. *Mount all* and *Unmount all* are disabled when they have nothing to act on. *Add* is always there, and is the only way to add with the mouse.
-- **Status bar:** also counts failed profiles ("· 1 failed"), and says "Nothing mounted" when there is nothing to count.
+- **Status bar:** also counts reconnecting and failed profiles ("· 1 reconnecting · 1 failed", in FR-TRAY-02's words), and says "Nothing mounted" when there is nothing to count.
+- **Reconnecting** shows the drive's letter, as the drive is still there, and its page says "Reconnecting… (on Z:)". The loader does not pulse, as reconnecting can last for hours; *Open in Explorer* is off until it is mounted again.
 - **Unmounting** has no row in the table above: an amber loader, with *Unmount* disabled.
 - **What a row has no room for:** the address, "Y: (Z: was in use)" (FR-MNT-04), an error, and a profile that breaks a rule of §7.3 (its *Mount* is disabled until it is edited). These are on the connection page, and in a tooltip that shows after 0.7 s over the row. An entry of the file that cannot be read (§6.1) has a red warning icon and no button, and can only be deleted.
 - **Mouse:** a click anywhere on a row except its button opens the row's **connection page** (§7.1.1). The right-click menu has *Details*, *Open in Explorer* (when mounted), *Edit…* and *Delete…*.

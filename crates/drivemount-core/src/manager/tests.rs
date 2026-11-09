@@ -58,6 +58,10 @@ struct Mock {
     /// Listens to the manager, so that a backend going can tell whether it was too late.
     watcher: Mutex<Option<broadcast::Receiver<MountEvent>>>,
     announced_first: AtomicBool,
+    /// What the next calls of `MountBackend::reconnect` do. Without a script, a reconnect works.
+    next_reconnects: Mutex<VecDeque<NextMount>>,
+    /// When each reconnect was asked for.
+    reconnected_at: Mutex<Vec<Instant>>,
 }
 
 impl Default for Mock {
@@ -78,6 +82,8 @@ impl Default for Mock {
             cannot_create: Mutex::default(),
             watcher: Mutex::default(),
             announced_first: AtomicBool::new(false),
+            next_reconnects: Mutex::default(),
+            reconnected_at: Mutex::default(),
         }
     }
 }
@@ -85,6 +91,18 @@ impl Default for Mock {
 impl Mock {
     fn script(&self, next: NextMount) {
         self.next_mounts.lock().unwrap().push_back(next);
+    }
+
+    fn script_reconnect(&self, next: NextMount) {
+        self.next_reconnects.lock().unwrap().push_back(next);
+    }
+
+    fn reconnects(&self) -> usize {
+        self.reconnected_at.lock().unwrap().len()
+    }
+
+    fn reconnect_times(&self) -> Vec<Instant> {
+        self.reconnected_at.lock().unwrap().clone()
     }
 
     fn mounted_on(&self) -> Vec<char> {
@@ -155,6 +173,21 @@ impl MountBackend for MockBackend {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    async fn reconnect(&self, _: &dyn Prompter) -> Result<(), MountError> {
+        self.0.reconnected_at.lock().unwrap().push(Instant::now());
+        let next = self.0.next_reconnects.lock().unwrap().pop_front();
+        match next {
+            Some(NextMount::Fail(error)) => return Err(error),
+            Some(NextMount::Hang) => {
+                self.0.hanging.notify_one();
+                std::future::pending::<()>().await;
+            }
+            None => {}
+        }
+        self.0.health.send_replace(Health::Ok);
+        Ok(())
     }
 
     fn health(&self) -> watch::Receiver<Health> {
@@ -767,7 +800,7 @@ async fn a_profile_waiting_for_a_dialog_holds_up_no_other() {
     assert_eq!(world.state(slow_id), MountState::Connecting);
 }
 
-// Connection lost: only what has no Reconnecting in it.
+// Connection lost and reconnecting (FR-REC).
 
 fn lost() -> Health {
     Health::Lost("gone".to_owned())
@@ -805,20 +838,301 @@ async fn a_connection_lost_before_the_mount_was_noticed_counts_too() {
     assert_eq!(world.next_state().await, MountState::Error(reason));
 }
 
-/// Reconnecting is M2-01's. Until then, FR-REC-02's "keeps the drive letter" is all it can do.
+/// FR-REC-02: the drive keeps its letter, and comes back by itself on the same backend.
 #[tokio::test]
-async fn a_lost_connection_with_auto_reconnect_leaves_the_drive_for_now() {
+async fn a_lost_connection_with_auto_reconnect_reconnects_on_the_same_letter() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    let mounted = world.mounted(id).await;
+
+    world.mock.health.send_replace(lost());
+
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Reconnecting);
+    assert_eq!(event.detail, mounted.detail);
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Mounted);
+    assert_eq!(event.detail, mounted.detail);
+    assert_eq!(world.mock.reconnects(), 1);
+    assert_eq!(world.mock.created(), 1);
+    assert_eq!(world.mock.unmounts(), 0);
+    world.no_more_events(id).await;
+    world.unmounted(id).await;
+}
+
+#[tokio::test]
+async fn a_connection_lost_again_reconnects_again() {
     let profile = named("Production");
     let id = profile.id;
     let mut world = world(vec![profile]);
     world.mounted(id).await;
+    for round in 1..=3 {
+        world.mock.health.send_replace(lost());
+        assert_eq!(world.next_state().await, MountState::Reconnecting);
+        assert_eq!(world.next_state().await, MountState::Mounted);
+        assert_eq!(world.mock.reconnects(), round);
+    }
+}
+
+/// FR-REC-02's backoff: 1, 2, 4… s, run here a hundred times faster.
+#[tokio::test]
+async fn failed_attempts_go_on_with_growing_waits_until_one_works() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    for _ in 0..4 {
+        let unreachable = ConnectError::HostUnreachable {
+            host: "example.com".to_owned(),
+            port: 22,
+        };
+        world
+            .mock
+            .script_reconnect(NextMount::Fail(MountError::Connect(unreachable)));
+    }
 
     world.mock.health.send_replace(lost());
-    world.no_more_events(id).await;
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert_eq!(world.next_state().await, MountState::Mounted);
 
-    assert_eq!(world.state(id), MountState::Mounted);
+    let times = world.mock.reconnect_times();
+    assert_eq!(times.len(), 5);
+    let gaps: Vec<Duration> = times.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    for (gap, wanted_ms) in gaps.iter().zip([10, 20, 40, 80]) {
+        let wanted = Duration::from_millis(wanted_ms);
+        assert!(
+            *gap >= wanted && *gap < wanted + Duration::from_millis(500),
+            "{gaps:?}"
+        );
+    }
     assert_eq!(world.mock.unmounts(), 0);
+}
+
+#[test]
+fn the_waits_double_from_one_second_to_32_then_stay_at_a_minute() {
+    let waits: Vec<u64> = (0..10).map(actor::backoff_secs).collect();
+    assert_eq!(waits, [1, 2, 4, 8, 16, 32, 60, 60, 60, 60]);
+    assert_eq!(actor::backoff_secs(u32::MAX), 60);
+}
+
+#[test]
+fn only_what_needs_the_user_stops_the_retries() {
+    let auth = ConnectError::Auth {
+        user: "deploy".to_owned(),
+        host: "example.com".to_owned(),
+    };
+    let changed = ConnectError::HostKeyChanged(Box::new(drivemount_vfs::ChangedHostKey {
+        host: "example.com".to_owned(),
+        port: 22,
+        old_fingerprint: "SHA256:old".to_owned(),
+        new_fingerprint: "SHA256:new".to_owned(),
+        known_hosts: PathBuf::from("known_hosts"),
+        line: 1,
+    }));
+    for stops in [
+        auth,
+        changed,
+        ConnectError::HostKeyRejected,
+        ConnectError::KeyFormat,
+        ConnectError::Cancelled,
+    ] {
+        assert!(
+            actor::stops_retrying(&MountError::Connect(stops.clone())),
+            "{stops:?}"
+        );
+    }
+    for goes_on in [
+        ConnectError::Dns {
+            host: "example.com".to_owned(),
+        },
+        ConnectError::Timeout {
+            host: "example.com".to_owned(),
+        },
+        ConnectError::ConnectionLost,
+        ConnectError::SftpUnavailable,
+        ConnectError::PathNotFound {
+            path: "~".to_owned(),
+        },
+        ConnectError::Other("anything".to_owned()),
+    ] {
+        assert!(
+            !actor::stops_retrying(&MountError::Connect(goes_on.clone())),
+            "{goes_on:?}"
+        );
+    }
+    assert!(!actor::stops_retrying(&MountError::Other("x".to_owned())));
+}
+
+/// FR-REC-06: a changed password ends it at the first try, with the drive gone.
+#[tokio::test]
+async fn an_auth_failure_stops_reconnecting_unmounts_and_is_an_error() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    let auth = MountError::Connect(ConnectError::Auth {
+        user: "deploy".to_owned(),
+        host: "example.com".to_owned(),
+    });
+    world.mock.script_reconnect(NextMount::Fail(auth.clone()));
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Error(auth));
+    assert_eq!(event.detail, None);
+    assert_eq!(world.mock.unmounts(), 1);
+    world.mock.assert_gone_before_it_was_announced();
+
+    // No retry loop.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(world.mock.reconnects(), 1);
+    world.no_more_events(id).await;
+}
+
+#[tokio::test]
+async fn a_changed_host_key_stops_reconnecting_too() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    let changed = MountError::Connect(ConnectError::HostKeyRejected);
+    world
+        .mock
+        .script_reconnect(NextMount::Fail(changed.clone()));
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert_eq!(world.next_state().await, MountState::Error(changed));
+    assert_eq!(world.mock.unmounts(), 1);
+}
+
+#[tokio::test]
+async fn a_prompt_cancelled_while_reconnecting_unmounts_without_an_error() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world
+        .mock
+        .script_reconnect(NextMount::Fail(MountError::Connect(
+            ConnectError::Cancelled,
+        )));
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert_eq!(world.next_state().await, MountState::Disconnected);
+    assert_eq!(world.mock.unmounts(), 1);
+}
+
+#[tokio::test]
+async fn unmount_while_waiting_to_retry_stops_the_retries() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    let mounted = world.mounted(id).await;
+    for _ in 0..20 {
+        world
+            .mock
+            .script_reconnect(NextMount::Fail(MountError::Connect(
+                ConnectError::ConnectionLost,
+            )));
+    }
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert!(eventually(|| world.mock.reconnects() >= 3).await);
+
+    world.manager.unmount(id).await;
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Unmounting);
+    assert_eq!(event.detail, mounted.detail);
+    assert_eq!(world.next_state().await, MountState::Disconnected);
+    let tried = world.mock.reconnects();
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(world.mock.reconnects(), tried);
+    assert_eq!(world.mock.alive(), 0);
+}
+
+#[tokio::test]
+async fn unmount_during_an_attempt_drops_it_and_unmounts() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world.mock.script_reconnect(NextMount::Hang);
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+
     world.unmounted(id).await;
+    assert_eq!(world.mock.unmounts(), 1);
+    assert_eq!(world.mock.alive(), 0);
+}
+
+#[tokio::test]
+async fn while_reconnecting_a_mount_is_busy_and_a_save_works() {
+    let mut profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile.clone()]);
+    world.mounted(id).await;
+    world.mock.script_reconnect(NextMount::Hang);
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+
+    assert_eq!(world.manager.mount(id).await, Err(MountRefused::Busy));
+    profile.name = "Renamed".to_owned();
+    world
+        .manager
+        .save(profile.clone(), Vec::new())
+        .await
+        .unwrap();
+    assert_eq!(world.profile_in_the_file(id), profile);
+
+    let mut locked = profile;
+    sftp_mut(&mut locked).host = "elsewhere.example.com".to_owned();
+    assert!(matches!(
+        world.manager.save(locked, Vec::new()).await,
+        Err(ProfileChangeError::ConnectionFieldsLocked)
+    ));
+    assert_eq!(world.state(id), MountState::Reconnecting);
+}
+
+#[tokio::test]
+async fn delete_while_reconnecting_unmounts_and_deletes() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world.mock.script_reconnect(NextMount::Hang);
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+
+    world.manager.delete(id).await.unwrap();
+    assert_eq!(world.next_state().await, MountState::Unmounting);
+    assert_eq!(world.next_state().await, MountState::Disconnected);
+    assert!(world.manager.config().await.profiles.is_empty());
+    assert_eq!(world.mock.alive(), 0);
+}
+
+#[tokio::test]
+async fn shutdown_while_reconnecting_unmounts() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world.mock.script_reconnect(NextMount::Hang);
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+
+    timeout(PATIENCE, world.manager.shutdown()).await.unwrap();
+    assert_eq!(world.mock.unmounts(), 1);
+    assert_eq!(world.mock.alive(), 0);
 }
 
 /// The flag stays editable while mounted (FR-PROF-08), so what counts is its value when it happens.
@@ -2117,4 +2431,16 @@ async fn deleting_one_of_two_unreadable_entries_with_an_id_leaves_the_secrets() 
     world.manager.delete_unreadable(last).await.unwrap();
     assert!(world.secrets.inner.is_empty(), "the last one takes them");
     assert!(world.in_the_file().unreadable.is_empty());
+}
+
+/// Whether `done` comes true within the patience of these tests.
+async fn eventually(mut done: impl FnMut() -> bool) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < PATIENCE {
+        if done() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    done()
 }

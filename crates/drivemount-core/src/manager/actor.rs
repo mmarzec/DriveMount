@@ -4,10 +4,12 @@
 //! another's: one can sit in a dialog for as long as the user likes.
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use drivemount_vfs::{ConnectError, Health, MountBackend, MountError, Secret, SecretSlot};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::spawn_blocking;
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, info, info_span, warn};
 use uuid::Uuid;
@@ -59,6 +61,49 @@ enum Leaving {
 enum Flow {
     Continue,
     Exit,
+}
+
+/// How *Reconnecting* ended.
+enum Reconnected {
+    /// The drive has a connection again.
+    Yes,
+    /// Retrying cannot help (FR-REC-06), or the user cancelled a prompt.
+    Stopped(MountError),
+    /// Something else ends the mount.
+    Leaving(Leaving),
+}
+
+/// Waits between reconnect attempts, in seconds: 1, 2, 4, 8, 16, 32, then 60 for as long as it takes
+/// (FR-REC-02). `attempt` counts from 0, the wait after the first failure.
+pub(super) const fn backoff_secs(attempt: u32) -> u64 {
+    const DOUBLING: [u64; 6] = [1, 2, 4, 8, 16, 32];
+    if (attempt as usize) < DOUBLING.len() {
+        DOUBLING[attempt as usize]
+    } else {
+        60
+    }
+}
+
+/// The waits of [`backoff_secs`], which this crate's tests run a hundred times faster.
+fn backoff(attempt: u32) -> Duration {
+    let seconds = Duration::from_secs(backoff_secs(attempt));
+    if cfg!(test) { seconds / 100 } else { seconds }
+}
+
+/// Errors that the same attempt would meet again, however long it waited (FR-REC-06): the login or
+/// the server's key needs the user. A cancelled prompt is the user saying to stop.
+pub(super) const fn stops_retrying(error: &MountError) -> bool {
+    matches!(
+        error,
+        MountError::Connect(
+            ConnectError::Cancelled
+                | ConnectError::Auth { .. }
+                | ConnectError::HostKeyChanged(_)
+                | ConnectError::HostKeyRevoked(_)
+                | ConnectError::HostKeyRejected
+                | ConnectError::KeyFormat
+        )
+    )
 }
 
 pub(super) struct Actor {
@@ -215,18 +260,25 @@ impl Actor {
         Ok((profile.clone(), config.settings.clone()))
     }
 
-    /// *Mounted*: until something ends it.
+    /// *Mounted*, and *Reconnecting* in between: until something ends it.
     async fn mounted(&mut self, connected: Connected, detail: MountDetail) -> Flow {
         let mut health = connected.backend.health();
         let mut health_open = true;
         let leaving = loop {
             if health_open && matches!(*health.borrow_and_update(), Health::Lost(_)) {
-                let auto_reconnect = self.auto_reconnect().await;
-                if auto_reconnect {
-                    // Reconnecting is M2-01's. Until then the drive stays, and calls fail.
-                    warn!(id = %self.id, "the connection is lost");
-                } else {
+                if !self.auto_reconnect().await {
                     return self.lost(connected).await;
+                }
+                match self.reconnecting(&connected, detail).await {
+                    // Health is `Ok` again, or lost again already, which the next round sees.
+                    Reconnected::Yes => {
+                        // A reconnect that had to ask, as for a code, may have something to keep.
+                        self.keep_remembered(connected.backend.as_ref()).await;
+                        self.set(MountState::Mounted, Some(detail));
+                        continue;
+                    }
+                    Reconnected::Stopped(error) => return self.stopped(connected, error).await,
+                    Reconnected::Leaving(leaving) => break leaving,
                 }
             }
             tokio::select! {
@@ -262,6 +314,74 @@ impl Actor {
         profiles
             .find(|profile| profile.id == self.id)
             .is_some_and(|profile| profile.auto_reconnect)
+    }
+
+    /// *Reconnecting*: the drive keeps its letter, and calls on it wait (FR-REC-02, FR-REC-04).
+    /// Attempts go on with growing waits until one works, one meets an error that retrying cannot
+    /// help, or the mount is to end. Commands are answered all the while, as when *Mounted*.
+    async fn reconnecting(&mut self, connected: &Connected, detail: MountDetail) -> Reconnected {
+        self.set(MountState::Reconnecting, Some(detail));
+        let mut attempt = 0;
+        loop {
+            let trying = connected.backend.reconnect(&*self.shared.prompter);
+            let tried = {
+                tokio::pin!(trying);
+                loop {
+                    tokio::select! {
+                        biased;
+                        message = self.inbox.recv() => {
+                            if let Some(leaving) = self.while_in_use(message).await {
+                                // Dropping the attempt gives it up.
+                                return Reconnected::Leaving(leaving);
+                            }
+                        }
+                        tried = &mut trying => break tried,
+                    }
+                }
+            };
+            let error = match tried {
+                Ok(()) => {
+                    info!(id = %self.id, attempts = attempt + 1, "reconnected");
+                    return Reconnected::Yes;
+                }
+                Err(error) if stops_retrying(&error) => {
+                    warn!(id = %self.id, %error, "reconnecting stopped");
+                    return Reconnected::Stopped(error);
+                }
+                Err(error) => error,
+            };
+            let wait = backoff(attempt);
+            warn!(id = %self.id, %error, ?wait, "reconnecting failed, trying again");
+            attempt = attempt.saturating_add(1);
+            let waited = sleep(wait);
+            tokio::pin!(waited);
+            loop {
+                tokio::select! {
+                    biased;
+                    message = self.inbox.recv() => {
+                        if let Some(leaving) = self.while_in_use(message).await {
+                            return Reconnected::Leaving(leaving);
+                        }
+                    }
+                    () = &mut waited => break,
+                }
+            }
+        }
+    }
+
+    /// *Reconnecting* to *Error*, or to *Disconnected* if the user cancelled a prompt, with the drive
+    /// gone (FR-REC-06).
+    async fn stopped(&self, connected: Connected, error: MountError) -> Flow {
+        if let Err(unmounting) = connected.backend.unmount().await {
+            warn!(id = %self.id, error = %unmounting, "unmount failed after reconnecting stopped");
+        }
+        drop(connected);
+        if error == MountError::Connect(ConnectError::Cancelled) {
+            self.set(MountState::Disconnected, None);
+        } else {
+            self.set(MountState::Error(error), None);
+        }
+        Flow::Continue
     }
 
     /// *Mounted* to *Error (Connection lost)*, with no reconnect to wait for (FR-REC-07).

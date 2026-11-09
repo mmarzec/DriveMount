@@ -157,6 +157,11 @@ impl MountBackend for StubBackend {
             .send_replace(Health::Lost("unmounted".to_owned()));
         Ok(())
     }
+    async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError> {
+        let _session = self.connector.connect(prompter).await?;
+        self.health.send_replace(Health::Ok);
+        Ok(())
+    }
     fn health(&self) -> watch::Receiver<Health> {
         self.health.subscribe()
     }

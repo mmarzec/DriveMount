@@ -10,6 +10,7 @@
 // Each test binary uses its own part of this.
 #![allow(dead_code)]
 
+pub mod proxy;
 pub mod sftp_server;
 
 use std::collections::HashMap;

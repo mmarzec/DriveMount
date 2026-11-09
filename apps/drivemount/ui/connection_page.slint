@@ -56,6 +56,7 @@ export component ConnectionPage {
     property <string> status-line: !root.is-profile ? @tr("Cannot be read")
         : root.view.status == RowStatus.mounted ? (root.view.letter != "" ? @tr("Mounted on {}", root.view.letter) : @tr("Mounted"))
         : root.view.status == RowStatus.connecting ? @tr("Connecting…")
+        : root.view.status == RowStatus.reconnecting ? (root.view.letter != "" ? @tr("Reconnecting… (on {})", root.view.letter) : @tr("Reconnecting…"))
         : root.view.status == RowStatus.unmounting ? @tr("Unmounting…")
         : root.view.status == RowStatus.error ? @tr("Failed")
         : @tr("Not mounted");

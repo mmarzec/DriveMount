@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Mounting and unmounting through `MountBackend`, on `MemFs` and over a real SFTP session
-//! (M1-12c, spec §10.3). These tell Explorer about their drives, so a window on "This PC" shows them
+//! Mounting, unmounting and reconnecting through `MountBackend`, on `MemFs` and over a real SFTP
+//! session (M1-12c, M2-01, spec §10.3). These tell Explorer about their drives, so a window on "This PC" shows them
 //! coming and going.
 
 #![cfg(windows)]
@@ -18,15 +18,18 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use drivemount_sftp::connector::{Auth, SftpConnector, SftpProfile};
 use drivemount_vfs::{
     ConnectError, Connector, DriveLetter, FsError, Health, MountBackend, MountError, Prompter,
-    RemoteFs, async_trait,
+    RemoteFs, Secret, async_trait,
 };
 use drivemount_win::drives::is_letter_free;
 use drivemount_winfsp::{VolumeConfig, WinFspBackend};
+use support::proxy::{Link, Proxy};
+use support::sftp_server::SftpServer;
 use support::{Op, Probe, Sftp, TrustOnce, eventually, free_letter, pattern, unique_slug};
 use tokio::runtime::Runtime;
-use tokio::sync::Notify;
+use tokio::sync::{Notify, watch};
 
 /// One test mounting at a time: they pick letters, and each counts what it did to Explorer's list.
 static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
@@ -45,6 +48,16 @@ struct TestConnector {
     connecting: Notify,
     probe_fails: AtomicBool,
     probes: AtomicU64,
+    /// How many connections have ended by themselves: the first `n` handed out are over.
+    ended: watch::Sender<usize>,
+}
+
+impl TestConnector {
+    /// The connection handed out last ends, as one whose keep-alives went unanswered does.
+    fn end_session(&self) {
+        self.ended
+            .send_replace(self.connects.load(Ordering::SeqCst));
+    }
 }
 
 /// A connector the test can still look at once the backend has it.
@@ -71,6 +84,12 @@ impl Connector for Shared<TestConnector> {
         } else {
             Ok(Duration::from_millis(1))
         }
+    }
+
+    async fn session_ended(&self) {
+        let current = self.0.connects.load(Ordering::SeqCst);
+        let mut ended = self.0.ended.subscribe();
+        let _ = ended.wait_for(|ended| *ended >= current).await;
     }
 }
 
@@ -513,28 +532,241 @@ fn health_follows_what_the_connection_answers_after_a_timeout() {
     assert_eq!(setup.connector.probes.load(Ordering::SeqCst), 0);
     probe.heal(Op::Open);
 
-    // A timeout is worth asking about, and here the connection does not answer.
-    setup.connector.probe_fails.store(true, Ordering::SeqCst);
+    // A timeout is worth asking about. Here the connection answers, so nothing is lost.
     probe.delay(Op::Open, Duration::from_secs(5));
+    assert!(fs::File::create(&path).is_err());
+    assert!(eventually(
+        || setup.connector.probes.load(Ordering::SeqCst) == 1
+    ));
+    assert_eq!(*health.borrow(), Health::Ok);
+
+    // Another, and this time it does not answer (FR-REC-01's third trigger).
+    setup.connector.probe_fails.store(true, Ordering::SeqCst);
     assert!(fs::File::create(&path).is_err());
     assert!(eventually(|| matches!(
         *health.borrow(),
-        Health::Lost(ref reason) if reason == "connection lost"
+        Health::Lost(ref reason) if reason == "a keep-alive probe failed: connection lost"
     )));
 
-    // Another, and this time it answers.
+    // Lost stays lost, however the server answers now, until a reconnect.
+    probe.delay(Op::Open, Duration::ZERO);
     setup.connector.probe_fails.store(false, Ordering::SeqCst);
     assert!(fs::File::create(&path).is_err());
-    assert!(eventually(|| *health.borrow() == Health::Ok));
+    assert!(matches!(*health.borrow(), Health::Lost(_)));
+    setup
+        .runtime
+        .block_on(setup.backend.reconnect(&TrustOnce::default()))
+        .unwrap();
+    assert_eq!(*health.borrow(), Health::Ok);
+    fs::File::create(&path).unwrap();
 
     // The next mount starts from healthy, whatever the last one ended with.
-    setup.connector.probe_fails.store(true, Ordering::SeqCst);
-    assert!(fs::File::create(&path).is_err());
+    setup.connector.end_session();
     assert!(eventually(|| *health.borrow() != Health::Ok));
     setup.unmount();
-    probe.delay(Op::Open, Duration::ZERO);
     setup.mount();
     assert_eq!(*health.borrow(), Health::Ok);
+}
+
+// ---- Reconnecting (M2-01). ----
+
+/// ERROR_NETWORK_UNREACHABLE, which Windows makes of `STATUS_NETWORK_UNREACHABLE`.
+const UNREACHABLE: i32 = 1231;
+
+fn reconnect_setup(op_timeout: Duration) -> Setup {
+    let mut settings = config("Reconnect");
+    settings.op_timeout = op_timeout;
+    // Every look goes to the server, so a test sees what the connection does.
+    settings.cache_ttl = Duration::ZERO;
+    setup_with(settings)
+}
+
+impl Setup {
+    fn lost(&self) -> bool {
+        eventually(|| matches!(*self.backend.health().borrow(), Health::Lost(_)))
+    }
+
+    fn reconnect(&self) -> Result<(), MountError> {
+        self.runtime
+            .block_on(self.backend.reconnect(&TrustOnce::default()))
+    }
+}
+
+#[test]
+fn a_connection_that_ends_by_itself_is_noticed_without_any_call() {
+    let setup = reconnect_setup(Duration::from_secs(30));
+    setup.mount();
+    let calls = setup.connector.probe.count(Op::Stat);
+    setup.connector.end_session();
+    assert!(eventually(|| matches!(
+        *setup.backend.health().borrow(),
+        Health::Lost(ref reason) if reason == "the connection ended"
+    )));
+    assert_eq!(setup.connector.probe.count(Op::Stat), calls);
+}
+
+#[test]
+fn a_call_that_finds_the_connection_gone_waits_for_the_reconnect_and_carries_on() {
+    let setup = reconnect_setup(Duration::from_secs(30));
+    let letter = setup.mount();
+    let path = root(letter).join("a.txt");
+    fs::write(&path, b"hello").unwrap();
+
+    setup
+        .connector
+        .probe
+        .fail(Op::Stat, FsError::ConnectionLost);
+    let waiting = std::thread::spawn({
+        let path = path.clone();
+        move || fs::read(path)
+    });
+    assert!(eventually(|| matches!(
+        *setup.backend.health().borrow(),
+        Health::Lost(ref reason) if reason == "a call found the connection gone"
+    )));
+    assert!(!waiting.is_finished(), "the call waits for the reconnect");
+
+    setup.connector.probe.heal(Op::Stat);
+    setup.reconnect().unwrap();
+    assert_eq!(*setup.backend.health().borrow(), Health::Ok);
+    assert_eq!(waiting.join().unwrap().unwrap(), b"hello");
+    assert_eq!(setup.connector.connects.load(Ordering::SeqCst), 2);
+}
+
+/// FR-REC-04: no call waits longer than the timeout, and then the network is unreachable.
+#[test]
+fn while_the_connection_is_down_calls_fail_as_unreachable_within_the_timeout() {
+    let setup = reconnect_setup(Duration::from_secs(1));
+    let letter = setup.mount();
+    fs::write(root(letter).join("a.txt"), b"x").unwrap();
+    setup.connector.end_session();
+    assert!(setup.lost());
+
+    let probes = setup.connector.probes.load(Ordering::SeqCst);
+    for _ in 0..3 {
+        let start = Instant::now();
+        let error = fs::metadata(root(letter).join("a.txt")).unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(UNREACHABLE), "{error}");
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            start.elapsed()
+        );
+    }
+    // With no connection, there is nothing to probe.
+    assert_eq!(setup.connector.probes.load(Ordering::SeqCst), probes);
+
+    // And the drive works again once there is one.
+    setup.reconnect().unwrap();
+    assert_eq!(fs::read(root(letter).join("a.txt")).unwrap(), b"x");
+}
+
+/// FR-REC-05: each handle opens the file again by path on its next use, keeping what it holds.
+#[test]
+fn files_open_across_a_reconnect_carry_on_where_they_were() {
+    let setup = reconnect_setup(Duration::from_secs(30));
+    let letter = setup.mount();
+    let data = pattern(3 * 1024 * 1024, 5);
+    fs::write(root(letter).join("read.bin"), &data).unwrap();
+
+    let mut reader = fs::File::open(root(letter).join("read.bin")).unwrap();
+    let mut writer = fs::File::create(root(letter).join("write.txt")).unwrap();
+    let mut first = vec![0; 1024 * 1024];
+    reader.read_exact(&mut first).unwrap();
+    writer.write_all(b"before ").unwrap();
+
+    setup.connector.end_session();
+    assert!(setup.lost());
+    setup.reconnect().unwrap();
+    let opens = setup.connector.probe.count(Op::Open);
+
+    let mut rest = Vec::new();
+    reader.read_to_end(&mut rest).unwrap();
+    first.extend(rest);
+    assert!(first == data, "the file read across the reconnect differs");
+    writer.write_all(b"after").unwrap();
+    drop(writer);
+    drop(reader);
+    assert_eq!(
+        setup.connector.probe.inner_get("/write.txt"),
+        b"before after"
+    );
+    // One open each on the new session, and neither emptied its file.
+    assert_eq!(setup.connector.probe.count(Op::Open) - opens, 2);
+}
+
+#[test]
+fn a_reconnect_that_fails_leaves_the_drive_waiting_for_the_next() {
+    let setup = reconnect_setup(Duration::from_secs(1));
+    let letter = setup.mount();
+    setup.connector.end_session();
+    assert!(setup.lost());
+
+    setup.connector.refuse.store(true, Ordering::SeqCst);
+    assert_eq!(
+        setup.reconnect(),
+        Err(MountError::Connect(ConnectError::SftpUnavailable))
+    );
+    assert!(matches!(*setup.backend.health().borrow(), Health::Lost(_)));
+    assert!(!is_letter_free(letter).unwrap(), "the letter stays");
+
+    setup.connector.refuse.store(false, Ordering::SeqCst);
+    setup.reconnect().unwrap();
+    assert!(is_up(letter));
+}
+
+#[test]
+fn a_reconnect_dropped_part_way_changes_nothing() {
+    let setup = reconnect_setup(Duration::from_secs(1));
+    setup.mount();
+    setup.connector.end_session();
+    assert!(setup.lost());
+    setup.connector.hang.store(true, Ordering::SeqCst);
+    let dropped = setup.runtime.block_on(async {
+        tokio::time::timeout(
+            Duration::from_millis(200),
+            setup.backend.reconnect(&TrustOnce::default()),
+        )
+        .await
+    });
+    assert!(dropped.is_err());
+    assert!(matches!(*setup.backend.health().borrow(), Health::Lost(_)));
+    setup.connector.hang.store(false, Ordering::SeqCst);
+    setup.reconnect().unwrap();
+}
+
+#[test]
+fn reconnecting_what_is_not_mounted_fails() {
+    let setup = reconnect_setup(Duration::from_secs(1));
+    assert!(matches!(setup.reconnect(), Err(MountError::Other(_))));
+    assert_eq!(setup.connector.connects.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn unmounting_while_the_connection_is_down_is_quick_whatever_is_waiting() {
+    let setup = reconnect_setup(Duration::from_secs(30));
+    let letter = setup.mount();
+    fs::write(root(letter).join("a.txt"), b"x").unwrap();
+    let mut open = fs::OpenOptions::new()
+        .write(true)
+        .open(root(letter).join("a.txt"))
+        .unwrap();
+    open.write_all(b"y").unwrap();
+    setup.connector.end_session();
+    assert!(setup.lost());
+    let waiting = std::thread::spawn(move || fs::read(root(letter).join("a.txt")));
+    std::thread::sleep(Duration::from_millis(300));
+
+    let start = Instant::now();
+    setup.unmount();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(!is_up(letter));
+    assert!(waiting.join().unwrap().is_err());
+    drop(open);
 }
 
 // ---- What Explorer is given. ----
@@ -600,6 +832,10 @@ impl Connector for Shared<Sftp> {
     async fn probe(&self) -> Result<Duration, ConnectError> {
         self.0.connector.probe().await
     }
+
+    async fn session_ended(&self) {
+        self.0.connector.session_ended().await;
+    }
 }
 
 fn over_sftp() -> OverSftp {
@@ -653,9 +889,10 @@ fn an_unknown_server_is_asked_about_and_a_real_session_mounts() {
     assert!(!is_up(letter));
     assert_eq!(setup.probe.open_handles(), 0);
 
-    // Trusted once only, so it asks again.
+    // Trusted once, which the connector remembers for as long as it lives, so that a reconnect asks
+    // nothing. The app makes a connector for each mount, so its next mount asks again.
     setup.mount();
-    assert_eq!(setup.prompter.host_keys_asked.load(Ordering::SeqCst), 2);
+    assert_eq!(setup.prompter.host_keys_asked.load(Ordering::SeqCst), 1);
 }
 
 #[test]
@@ -755,6 +992,201 @@ fn losing_the_server_fails_calls_and_does_not_stop_unmounting() {
     // The next mount makes a new session.
     let letter = setup.mount();
     assert!(root(letter).join("a.txt").exists());
+}
+
+// ---- Reconnecting over a real SFTP session (M2-01). ----
+
+/// A drive over SFTP to the server in this process, through a proxy that can pull the cable or take
+/// the server away. Keep-alives go every second, so a dead link shows within 3 s (FR-SSH-12).
+struct ThroughProxy {
+    runtime: Runtime,
+    probe: Arc<Probe>,
+    proxy: Proxy,
+    backend: WinFspBackend<SftpConnector>,
+    _server: SftpServer,
+    _known_hosts: tempfile::TempDir,
+    _order: MutexGuard<'static, ()>,
+}
+
+fn through_proxy(op_timeout: Duration) -> ThroughProxy {
+    let order = one_at_a_time();
+    let runtime = Runtime::new().unwrap();
+    let probe = Arc::new(Probe::default());
+    let (server, proxy) = runtime.block_on(async {
+        let server = SftpServer::start(Arc::clone(&probe) as Arc<dyn RemoteFs>).await;
+        let proxy = Proxy::to(server.port).await;
+        (server, proxy)
+    });
+    let known_hosts = tempfile::tempdir().unwrap();
+    let connector = SftpConnector::new(SftpProfile {
+        host: "127.0.0.1".to_owned(),
+        port: proxy.port,
+        user: "tester".to_owned(),
+        auth: Auth::Password(Some(Secret::from("anything".to_owned()))),
+        remote_path: "/".to_owned(),
+        keepalive_secs: 1,
+        timeout: op_timeout,
+        known_hosts: known_hosts.path().join("known_hosts"),
+        jump: None,
+    });
+    let mut settings = config("Through a proxy");
+    settings.op_timeout = op_timeout;
+    ThroughProxy {
+        runtime,
+        probe,
+        proxy,
+        backend: WinFspBackend::new(connector, settings),
+        _server: server,
+        _known_hosts: known_hosts,
+        _order: order,
+    }
+}
+
+impl ThroughProxy {
+    fn mount(&self) -> DriveLetter {
+        let letter = free_letter();
+        self.runtime
+            .block_on(self.backend.mount(letter, &TrustOnce::default()))
+            .unwrap();
+        letter
+    }
+
+    fn lost_within(&self, limit: Duration) -> Option<Duration> {
+        let start = Instant::now();
+        loop {
+            if matches!(*self.backend.health().borrow(), Health::Lost(_)) {
+                return Some(start.elapsed());
+            }
+            if start.elapsed() >= limit {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// What the mount manager does once the connection is lost: try until it works.
+    fn reconnect_until_it_works(&self) {
+        let prompter = TrustOnce::default();
+        for _ in 0..50 {
+            if self
+                .runtime
+                .block_on(self.backend.reconnect(&prompter))
+                .is_ok()
+            {
+                // Trusted once at the mount, and not asked about again.
+                assert_eq!(prompter.host_keys_asked.load(Ordering::SeqCst), 0);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        panic!("no reconnect worked");
+    }
+}
+
+impl Drop for ThroughProxy {
+    fn drop(&mut self) {
+        let _ = self.runtime.block_on(self.backend.unmount());
+    }
+}
+
+/// Plan M2-01's first check: the server goes away in the middle of a large read and comes back,
+/// and the copy is the same as the file (FR-REC-05).
+#[test]
+fn a_large_read_carries_on_across_the_server_going_away_and_the_copy_matches() {
+    const SIZE: usize = 64 * 1024 * 1024;
+    let setup = through_proxy(Duration::from_secs(15));
+    let data = pattern(SIZE, 9);
+    setup.probe.inner_put("/large.bin", &data);
+    let letter = setup.mount();
+
+    let read_so_far = Arc::new(AtomicUsize::new(0));
+    let reader = std::thread::spawn({
+        let read_so_far = Arc::clone(&read_so_far);
+        move || -> std::io::Result<Vec<u8>> {
+            let mut file = fs::File::open(root(letter).join("large.bin"))?;
+            let mut copy = Vec::with_capacity(SIZE);
+            let mut chunk = vec![0; 1024 * 1024];
+            loop {
+                let count = file.read(&mut chunk)?;
+                if count == 0 {
+                    return Ok(copy);
+                }
+                copy.extend_from_slice(&chunk[..count]);
+                read_so_far.store(copy.len(), Ordering::SeqCst);
+            }
+        }
+    });
+
+    assert!(eventually(|| read_so_far.load(Ordering::SeqCst) >= SIZE / 4));
+    setup.proxy.set(Link::Cut);
+    assert!(setup.lost_within(Duration::from_secs(5)).is_some());
+    std::thread::sleep(Duration::from_secs(2));
+    setup.proxy.set(Link::Forward);
+    setup.reconnect_until_it_works();
+
+    let copy = reader.join().unwrap().unwrap();
+    assert_eq!(copy.len(), SIZE);
+    assert!(copy == data, "the copy differs from the file");
+}
+
+/// FR-SSH-12, scaled down: with nothing using the drive, unanswered keep-alives still say the
+/// connection is lost, 3 intervals after the last answer.
+#[test]
+fn an_idle_drive_notices_a_pulled_cable_by_its_keep_alives() {
+    let setup = through_proxy(Duration::from_secs(15));
+    setup.mount();
+    assert_eq!(setup.lost_within(Duration::from_secs(3)), None);
+    setup.proxy.set(Link::Stall);
+    let lost = setup
+        .lost_within(Duration::from_secs(10))
+        .expect("must notice the dead link");
+    assert!(lost <= Duration::from_secs(5), "{lost:?}");
+    assert!(matches!(
+        &*setup.backend.health().borrow(),
+        Health::Lost(reason) if reason == "the connection ended"
+    ));
+}
+
+/// Plan M2-01's second check: with the cable pulled, browsing the drive gets an error within the
+/// timeout and is never left hanging, however often it tries (FR-REC-04).
+///
+/// Browsing: listings and looking files up. Creating a file can take longer, as WinFsp lets it in
+/// only once nothing else is running on the drive, and each of those can take a timeout.
+#[test]
+fn with_the_cable_pulled_browsing_fails_within_the_timeout() {
+    const TIMEOUT: Duration = Duration::from_secs(3);
+    let setup = through_proxy(TIMEOUT);
+    let letter = setup.mount();
+    fs::create_dir(root(letter).join("dir")).unwrap();
+    fs::write(root(letter).join("dir").join("a.txt"), b"x").unwrap();
+    setup.proxy.set(Link::Stall);
+
+    let start = Instant::now();
+    let mut errors = Vec::new();
+    while start.elapsed() < Duration::from_secs(8) {
+        let call = Instant::now();
+        let error = if errors.len() % 2 == 0 {
+            fs::read_dir(root(letter).join("dir")).unwrap_err()
+        } else {
+            fs::metadata(root(letter).join("dir").join("a.txt")).unwrap_err()
+        };
+        assert!(
+            call.elapsed() < TIMEOUT + Duration::from_secs(2),
+            "{:?}: {error}",
+            call.elapsed()
+        );
+        errors.push(error.raw_os_error());
+    }
+    // Once the connection is known to be gone, it is the network that is unreachable.
+    assert!(setup.lost_within(Duration::ZERO).is_some());
+    assert_eq!(errors.last(), Some(&Some(UNREACHABLE)), "{errors:?}");
+
+    setup.proxy.set(Link::Forward);
+    setup.reconnect_until_it_works();
+    assert_eq!(
+        fs::read(root(letter).join("dir").join("a.txt")).unwrap(),
+        b"x"
+    );
 }
 
 // ---- A killed process (NFR-REL-04). ----

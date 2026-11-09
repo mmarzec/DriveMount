@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Mounting and unmounting profiles (spec §5.5), and saving and deleting them. Reconnecting is
-//! M2-01's.
+//! Mounting, unmounting and reconnecting profiles (spec §5.5), and saving and deleting them.
 //!
 //! Each profile has a task of its own, which owns its state. States come out as [`MountEvent`]s on a
 //! broadcast channel, and [`status`](MountManager::status) gives the latest. What the commands
@@ -16,6 +15,7 @@
 //! | *Disconnected*, *Error* | connects | – | – | anything | deletes |
 //! | *Connecting* | [`Busy`](MountRefused::Busy) | cancels | cancels | not connection fields | cancels, deletes |
 //! | *Mounted* | [`Busy`](MountRefused::Busy) | unmounts | – | not connection fields | unmounts, deletes |
+//! | *Reconnecting* | [`Busy`](MountRefused::Busy) | stops retrying, unmounts | – | not connection fields | stops retrying, unmounts, deletes |
 //! | *Unmounting* | waits, then connects | – | – | waits, then anything | waits, then deletes |
 
 mod actor;
@@ -96,7 +96,7 @@ pub trait BackendFactory: Send + Sync + 'static {
     ) -> Result<Duration, ConnectError>;
 }
 
-/// A profile's state (spec §5.5, without *Reconnecting* until M2-01).
+/// A profile's state (spec §5.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MountState {
     /// Not mounted, and nothing went wrong.
@@ -105,13 +105,16 @@ pub enum MountState {
     Connecting,
     /// The drive is up.
     Mounted,
+    /// The drive is up, but its connection was lost, and attempts to connect again are going on
+    /// (FR-REC-02). Calls on the drive wait for one, up to the operation timeout (FR-REC-04).
+    Reconnecting,
     /// The drive is going away.
     Unmounting,
     /// Not mounted, because of this. The codes of spec §7.8 go by the variant.
     Error(MountError),
 }
 
-/// Where a drive is. There is one while *Mounted* and *Unmounting*.
+/// Where a drive is. There is one while *Mounted*, *Reconnecting* and *Unmounting*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MountDetail {
     /// The drive's letter.

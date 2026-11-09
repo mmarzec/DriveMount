@@ -163,4 +163,12 @@ pub trait Connector: Send + Sync + 'static {
 
     /// Sends a keep-alive on the current connection and returns its round-trip time.
     async fn probe(&self) -> Result<Duration, ConnectError>;
+
+    /// Resolves once the session handed out by the last [`connect`](Self::connect) has ended by
+    /// itself: the server closed it, keep-alives went unanswered (FR-SSH-12) or the transport failed.
+    /// At once if there is no such session. The default never resolves, for a backend that cannot
+    /// tell: probes and failed calls still find out.
+    async fn session_ended(&self) {
+        std::future::pending::<()>().await;
+    }
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Shared traits and types, caches, read-ahead, name mapping and deadlines. No Windows dependencies.
+//! Shared traits and types, caches, read-ahead, name mapping, deadlines and reconnecting sessions. No Windows dependencies.
 //!
 //! This is the lowest crate in the workspace (plan SC-1), so backends and the engine can share
 //! [`RemoteFs`], [`Connector`], [`MountBackend`], [`Prompter`], [`Secret`] and [`SecretStore`] without a
@@ -28,6 +28,7 @@ mod readahead;
 mod remote;
 mod secret;
 mod secret_store;
+mod session;
 mod types;
 
 pub use cache::CachedFs;
@@ -48,6 +49,7 @@ pub use secret::Secret;
 #[cfg(feature = "testing")]
 pub use secret_store::MemorySecretStore;
 pub use secret_store::{SecretSlot, SecretStore};
+pub use session::SessionFs;
 pub use types::{
     Access, Attr, AttrChanges, AttrTarget, Capabilities, DirEntry, Disposition, FileKind, FsStats,
     OpenMode, RemoteHandle, apply_read_only,

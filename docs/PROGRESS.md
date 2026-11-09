@@ -2,6 +2,40 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-01 Reconnect
+
+**Status: done locally, not yet committed.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (995 passing, 166 ignored), twice. Against S-03: all of `drivemount-sftp`'s ignored tests (128, 4 new, the 1 GiB contract case included), `real_drive.rs` but its GiB test (9, 3 new), `mount_one.rs` (15) and `drivemount_exe.rs` (3). `drivemount-winfsp`: `lifecycle.rs` (37, 13 new, 3 of them over SFTP through a proxy), and `read_path.rs` and `write_path.rs` with `DRIVEMOUNT_TEST_SERVER=sftp` (51 and 102), as `SessionFs` is now under every drive. **Not run:** the Linux container check, `fsx` and `winfsp_tests`, the GiB test of `real_drive.rs`.
+
+- **Added:**
+  - `drivemount_vfs::SessionFs`: the drive's file system across reconnects (spec §5.6, "Sessions across reconnects"). It sits under the deadline layer, `CachedFs<DeadlineFs<SessionFs>>`, so a wait for a session has the same limit as any call. Calls wait while there is no session, and safe ones go again after a `ConnectionLost`. Handles are its own, with a generation, and are opened again by path, never creating or truncating.
+  - `Connector::session_ended`, with a default that never resolves, and `MountBackend::reconnect`, which every backend must have.
+  - `drivemount-sftp`: the `russh` handler holds a `watch::Sender` that goes with it as the connection's task ends, so `SftpSession::ended` and `SftpConnector::session_ended` hear of keep-alive timeouts and any other end. `disconnected` is logged at Info. A key trusted once is remembered by the connector.
+  - `WinFspBackend`: one watcher per mount that, for each session, waits for the first of the three triggers and says `Lost` once; `reconnect`; `unmount` while down ends the waiting calls first. The adapter turns a timeout while down into `STATUS_NETWORK_UNREACHABLE` and asks for no probe then.
+  - `MountState::Reconnecting`, and the manager's loop in `Actor::reconnecting`: at once, then 1, 2, 4… 60 s; stops on E-AUTH, a host key changed, revoked or rejected, E-KEY-FORMAT, and a cancelled prompt (to *Disconnected*). Commands are answered as while *Mounted*.
+  - The UI: `RowStatus::Reconnecting` (amber loader, not pulsing), the letter kept, *Unmount*, "Reconnecting… (on Z:)" on the page, "· 1 reconnecting" in the status bar, and *Unmount all* includes it. `SharedConnector` in `backend.rs` passes `session_ended` on: without it the app would never hear of keep-alive timeouts.
+  - Test support: `crates/drivemount-winfsp/tests/support/proxy.rs` (a copy of the SFTP tests' proxy), and in `real_drive.rs` helpers that run `docker compose` in WSL and add a server user of the test's own.
+- **For the owner to check:**
+  - **A *Trust once* key stays trusted for the whole mount, reconnects included,** as otherwise every reconnect of such a profile would stop at a dialog. The next mount asks again, as the app makes a connector per mount. `an_unknown_server_is_asked_about_and_a_real_session_mounts` mounted the same backend twice and expected a second question; it now expects one, with a comment saying why.
+  - **What stops the retries** goes a little beyond FR-REC-06's "auth and host key": a rejected or revoked key, E-KEY-FORMAT (the key file was replaced) and a prompt cancelled during a reconnect, all of which need the user. E-PATH-NOT-FOUND does not stop them, as a NAS volume can come back. `stops_retrying` in `actor.rs` is the one place.
+  - **The first attempt goes at once,** then the waits of FR-REC-02. The spec's list reads as waits, so this only adds the first.
+  - **A reconnect can still ask things** that the connector does not remember, such as a TOTP code. The prompt then appears with no mount having been asked for, which M2-04's notifications may want to explain.
+- **Choices the plan left open (now in the spec, §5.5, §5.6, §5.7, §5.8):**
+  - **No `ArcSwap`:** the session is in a `watch`, which both holds it and wakes the calls waiting for one.
+  - **Retries below the deadline.** A read that meets a dead connection waits for the next session and goes again, within its own timeout. That is what lets a copy run across a server restart (FR-REC-05) rather than fail at the first `ConnectionLost`.
+  - **`Health` is `Lost` once per loss and stays so,** until `reconnect` works. Before, it followed each probe back to `Ok`. Only the manager starts a reconnect, so a session can only be replaced after a `Lost`.
+  - **A failed `reconnect` leaves the drive as it was,** with the letter held, for the next try or an unmount.
+- **Worth knowing:**
+  - **Creating a file can take more than one timeout while the connection hangs.** Seen in the first version of the cable-pull test: a create waited 7 s at a 3 s timeout, behind an open and a close (antivirus, probably) that each took their timeout, as WinFsp's `FineGuard` lets a `Create` in only once nothing else runs. Each callback kept to NFR-REL-03, and lookups and listings do not queue like this, so the test browses, as the plan's check says. M2-09's soak may show whether it matters.
+  - **Waits while down still mark the deadline layer's suspect count,** as `DeadlineFs` cannot tell. The watcher skips those at the next session.
+  - **Python on Windows writes `\n` as CRLF and turns `\a` in a plain string into a bell.** Both happened to my edit scripts. `.gitattributes` would have cleaned the first up on commit; the second broke a test path until found.
+- **Checked:** the plan's three checks pass: `a_server_restart_during_a_large_read_comes_back_by_itself_and_the_hash_matches` (64 MiB, `docker compose restart -t 0 sshd` at a quarter of the way, SHA-256 equal, nothing asked again), `with_the_cable_pulled_browsing_fails_within_the_timeout` (every lookup and listing fails within 3 s + 2 s for 8 s, the last with `ERROR_NETWORK_UNREACHABLE`, then the drive works again), and `a_password_changed_on_the_server_is_an_auth_error_with_no_retries` (*Error* E-AUTH, the drive gone, no event for 5 s after). Also `a_large_read_carries_on_across_the_server_going_away_and_the_copy_matches` over SFTP in the test process, and the suites in **Status** above.
+- **For later tasks:**
+  - **M2-02:** "retry at once, reset backoff" needs a message to the actor while it waits in `reconnecting`'s backoff loop: a `Message::RetryNow` answered there by breaking out of the wait with `attempt = 0`, and ignored elsewhere. "Probe every *Mounted* SFTP mount" can reuse the suspect path: `DeadlineFs::mark_suspect` makes the watcher probe.
+  - **M2-03:** the tooltip's counts are `ListState::counts`, which now has `reconnecting`. The *reconnecting* icon variant is any profile in `MountState::Reconnecting`.
+  - **M2-04:** a toast belongs on *Error* after *Reconnecting* (FR-REC-06) and on *Error (Connection lost)* (FR-REC-07), not on a reconnect that worked (FR-NOT-02).
+  - **M2-09:** the soak's iptables DROP is the real version of `Link::Stall`.
+- **Next:** commit, then M2-02.
+
 ## 2026-11-08: M1-19 M1 exit verification
 
 **Status: done locally, not yet committed. The owner checked H-07's items 1–5 (fine after one fix), and item 6, the Windows agent, passes.** The results and the owner's steps are in [spikes/m1-exit.md](spikes/m1-exit.md). Every automated item of plan §9.2 passes, though "in CI" cannot be met until H-02. `fmt`, `clippy --workspace -D warnings`, both script checks and the workspace's non-ignored tests pass (949 passing, 158 ignored). Against S-03: `mount_one.rs` 15/15, `drivemount_exe.rs` 3/3, `real_drive.rs` 7/7, `fsx` and `winfsp_tests` on `MemFs` and over SFTP. **Not run:** the Linux container check, as only Windows-only tests and an example changed. The other ignored suites were also not run, as no product code changed.

@@ -759,6 +759,10 @@ impl Connector for SftpConnector {
     async fn probe(&self) -> Result<Duration, ConnectError> {
         self.probe_session().await
     }
+
+    async fn session_ended(&self) {
+        SftpConnector::session_ended(self).await;
+    }
 }
 
 #[cfg(test)]

@@ -254,6 +254,33 @@ fn the_status_bar_counts_as_in_the_mock_up() {
         fixture.ui.window().get_status_text(),
         "2 mounted · 1 connecting · 1 failed"
     );
+    // FR-TRAY-02's wording, which the tooltip will share.
+    fixture.set_state(ids[1], MountState::Reconnecting, Some('Y'));
+    assert_eq!(
+        fixture.ui.window().get_status_text(),
+        "1 mounted · 1 connecting · 1 reconnecting · 1 failed"
+    );
+}
+
+#[test]
+fn a_reconnecting_row_keeps_its_letter_and_offers_unmount() {
+    let saved = profile("Prod");
+    let id = saved.id;
+    let fixture = Fixture::new(vec![saved]);
+    fixture.set_state(id, MountState::Reconnecting, Some('Q'));
+    let entry = fixture.entry(0);
+    assert_eq!(entry.status, RowStatus::Reconnecting);
+    assert_eq!(entry.letter, "Q:");
+    assert!(entry.letter_is_live);
+    assert_eq!(entry.primary, super::PrimaryAction::Unmount);
+    assert!(entry.primary_enabled);
+    assert!(!entry.can_open);
+
+    fixture.click_at(&fixture.row("Prod"), 1);
+    assert_eq!(
+        fixture.ui.window().get_page_view().status,
+        RowStatus::Reconnecting
+    );
 }
 
 #[test]

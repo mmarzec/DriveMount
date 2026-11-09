@@ -91,6 +91,11 @@ impl MountBackend for PretendDrive {
         Ok(())
     }
 
+    async fn reconnect(&self, _: &dyn Prompter) -> Result<(), MountError> {
+        self.0.send_replace(Health::Ok);
+        Ok(())
+    }
+
     fn health(&self) -> watch::Receiver<Health> {
         self.0.subscribe()
     }

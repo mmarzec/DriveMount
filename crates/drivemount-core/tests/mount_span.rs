@@ -35,6 +35,10 @@ impl MountBackend for Drive {
         Ok(())
     }
 
+    async fn reconnect(&self, _: &dyn Prompter) -> Result<(), MountError> {
+        Ok(())
+    }
+
     fn health(&self) -> watch::Receiver<Health> {
         self.0.subscribe()
     }

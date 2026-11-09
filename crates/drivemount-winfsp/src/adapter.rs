@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use drivemount_vfs::{
     Attr, AttrChanges, AttrTarget, Bytes, CachedFs, DeadlineFs, DirEntry, Disposition, FileKind,
     FsError, FsResult, FsStats, OpenMode, ReadAhead, RemoteFs, RemoteHandle, RemotePath, Resolved,
-    remote_to_windows, resolve_name, windows_to_remote,
+    SessionFs, remote_to_windows, resolve_name, windows_to_remote,
 };
 use futures::{StreamExt, TryStreamExt, stream};
 use tokio::runtime::Handle;
@@ -21,8 +21,9 @@ use tracing::{debug, warn};
 use windows::Win32::Foundation::{
     NTSTATUS, STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_END_OF_FILE,
     STATUS_INVALID_DEVICE_REQUEST, STATUS_IO_TIMEOUT, STATUS_MEDIA_WRITE_PROTECTED,
-    STATUS_NOT_A_DIRECTORY, STATUS_NOT_SUPPORTED, STATUS_OBJECT_NAME_COLLISION,
-    STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND, STATUS_OBJECT_PATH_NOT_FOUND,
+    STATUS_NETWORK_UNREACHABLE, STATUS_NOT_A_DIRECTORY, STATUS_NOT_SUPPORTED,
+    STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_INVALID, STATUS_OBJECT_NAME_NOT_FOUND,
+    STATUS_OBJECT_PATH_NOT_FOUND,
 };
 use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_READONLY;
 use winfsp::constants::FspCleanupFlags;
@@ -37,8 +38,9 @@ use crate::status::fail;
 use crate::{attrs, paths, security};
 
 /// The deadline layer, which sits below the caches so that a call that timed out still invalidates
-/// them (spec §5.6).
-pub(crate) type Deadline = DeadlineFs<Arc<dyn RemoteFs>>;
+/// them (spec §5.6), and above the session in use, so that waiting for a reconnect has the same
+/// limit as any call (FR-REC-04).
+pub(crate) type Deadline = DeadlineFs<Arc<SessionFs>>;
 /// The file system the callbacks use.
 pub(crate) type Stack = CachedFs<Arc<Deadline>>;
 
@@ -119,6 +121,7 @@ struct Found {
 pub(crate) struct Adapter {
     pub(crate) fs: Arc<Stack>,
     pub(crate) deadline: Arc<Deadline>,
+    pub(crate) sessions: Arc<SessionFs>,
     pub(crate) op_timeout: Duration,
     pub(crate) read_only: bool,
     pub(crate) runtime: Handle,
@@ -167,13 +170,27 @@ pub(crate) async fn close_left_open(fs: &Stack, files: Vec<Arc<OpenFile>>) {
 impl Adapter {
     /// Runs `work` to its end on this dispatcher thread, for at most the operation timeout in all,
     /// however many remote calls it makes (NFR-REL-03).
+    ///
+    /// Running out of time while there is no connection is the network being unreachable, not a
+    /// server slow to answer (FR-REC-04), and no reason to probe the connection.
     fn run<T>(&self, work: impl Future<Output = winfsp::Result<T>>) -> winfsp::Result<T> {
-        self.runtime.block_on(async {
+        let result = self.runtime.block_on(async {
             timeout(self.op_timeout, work).await.unwrap_or_else(|_| {
-                self.deadline.mark_suspect();
+                if self.sessions.current().is_some() {
+                    self.deadline.mark_suspect();
+                }
                 Err(status(STATUS_IO_TIMEOUT))
             })
-        })
+        });
+        match result {
+            Err(error)
+                if error.to_ntstatus() == STATUS_IO_TIMEOUT.0
+                    && self.sessions.current().is_none() =>
+            {
+                Err(status(STATUS_NETWORK_UNREACHABLE))
+            }
+            result => result,
+        }
     }
 
     /// What every change gets on a read-only drive. WinFsp's read-only flag only tells programs that

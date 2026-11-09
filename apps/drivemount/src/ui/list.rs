@@ -126,6 +126,8 @@ pub(super) struct Counts {
     pub mounted: usize,
     /// *Connecting*.
     pub connecting: usize,
+    /// *Reconnecting*.
+    pub reconnecting: usize,
     /// *Error*.
     pub failed: usize,
 }
@@ -192,7 +194,10 @@ impl ListState {
     pub(super) fn is_in_use(&self, id: Uuid) -> bool {
         matches!(
             self.state_of(id),
-            MountState::Connecting | MountState::Mounted | MountState::Unmounting
+            MountState::Connecting
+                | MountState::Mounted
+                | MountState::Reconnecting
+                | MountState::Unmounting
         )
     }
 
@@ -340,7 +345,7 @@ impl ListState {
         let line = match (&state, detail) {
             (MountState::Error(error), _) => Line::Failed(error.clone()),
             (
-                MountState::Mounted | MountState::Unmounting,
+                MountState::Mounted | MountState::Reconnecting | MountState::Unmounting,
                 Some(MountDetail {
                     letter,
                     instead_of: Some(wanted),
@@ -353,7 +358,7 @@ impl ListState {
             MountState::Disconnected => (Primary::Mount, self.can_mount && !invalid),
             MountState::Error(_) => (Primary::Retry, self.can_mount && !invalid),
             MountState::Connecting => (Primary::Cancel, true),
-            MountState::Mounted => (Primary::Unmount, true),
+            MountState::Mounted | MountState::Reconnecting => (Primary::Unmount, true),
             MountState::Unmounting => (Primary::Unmount, false),
         };
         ProfileItem {
@@ -391,7 +396,7 @@ impl ListState {
     }
 
     /// What *Unmount all* acts on: everything (FR-MNT-09). A profile that is connecting is included,
-    /// as the manager takes that to mean cancel.
+    /// as the manager takes that to mean cancel, and one that is reconnecting, which stops trying.
     pub(super) fn unmountable(&self) -> Vec<Uuid> {
         self.config
             .profiles
@@ -399,7 +404,7 @@ impl ListState {
             .filter(|profile| {
                 matches!(
                     self.state_of(profile.id),
-                    MountState::Connecting | MountState::Mounted
+                    MountState::Connecting | MountState::Mounted | MountState::Reconnecting
                 )
             })
             .map(|profile| profile.id)
@@ -413,6 +418,7 @@ impl ListState {
             match self.state_of(profile.id) {
                 MountState::Mounted => counts.mounted += 1,
                 MountState::Connecting => counts.connecting += 1,
+                MountState::Reconnecting => counts.reconnecting += 1,
                 MountState::Error(_) => counts.failed += 1,
                 MountState::Disconnected | MountState::Unmounting => {}
             }
@@ -423,7 +429,9 @@ impl ListState {
 
 fn live_letter(state: &MountState, detail: Option<MountDetail>) -> Option<DriveLetter> {
     match state {
-        MountState::Mounted | MountState::Unmounting => detail.map(|detail| detail.letter),
+        MountState::Mounted | MountState::Reconnecting | MountState::Unmounting => {
+            detail.map(|detail| detail.letter)
+        }
         MountState::Disconnected | MountState::Connecting | MountState::Error(_) => None,
     }
 }
@@ -478,6 +486,13 @@ mod tests {
                 letter: letter(on),
                 instead_of: None,
             }),
+        }
+    }
+
+    fn reconnecting(id: Uuid, on: char) -> MountEvent {
+        MountEvent {
+            state: MountState::Reconnecting,
+            ..mounted(id, on)
         }
     }
 
@@ -568,6 +583,7 @@ mod tests {
             (in_state(id, MountState::Disconnected), Primary::Mount, true),
             (in_state(id, MountState::Connecting), Primary::Cancel, true),
             (mounted(id, 'Z'), Primary::Unmount, true),
+            (reconnecting(id, 'Z'), Primary::Unmount, true),
             (
                 in_state(id, MountState::Unmounting),
                 Primary::Unmount,
@@ -696,18 +712,62 @@ mod tests {
 
     #[test]
     fn the_counts_cover_every_state() {
-        let (a, b, c, d) = (profile("a"), profile("b"), profile("c"), profile("d"));
-        let (a_id, b_id, c_id) = (a.id, b.id, c.id);
-        let mut state = state_with(vec![a, b, c, d]);
+        let (a, b, c, d, e) = (
+            profile("a"),
+            profile("b"),
+            profile("c"),
+            profile("d"),
+            profile("e"),
+        );
+        let (a_id, b_id, c_id, e_id) = (a.id, b.id, c.id, e.id);
+        let mut state = state_with(vec![a, b, c, d, e]);
         state.apply(&mounted(a_id, 'Z'));
         state.apply(&in_state(b_id, MountState::Connecting));
         state.apply(&in_state(c_id, MountState::Error(MountError::NoFreeLetter)));
+        state.apply(&reconnecting(e_id, 'Y'));
         assert_eq!(
             state.counts(),
             Counts {
                 mounted: 1,
                 connecting: 1,
+                reconnecting: 1,
                 failed: 1,
+            }
+        );
+    }
+
+    /// FR-REC-02: the drive is still there, so the row says where, and can be unmounted.
+    #[test]
+    fn a_reconnecting_row_keeps_its_letter_and_is_in_use() {
+        let saved = profile("a");
+        let id = saved.id;
+        let mut state = state_with(vec![saved]);
+        state.apply(&reconnecting(id, 'Q'));
+        let row = row(&state, id);
+        assert_eq!(row.letter, Some(letter('Q')));
+        assert!(row.letter_is_live);
+        assert!(!row.can_open, "Explorer would only wait on it");
+        assert!(state.is_in_use(id));
+        assert_eq!(state.unmountable(), [id]);
+        assert!(state.mountable().is_empty());
+    }
+
+    #[test]
+    fn a_moved_letter_is_still_said_while_reconnecting() {
+        let saved = profile("a");
+        let id = saved.id;
+        let mut state = state_with(vec![saved]);
+        let mut event = reconnecting(id, 'Y');
+        event.detail = Some(MountDetail {
+            letter: letter('Y'),
+            instead_of: Some(letter('Z')),
+        });
+        state.apply(&event);
+        assert_eq!(
+            row(&state, id).line,
+            Line::LetterMoved {
+                letter: letter('Y'),
+                wanted: letter('Z'),
             }
         );
     }

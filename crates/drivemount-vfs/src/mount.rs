@@ -57,7 +57,14 @@ pub trait MountBackend: Send + Sync + 'static {
     /// Flushes and removes the drive.
     async fn unmount(&self) -> Result<(), MountError>;
 
-    /// Follows the connection's health.
+    /// Connects again once [`health`](Self::health) has said the connection is lost, keeping the
+    /// drive on its letter (FR-REC-02). Files open on the drive carry on over the new connection
+    /// (FR-REC-05), and `health` is `Ok` again. On failure the drive stays as it was, for another
+    /// try or an unmount. Dropping the future gives up this try.
+    async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError>;
+
+    /// Follows the connection's health. It goes to `Lost` once, and stays there until a
+    /// [`reconnect`](Self::reconnect) works.
     fn health(&self) -> watch::Receiver<Health>;
 
     /// Takes what the user asked to remember during [`mount`](Self::mount), for the manager to store

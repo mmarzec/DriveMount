@@ -230,6 +230,10 @@ mod windows {
         async fn probe(&self) -> Result<Duration, ConnectError> {
             self.0.probe().await
         }
+
+        async fn session_ended(&self) {
+            self.0.session_ended().await;
+        }
     }
 
     /// A WinFsp drive, and the connector that knows what the user asked to remember.
@@ -251,6 +255,10 @@ mod windows {
 
         async fn unmount(&self) -> Result<(), MountError> {
             self.drive.unmount().await
+        }
+
+        async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError> {
+            self.drive.reconnect(prompter).await
         }
 
         fn health(&self) -> watch::Receiver<Health> {

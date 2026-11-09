@@ -32,7 +32,7 @@ use russh_sftp::client::{Config as SftpConfig, RawSftpSession};
 use russh_sftp::protocol::StatusCode;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{self, TcpStream};
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task;
 use tokio::time::{self, Instant};
 use tracing::{debug, info, warn};
@@ -104,6 +104,9 @@ pub struct SftpConnector {
     key_exchanges: Arc<AtomicU64>,
     /// The session of the file system handed out last, for [`probe`](drivemount_vfs::Connector::probe).
     current: Mutex<Weak<SftpSession>>,
+    /// A host key the user trusted once, which stays trusted for this connector's reconnects, so
+    /// that coming back after an outage asks nothing (FR-SSH-02).
+    trusted_once: Mutex<Option<Vec<u8>>>,
 }
 
 /// A logged-in SSH connection with its SFTP channel, ready for use.
@@ -114,6 +117,8 @@ pub struct SftpSession {
     limits: Limits,
     extensions: Vec<String>,
     key_exchanges: Arc<AtomicU64>,
+    /// Never sent: it ends when the connection's task does, however that ends.
+    ended: watch::Receiver<()>,
 }
 
 impl SftpSession {
@@ -148,6 +153,13 @@ impl SftpSession {
         self.handle.is_closed()
     }
 
+    /// Resolves once the SSH connection has ended, for whatever reason: the server closed it, the
+    /// transport failed or keep-alives went unanswered (FR-SSH-12). Losing a jump host ends it too.
+    pub async fn ended(&self) {
+        let mut ended = self.ended.clone();
+        while ended.changed().await.is_ok() {}
+    }
+
     /// How many key exchanges the connector's connections have finished: one per connection, and
     /// one for each rekey, whichever side asked for it.
     #[must_use]
@@ -163,9 +175,17 @@ struct KeyQuestion {
     answer: oneshot::Sender<bool>,
 }
 
+/// An SSH connection, and what says it has ended.
+struct Connection {
+    handle: Handle<Client>,
+    ended: watch::Receiver<()>,
+}
+
 struct Client {
     ask: Option<oneshot::Sender<KeyQuestion>>,
     key_exchanges: Arc<AtomicU64>,
+    /// Dropped with the handler, which `russh` does as the connection's task ends.
+    _alive: watch::Sender<()>,
 }
 
 impl client::Handler for Client {
@@ -208,6 +228,22 @@ impl client::Handler for Client {
         self.key_exchanges.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
+
+    async fn disconnected(
+        &mut self,
+        reason: client::DisconnectReason<Self::Error>,
+    ) -> Result<(), Self::Error> {
+        match reason {
+            client::DisconnectReason::ReceivedDisconnect(info) => {
+                info!(code = ?info.reason_code, message = %info.message, "the server closed the connection");
+                Ok(())
+            }
+            client::DisconnectReason::Error(error) => {
+                info!(%error, "the connection ended");
+                Err(error)
+            }
+        }
+    }
 }
 
 impl SftpConnector {
@@ -233,6 +269,7 @@ impl SftpConnector {
                 is_jump: true,
                 key_exchanges: Arc::default(),
                 current: Mutex::default(),
+                trusted_once: Mutex::default(),
             })
         });
         Self {
@@ -242,6 +279,7 @@ impl SftpConnector {
             is_jump: false,
             key_exchanges: Arc::default(),
             current: Mutex::default(),
+            trusted_once: Mutex::default(),
         }
     }
 
@@ -261,11 +299,13 @@ impl SftpConnector {
             Some(jump) => Some(jump.connect_ssh(None, prompter).await?),
             None => None,
         };
-        let handle = self.connect_ssh(jump.as_ref(), prompter).await?;
+        let connection = self
+            .connect_ssh(jump.as_ref().map(|jump| &jump.handle), prompter)
+            .await?;
         // The channel keeps the jump host's connection going, until the session using it ends.
         drop(jump);
 
-        let session = time::timeout(p.timeout, self.open_sftp(handle)).await;
+        let session = time::timeout(p.timeout, self.open_sftp(connection)).await;
         let session = session.map_err(|_| self.timed_out())??;
         info!(host = %p.host, root = session.root.as_str(), "connected");
         Ok(session)
@@ -278,14 +318,24 @@ impl SftpConnector {
         *current = Arc::downgrade(session);
     }
 
+    fn current_session(&self) -> Option<Arc<SftpSession>> {
+        let current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
+        current.upgrade()
+    }
+
+    /// Resolves once the session handed out last has ended, or at once if it has gone. The session
+    /// itself is not kept alive by waiting.
+    pub(crate) async fn session_ended(&self) {
+        let Some(mut ended) = self.current_session().map(|session| session.ended.clone()) else {
+            return;
+        };
+        while ended.changed().await.is_ok() {}
+    }
+
     /// `send_ping` also returns once the reply can no longer come, so only the state after it says
     /// that the server answered (spike M0-2).
     pub(crate) async fn probe_session(&self) -> Result<Duration, ConnectError> {
-        let session = {
-            let current = self.current.lock().unwrap_or_else(PoisonError::into_inner);
-            current.upgrade()
-        };
-        let session = session.ok_or(ConnectError::ConnectionLost)?;
+        let session = self.current_session().ok_or(ConnectError::ConnectionLost)?;
         let start = Instant::now();
         time::timeout(self.profile.timeout, session.handle.send_ping())
             .await
@@ -308,14 +358,14 @@ impl SftpConnector {
         &self,
         jump: Option<&Handle<Client>>,
         prompter: &dyn Prompter,
-    ) -> Result<Handle<Client>, ConnectError> {
+    ) -> Result<Connection, ConnectError> {
         let p = &self.profile;
         info!(host = %p.host, port = p.port, is_jump = self.is_jump, "connecting");
 
         let known_hosts = self.load_known_hosts().await?;
         let key_types = known_hosts.known_key_types(&p.host, p.port);
         let config = client_config(p.keepalive_secs, &key_types);
-        let mut handle = match jump {
+        let mut connection = match jump {
             Some(jump) => {
                 let stream = self.open_tunnel(jump).await?;
                 self.handshake(stream, config, &known_hosts, prompter)
@@ -327,8 +377,8 @@ impl SftpConnector {
                     .await?
             }
         };
-        self.log_in(&mut handle, prompter).await?;
-        Ok(handle)
+        self.log_in(&mut connection.handle, prompter).await?;
+        Ok(connection)
     }
 
     /// Asks the jump host to connect to this server. Its TCP connection is the jump host's business,
@@ -424,15 +474,17 @@ impl SftpConnector {
         config: client::Config,
         known_hosts: &KnownHosts,
         prompter: &dyn Prompter,
-    ) -> Result<Handle<Client>, ConnectError>
+    ) -> Result<Connection, ConnectError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let timeout = self.profile.timeout;
         let (ask, mut question) = oneshot::channel();
+        let (alive, ended) = watch::channel(());
         let client = Client {
             ask: Some(ask),
             key_exchanges: Arc::clone(&self.key_exchanges),
+            _alive: alive,
         };
         let connect = client::connect_stream(Arc::new(config), stream, client);
         tokio::pin!(connect);
@@ -453,7 +505,8 @@ impl SftpConnector {
                     .map_err(|_| self.timed_out())?
             }
         };
-        finished.map_err(|error| self.classify(error))
+        let handle = finished.map_err(|error| self.classify(error))?;
+        Ok(Connection { handle, ended })
     }
 
     /// Spec §6.3. Any problem with the file means the key is not trusted.
@@ -464,10 +517,21 @@ impl SftpConnector {
         prompter: &dyn Prompter,
     ) -> Result<(), ConnectError> {
         let (host, port) = (self.profile.host.as_str(), self.profile.port);
-        let key = HostKey::from_wire(blob).map_err(file_error)?;
+        let key = HostKey::from_wire(blob.clone()).map_err(file_error)?;
         let status = known_hosts.check(host, port, &key);
         if status != HostKeyStatus::Unknown {
             return self.accept_or_refuse(status, &key);
+        }
+        let trusted = {
+            let trusted_once = self.trusted_once.lock();
+            trusted_once
+                .unwrap_or_else(PoisonError::into_inner)
+                .as_ref()
+                == Some(&blob)
+        };
+        if trusted {
+            debug!(host, port, "a key trusted once for this mount");
+            return Ok(());
         }
 
         let decision = prompter
@@ -482,7 +546,16 @@ impl SftpConnector {
         // The dialog may have been open for minutes: read the file again under either answer.
         let status = match decision {
             HostKeyDecision::Reject => return Err(ConnectError::HostKeyRejected),
-            HostKeyDecision::TrustOnce => self.load_known_hosts().await?.check(host, port, &key),
+            HostKeyDecision::TrustOnce => {
+                let status = self.load_known_hosts().await?.check(host, port, &key);
+                if status == HostKeyStatus::Unknown {
+                    *self
+                        .trusted_once
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner) = Some(blob);
+                }
+                status
+            }
             HostKeyDecision::TrustSave => {
                 let (path, host, key) = (
                     self.profile.known_hosts.clone(),
@@ -527,7 +600,8 @@ impl SftpConnector {
         }
     }
 
-    async fn open_sftp(&self, handle: Handle<Client>) -> Result<SftpSession, ConnectError> {
+    async fn open_sftp(&self, connection: Connection) -> Result<SftpSession, ConnectError> {
+        let Connection { handle, ended } = connection;
         let mut channel = handle
             .channel_open_session()
             .await
@@ -583,6 +657,7 @@ impl SftpConnector {
             limits,
             extensions: version.extensions.into_keys().collect(),
             key_exchanges: Arc::clone(&self.key_exchanges),
+            ended,
         })
     }
 

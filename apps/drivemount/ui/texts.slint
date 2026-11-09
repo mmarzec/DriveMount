@@ -111,6 +111,9 @@ export global Texts {
     public pure function count-connecting(count: int) -> string {
         return @tr("{} connecting", count);
     }
+    public pure function count-reconnecting(count: int) -> string {
+        return @tr("{} reconnecting", count);
+    }
     public pure function count-failed(count: int) -> string {
         return @tr("{} failed", count);
     }

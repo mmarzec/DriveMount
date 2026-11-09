@@ -6,7 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime};
 
-use drivemount_vfs::{CachedFs, DeadlineFs, DriveLetter, MountError, RemoteFs};
+use drivemount_vfs::{CachedFs, DeadlineFs, DriveLetter, MountError, RemoteFs, SessionFs};
 use tokio::runtime::Handle;
 use tokio::sync::watch;
 use tokio::time::timeout;
@@ -50,13 +50,15 @@ pub struct VolumeConfig {
     pub read_only: bool,
 }
 
-/// A [`RemoteFs`] shown as a drive, through `CachedFs<DeadlineFs<…>>`.
+/// A [`RemoteFs`] shown as a drive, through `CachedFs<DeadlineFs<SessionFs>>`.
 ///
-/// This is only the drive: [`WinFspBackend`](crate::WinFspBackend) adds connecting and Explorer.
+/// This is only the drive: [`WinFspBackend`](crate::WinFspBackend) adds connecting, reconnecting and
+/// Explorer. A new session goes in through [`sessions`](Self::sessions), and the drive carries on.
 pub struct Volume {
     config: VolumeConfig,
     fs: Arc<Stack>,
     deadline: Arc<Deadline>,
+    sessions: Arc<SessionFs>,
     runtime: Handle,
     host: Mutex<Option<FileSystemHost<Adapter, FineGuard>>>,
     open_files: Arc<Mutex<Vec<Arc<OpenFile>>>>,
@@ -67,12 +69,14 @@ impl Volume {
     /// has to outlive the drive.
     #[must_use]
     pub fn new(fs: Arc<dyn RemoteFs>, config: VolumeConfig, runtime: Handle) -> Self {
-        let deadline = Arc::new(DeadlineFs::new(fs, config.op_timeout));
+        let sessions = Arc::new(SessionFs::new(fs));
+        let deadline = Arc::new(DeadlineFs::new(Arc::clone(&sessions), config.op_timeout));
         let fs = Arc::new(CachedFs::new(Arc::clone(&deadline), config.cache_ttl));
         Self {
             config,
             fs,
             deadline,
+            sessions,
             runtime,
             host: Mutex::new(None),
             open_files: Arc::default(),
@@ -84,6 +88,12 @@ impl Volume {
     #[must_use]
     pub fn suspect(&self) -> watch::Receiver<u64> {
         self.deadline.suspect()
+    }
+
+    /// The sessions the drive goes to: a reconnect puts the next one here (FR-REC-05).
+    #[must_use]
+    pub fn sessions(&self) -> &Arc<SessionFs> {
+        &self.sessions
     }
 
     /// Makes the drive appear on `letter`.
@@ -103,6 +113,7 @@ impl Volume {
         let adapter = Adapter {
             fs: Arc::clone(&self.fs),
             deadline: Arc::clone(&self.deadline),
+            sessions: Arc::clone(&self.sessions),
             op_timeout: self.config.op_timeout,
             read_only: self.config.read_only,
             runtime: self.runtime.clone(),

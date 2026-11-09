@@ -588,9 +588,10 @@ impl Inner {
             Body::Profile(row) => {
                 let name = SharedString::from(&row.name);
                 match self.list.borrow().state_of(row.id) {
-                    MountState::Connecting | MountState::Mounted | MountState::Unmounting => {
-                        texts.invoke_delete_mounted_question(name)
-                    }
+                    MountState::Connecting
+                    | MountState::Mounted
+                    | MountState::Reconnecting
+                    | MountState::Unmounting => texts.invoke_delete_mounted_question(name),
                     MountState::Disconnected | MountState::Error(_) => {
                         texts.invoke_delete_question(name)
                     }
@@ -771,6 +772,8 @@ impl Inner {
             (counts.mounted > 0).then(|| texts.invoke_count_mounted(number(counts.mounted))),
             (counts.connecting > 0)
                 .then(|| texts.invoke_count_connecting(number(counts.connecting))),
+            (counts.reconnecting > 0)
+                .then(|| texts.invoke_count_reconnecting(number(counts.reconnecting))),
             (counts.failed > 0).then(|| texts.invoke_count_failed(number(counts.failed))),
         ]
         .into_iter()
@@ -826,6 +829,7 @@ fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntr
                     MountState::Disconnected => RowStatus::Disconnected,
                     MountState::Connecting => RowStatus::Connecting,
                     MountState::Mounted => RowStatus::Mounted,
+                    MountState::Reconnecting => RowStatus::Reconnecting,
                     MountState::Unmounting => RowStatus::Unmounting,
                     MountState::Error(_) => RowStatus::Error,
                 },
