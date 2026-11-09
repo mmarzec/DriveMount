@@ -6,10 +6,12 @@
 
 use std::collections::HashMap;
 use std::env;
+use std::io;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
+use drivemount_core::config::Settings;
 use drivemount_core::manager::{MountEvent, MountManager, MountRefused};
 use drivemount_vfs::DriveLetter;
 use drivemount_win::drives::is_letter_free;
@@ -20,6 +22,7 @@ use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
 
+use crate::logging::LogLevelControl;
 use crate::ui::{ActionFailure, MainUi, TypedSecrets, UiCommand, WINFSP_DOWNLOAD_URL};
 
 /// Something for the UI thread to do.
@@ -34,6 +37,24 @@ fn running(tests: &RunningTests) -> MutexGuard<'_, HashMap<u64, AbortHandle>> {
     tests.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
+/// *Start with Windows* (FR-APP-03): the Run value in the app, something that records it in tests.
+pub(super) trait StartWithWindows: Send + Sync {
+    /// Writes the value, or removes it. Blocks.
+    fn set(&self, on: bool) -> io::Result<()>;
+}
+
+/// What the settings page reaches beyond the file (FR-SET).
+pub(super) struct Surroundings {
+    /// The log, whose level changes with the setting.
+    pub log_level: LogLevelControl,
+    /// The Run value.
+    pub start_with_windows: Arc<dyn StartWithWindows>,
+    /// The logs folder, if there is a log.
+    pub logs: Option<PathBuf>,
+    /// `THIRD-PARTY-LICENSES.html`, beside the exe.
+    pub licences: Option<PathBuf>,
+}
+
 /// Starts following commands from `inbox` and events from `manager`. Both go on until the runtime
 /// ends.
 pub(super) fn start(
@@ -41,14 +62,26 @@ pub(super) fn start(
     manager: MountManager,
     mut inbox: mpsc::UnboundedReceiver<UiCommand>,
     to_ui: ToUi,
+    surroundings: Surroundings,
 ) {
     // Before any command, to miss nothing.
     let events = manager.subscribe();
     runtime.spawn(follow_events(events, manager.clone(), Arc::clone(&to_ui)));
+    let (settings, wanted) = mpsc::unbounded_channel();
+    runtime.spawn(keep_settings(
+        wanted,
+        manager.clone(),
+        Arc::clone(&to_ui),
+        surroundings.log_level,
+        surroundings.start_with_windows,
+    ));
     let engine = Engine {
         manager,
         to_ui,
         tests: Arc::default(),
+        settings,
+        logs: surroundings.logs,
+        licences: surroundings.licences,
     };
     runtime.spawn(async move {
         while let Some(command) = inbox.recv().await {
@@ -85,6 +118,70 @@ async fn follow_events(
     }
 }
 
+/// Saves the settings the page asks for, one change after another, so that a later one is never
+/// overtaken by an earlier one. Changes that came while one was saving count only as the latest.
+///
+/// *Start with Windows* goes to the registry before the file: if the registry says no, the setting
+/// stays as it was. If the file then says no, the registry is put back.
+async fn keep_settings(
+    mut wanted: mpsc::UnboundedReceiver<Settings>,
+    manager: MountManager,
+    to_ui: ToUi,
+    log_level: LogLevelControl,
+    start_with_windows: Arc<dyn StartWithWindows>,
+) {
+    let set_run_value = |on: bool| {
+        let start_with_windows = Arc::clone(&start_with_windows);
+        async move {
+            tokio::task::spawn_blocking(move || start_with_windows.set(on))
+                .await
+                .unwrap_or_else(|error| Err(io::Error::other(error.to_string())))
+        }
+    };
+    let mut applied = manager.config().await.settings;
+    while let Some(mut next) = wanted.recv().await {
+        while let Ok(newer) = wanted.try_recv() {
+            next = newer;
+        }
+        let mut failure = None;
+        if next.start_with_windows != applied.start_with_windows
+            && let Err(error) = set_run_value(next.start_with_windows).await
+        {
+            warn!(%error, on = next.start_with_windows, "Start with Windows could not be changed");
+            failure = Some(ActionFailure::StartWithWindows(error.to_string()));
+            next.start_with_windows = applied.start_with_windows;
+        }
+        let run_value_changed = next.start_with_windows != applied.start_with_windows;
+        if next != applied {
+            match manager.save_settings(next.clone()).await {
+                Ok(()) => {
+                    info!(settings = ?next, "the settings were saved");
+                    if next.log_level != applied.log_level {
+                        log_level.set(next.log_level);
+                        info!(level = ?next.log_level, "the log level changed");
+                    }
+                    applied = next;
+                }
+                Err(error) => {
+                    warn!(%error, "the settings could not be saved");
+                    if run_value_changed
+                        && let Err(error) = set_run_value(applied.start_with_windows).await
+                    {
+                        warn!(%error, "Start with Windows could not be put back");
+                    }
+                    failure = Some(ActionFailure::Settings(error.to_string()));
+                }
+            }
+        }
+        let went_wrong = failure.is_some();
+        show_failure(&to_ui, failure);
+        // The page shows what is in use again.
+        if went_wrong {
+            show_config(&manager, &to_ui).await;
+        }
+    }
+}
+
 /// Reads the file again, as `set_config` wants after each change.
 async fn show_config(manager: &MountManager, to_ui: &ToUi) {
     let config = manager.config().await;
@@ -106,6 +203,10 @@ struct Engine {
     manager: MountManager,
     to_ui: ToUi,
     tests: Arc<RunningTests>,
+    /// To [`keep_settings`].
+    settings: mpsc::UnboundedSender<Settings>,
+    logs: Option<PathBuf>,
+    licences: Option<PathBuf>,
 }
 
 impl Engine {
@@ -233,7 +334,43 @@ impl Engine {
                     }
                 });
             }
-            UiCommand::OpenSettings => info!("there is no settings page until M2-05"),
+            UiCommand::SaveSettings(settings) => {
+                // Only as the runtime ends.
+                let _ = self.settings.send(*settings);
+            }
+            UiCommand::OpenLogsFolder => {
+                let Some(logs) = self.logs.clone() else {
+                    return;
+                };
+                on_a_thread_of_its_own(move || {
+                    if let Err(error) = shell::open_folder(&logs) {
+                        warn!(%error, "could not open the logs folder");
+                    }
+                });
+            }
+            UiCommand::OpenLicences => {
+                let licences = self.licences.clone();
+                on_a_thread_of_its_own(move || {
+                    let opened = licences.map_or_else(
+                        || Err(io::Error::other("the folder of the exe is not known")),
+                        |file| shell::open_html_file(&file),
+                    );
+                    if let Err(error) = opened {
+                        warn!(%error, "could not open the licence file");
+                        show_failure(&to_ui, Some(ActionFailure::Licences(error.to_string())));
+                    }
+                });
+            }
+            UiCommand::OpenWebPage(url) => {
+                if url.is_empty() {
+                    return;
+                }
+                on_a_thread_of_its_own(move || {
+                    if let Err(error) = shell::open_web_page(url) {
+                        warn!(%url, %error, "could not open a web page");
+                    }
+                });
+            }
             // M2-06 asks first while something is mounted.
             UiCommand::Quit => {
                 to_ui(Box::new(|_| {

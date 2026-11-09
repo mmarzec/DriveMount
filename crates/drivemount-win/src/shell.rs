@@ -275,6 +275,80 @@ pub fn show_in_explorer(file: &Path) -> io::Result<()> {
     }
 }
 
+/// Opens a folder in Explorer, as *Open logs folder* does (FR-SET-06). The folder is made if it is
+/// not there yet, as the log's is until the first line.
+///
+/// # Errors
+/// If the folder cannot be made, or Explorer cannot be started.
+pub fn open_folder(folder: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(folder)?;
+    let explorer = wide(explorer_path()?);
+    let folder = wide(folder);
+    // SAFETY: all strings are nul-terminated and outlive the call.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(explorer.as_ptr()),
+            PCWSTR(folder.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // Above 32 is success, as in `open_in_explorer`.
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "ShellExecuteW could not start Explorer: code {code}"
+        )))
+    }
+}
+
+/// Opens an HTML file in the user's browser, as the *Third-party licences* button does
+/// (NFR-LIC-03). Nothing else is taken, as opening another kind of file could start a program.
+///
+/// # Errors
+/// If it is not an `.html` file that is there, or nothing could open it.
+pub fn open_html_file(file: &Path) -> io::Result<()> {
+    let is_html = file
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("html"));
+    if !is_html {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "only an .html file can be opened",
+        ));
+    }
+    if !file.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{} is not there", file.display()),
+        ));
+    }
+    let path = wide(file);
+    // SAFETY: all strings are nul-terminated and outlive the call.
+    let result = unsafe {
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(path.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    let code = result.0 as isize;
+    if code > 32 {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "ShellExecuteW could not open the file: code {code}"
+        )))
+    }
+}
+
 /// What Explorer takes to select a file.
 fn select_argument(file: &Path) -> String {
     format!("/select,\"{}\"", file.display())

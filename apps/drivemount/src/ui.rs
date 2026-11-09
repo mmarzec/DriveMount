@@ -7,8 +7,9 @@
 //!
 //! The markup is in `ui/*.slint`, and only draws what it is given. What the list shows is worked out
 //! in [`list`], what the dialog's boxes mean in [`form`], the queue of prompts is in [`prompts`], and
-//! error texts in [`errors`], what the tray shows in [`tray`], and which changes call for a toast in
-//! [`notices`]. All of this runs on the UI thread but [`UiPrompter`].
+//! error texts in [`errors`], what the tray shows in [`tray`], which changes call for a toast in
+//! [`notices`], and what the settings page's controls mean in [`settings`]. All of this runs on the UI
+//! thread but [`UiPrompter`].
 
 mod dialog;
 pub mod errors;
@@ -18,6 +19,7 @@ mod notices;
 mod page;
 mod prompts;
 mod remembered;
+mod settings;
 mod tray;
 
 use std::cell::{Cell, RefCell};
@@ -27,13 +29,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use drivemount_core::config::{
-    Config, ConfigStore, ReadOnlyReason, SettingProblem, Theme, UnreadableProfile,
+    Config, ConfigStore, ReadOnlyReason, SettingProblem, Settings, Theme, UnreadableProfile,
 };
 use drivemount_core::manager::{MountEvent, MountState, ProfileChangeError};
 use drivemount_core::profile::Profile;
 use drivemount_vfs::{ConnectError, DriveLetter, HostKeyDecision, MountError, Secret, SecretSlot};
 use drivemount_win::toast::{Toast, Toasts};
 use drivemount_win::tray::{Tray, TrayContent, TrayEvent};
+use drivemount_win::winfsp::WinFspStatus;
 use slint::{
     CloseRequestResponse, ComponentHandle, LogicalSize, Model, ModelRc, PhysicalPosition,
     PlatformError, SharedString, VecModel,
@@ -67,10 +70,15 @@ mod generated {
 use self::generated::{
     EntryKind, ListEntry, LoginKind, PageView, PrimaryAction, RowStatus, ThemeChoice,
 };
-pub use self::generated::{KeyFileBox, MainWindow, Texts};
+pub use self::generated::{KeyFileBox, MainWindow, SettingsForm, Texts};
 
 /// Where the *Download WinFsp* button goes (FR-APP-06).
 pub const WINFSP_DOWNLOAD_URL: &str = "https://winfsp.dev/rel/";
+/// WinFsp's source, which its attribution links to (NFR-LIC-02).
+pub const WINFSP_SOURCE_URL: &str = "https://github.com/winfsp/winfsp";
+/// DriveMount's source (NFR-LIC-03): the package's `repository`. Empty until the repository is
+/// public, and then the About section has no link.
+pub const SOURCE_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// The dialog's password boxes, as `MountManager::save` and `test` take them. Secrets have no
 /// comparison, so two of these are equal if they fill the same slots.
@@ -91,6 +99,12 @@ pub enum ActionFailure {
     Mount(String),
     /// A delete did not happen, so the row stays.
     Delete(String),
+    /// The settings were not saved, so the page shows them as they were.
+    Settings(String),
+    /// The Run value could not be written or removed (FR-APP-03), so the setting is as it was.
+    StartWithWindows(String),
+    /// The third-party licence file could not be opened (NFR-LIC-03).
+    Licences(String),
 }
 
 /// What the user asked for.
@@ -141,8 +155,15 @@ pub enum UiCommand {
     Cancel(Uuid),
     /// Open a drive's root (FR-MNT-12).
     OpenInExplorer(DriveLetter),
-    /// Open the settings page.
-    OpenSettings,
+    /// Save the settings, changed on the settings page (FR-SET). They are in use in the window
+    /// already. Answer a failure with [`MainUi::set_config`] and [`MainUi::set_action_failure`].
+    SaveSettings(Box<Settings>),
+    /// Open the logs folder (FR-SET-06).
+    OpenLogsFolder,
+    /// Open the third-party licence file (NFR-LIC-03).
+    OpenLicences,
+    /// Open [`SOURCE_URL`] or [`WINFSP_SOURCE_URL`] in the browser.
+    OpenWebPage(&'static str),
     /// Open [`WINFSP_DOWNLOAD_URL`].
     DownloadWinFsp,
     /// Quit: the close button with `close_to_tray` off or no tray (FR-APP-02), or the tray's *Quit*.
@@ -191,6 +212,10 @@ struct Inner {
     deleting: RefCell<Option<Key>>,
     /// What the connection page is showing, while it is up.
     page: RefCell<Option<Key>>,
+    /// Whether the settings page is up. It and the connection page are never up together.
+    settings_open: Cell<bool>,
+    winfsp: Cell<WinFspStatus>,
+    has_logs: Cell<bool>,
     /// The profile dialog, while it is open.
     dialog: RefCell<Option<Dialog>>,
     drive_items: Rc<VecModel<SharedString>>,
@@ -266,6 +291,9 @@ impl MainUi {
             list: RefCell::new(ListState::new()),
             deleting: RefCell::new(None),
             page: RefCell::new(None),
+            settings_open: Cell::new(false),
+            winfsp: Cell::new(WinFspStatus::Missing),
+            has_logs: Cell::new(false),
             dialog: RefCell::new(None),
             drive_items,
             next_attempt: Cell::new(0),
@@ -299,9 +327,12 @@ impl MainUi {
         &self.window
     }
 
-    /// What the file holds now, at the start and after each Save or Delete.
+    /// What the file holds now, at the start and after each Save or Delete. The theme follows it, and
+    /// so does the settings page.
     pub fn set_config(&self, config: Config) {
+        self.set_theme(config.settings.theme);
         self.inner.list.borrow_mut().set_config(config);
+        self.inner.settings_follow_list();
         self.inner.refresh();
         self.inner.dialog_follows_list();
     }
@@ -357,6 +388,19 @@ impl MainUi {
         self.inner.refresh();
     }
 
+    /// What was found of WinFsp: as [`set_winfsp_ready`](Self::set_winfsp_ready), and the version for
+    /// the settings page (FR-SET-07).
+    pub fn set_winfsp(&self, status: WinFspStatus) {
+        self.inner.winfsp.set(status);
+        self.set_winfsp_ready(status.is_ready());
+    }
+
+    /// Whether there is a logs folder for *Open logs folder* (FR-SET-06).
+    pub fn set_has_logs(&self, has_logs: bool) {
+        self.inner.has_logs.set(has_logs);
+        self.inner.refresh();
+    }
+
     /// Why the file cannot be written, if it cannot (NFR-REL-05). Nothing can be added or deleted then.
     pub fn set_read_only(&self, reason: Option<&ReadOnlyReason>) {
         let text = reason.map_or_else(SharedString::new, |reason| {
@@ -380,6 +424,11 @@ impl MainUi {
             match failure {
                 ActionFailure::Mount(detail) => texts.invoke_mount_refused(detail.into()),
                 ActionFailure::Delete(detail) => texts.invoke_delete_failed(detail.into()),
+                ActionFailure::Settings(detail) => texts.invoke_settings_not_saved(detail.into()),
+                ActionFailure::StartWithWindows(detail) => {
+                    texts.invoke_start_with_windows_failed(detail.into())
+                }
+                ActionFailure::Licences(detail) => texts.invoke_licences_not_opened(detail.into()),
             }
         });
         self.window.set_failure_text(text);
@@ -414,6 +463,8 @@ impl MainUi {
     /// selected (FR-NOT-04). A profile that has gone since leaves the selection as it was.
     pub fn toast_clicked(&self, launch: &str) {
         self.inner.bring_to_front();
+        // The row is what the toast is about.
+        self.inner.close_settings();
         if let Some(id) = notices::clicked_profile(launch) {
             self.inner.select_profile(id);
         }
@@ -427,11 +478,15 @@ impl MainUi {
 
     /// The theme (FR-SET-03). *System* follows Windows.
     pub fn set_theme(&self, theme: Theme) {
-        self.window.invoke_set_theme(match theme {
-            Theme::System => ThemeChoice::System,
-            Theme::Light => ThemeChoice::Light,
-            Theme::Dark => ThemeChoice::Dark,
-        });
+        self.window.invoke_set_theme(theme_choice(theme));
+    }
+}
+
+const fn theme_choice(theme: Theme) -> ThemeChoice {
+    match theme {
+        Theme::System => ThemeChoice::System,
+        Theme::Light => ThemeChoice::Light,
+        Theme::Dark => ThemeChoice::Dark,
     }
 }
 
@@ -453,7 +508,7 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_add_pressed(on(Inner::add));
     window.on_mount_all_pressed(on(Inner::mount_all));
     window.on_unmount_all_pressed(on(Inner::unmount_all));
-    window.on_settings_pressed(on(|inner| inner.send(UiCommand::OpenSettings)));
+    window.on_settings_pressed(on(Inner::open_settings));
     window.on_download_winfsp_pressed(on(|inner| inner.send(UiCommand::DownloadWinFsp)));
     window.on_hide_pressed(on(Inner::hide));
 
@@ -468,6 +523,15 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_page_edit(on(Inner::edit_selected));
     window.on_page_delete(on(Inner::delete_selected));
     window.on_open_page_selected(on(Inner::open_page_selected));
+
+    window.on_settings_back(on(Inner::close_settings));
+    window.on_settings_changed(on(Inner::settings_changed));
+    window.on_open_logs_pressed(on(|inner| inner.send(UiCommand::OpenLogsFolder)));
+    window.on_licences_pressed(on(|inner| inner.send(UiCommand::OpenLicences)));
+    window.on_source_pressed(on(|inner| inner.send(UiCommand::OpenWebPage(SOURCE_URL))));
+    window.on_winfsp_site_pressed(on(|inner| {
+        inner.send(UiCommand::OpenWebPage(WINFSP_SOURCE_URL));
+    }));
 
     window.on_activate_selected(on(Inner::activate_selected));
     window.on_open_selected(on(Inner::open_selected));
@@ -678,6 +742,61 @@ impl Inner {
             self.make_room();
             self.refresh();
         }
+    }
+
+    /// The toolbar's Settings button: the page takes the list's place, as the connection page does.
+    fn open_settings(&self) {
+        if self.settings_open.get() {
+            return;
+        }
+        self.page.borrow_mut().take();
+        self.settings_open.set(true);
+        self.settings_follow_list();
+        self.make_room();
+        self.refresh();
+    }
+
+    fn close_settings(&self) {
+        if self.settings_open.replace(false) {
+            self.room_follows_pages();
+            self.refresh();
+            self.keep_selection_in_view();
+        }
+    }
+
+    /// The settings page shows what is in use.
+    fn settings_follow_list(&self) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let form = settings::form_of(self.list.borrow().settings());
+        if window.get_settings_form() != form {
+            window.set_settings_form(form);
+        }
+    }
+
+    /// A control on the settings page changed: the change is in use at once, and saved (FR-SET).
+    fn settings_changed(&self) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let changed = {
+            let list = self.list.borrow();
+            let current = list.settings();
+            let changed = settings::settings_from(&window.get_settings_form(), current);
+            if list.is_read_only() || changed == *current {
+                drop(list);
+                // A control the user could still reach goes back to what is in use.
+                self.settings_follow_list();
+                return;
+            }
+            changed
+        };
+        tracing::info!(?changed, "the settings changed");
+        window.invoke_set_theme(theme_choice(changed.theme));
+        self.list.borrow_mut().set_settings(changed.clone());
+        self.refresh();
+        self.send(UiCommand::SaveSettings(Box::new(changed)));
     }
 
     fn close_page(&self) {
@@ -953,6 +1072,12 @@ impl Inner {
             }
         }
         let gone = shown.is_none();
+        window.set_settings_open(self.settings_open.get());
+        window.set_settings_view(settings::view(
+            !list.is_read_only(),
+            self.winfsp.get(),
+            self.has_logs.get(),
+        ));
         window.set_can_add(list.can_add());
         window.set_can_mount_all(!list.mountable().is_empty());
         window.set_can_unmount_all(!list.unmountable().is_empty());

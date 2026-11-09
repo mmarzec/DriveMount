@@ -91,7 +91,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | FR-NOT-01 | M0-3, M2-04 | `the_four_events_each_have_a_notice`, `the_same_error_or_letter_again_is_not_new` (`apps/drivemount/src/ui/notices.rs`); `each_of_the_four_events_is_one_toast_with_the_name_and_the_text` (`apps/drivemount/src/ui/tests/toasts.rs`). Windows takes the toast: `a_toast_is_taken_and_goes_to_action_center` (`crates/drivemount-win/src/toast.rs`, ignored, needs a desktop). On screen: H-08 | – |
 | FR-NOT-02 | M0-3, M2-04 | `success_and_ordinary_changes_have_none`, `mounts_and_reconnects_that_work_are_no_toasts` | – |
-| FR-NOT-03 | M0-3, M2-04 | `with_notifications_off_there_are_none_and_the_row_still_says_it`. The switch itself: M2-05 | – |
+| FR-NOT-03 | M0-3, M2-04, M2-05 | `with_notifications_off_there_are_none_and_the_row_still_says_it`. The switch itself: `the_settings_page_turns_toasts_off_and_the_sound_on_at_once` | – |
 | FR-NOT-04 | M0-3, M2-04 | `a_click_shows_the_window_with_the_profile_selected`, `a_click_for_a_profile_that_has_gone_only_shows_the_window`, `a_click_gives_back_the_profile`. The COM path a click in Action Center takes: `a_call_to_the_class_reaches_the_callback`, `registering_writes_the_keys_and_unregistering_removes_them` (`crates/drivemount-win/src/toast.rs`). Real clicks, and a click with the app not running: H-08 | – |
 
 ## Application lifecycle
@@ -100,7 +100,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | FR-APP-01 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-02 | M1-11, M2-02, M2-03, M2-06 | `closing_hides_to_the_tray_only_when_set_to_and_there_is_one` (`ui/tests/tray.rs`); on the real binary, `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`, ignored). The quit question: M2-06 | – |
-| FR-APP-03 | M1-11, M2-02, M2-06 | – | – |
+| FR-APP-03 | M1-11, M2-02, M2-05, M2-06 | The Run value and its command: `enabling_writes_the_value_and_disabling_removes_it`, `the_command_quotes_the_path_and_starts_in_the_tray` (`drivemount-win` `startup`). `--tray` itself: M2-06 | – |
 | FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | The window hearing a sent `WM_ENDSESSION`: `the_hidden_window_hears_resume_and_session_end_and_stays_hidden` (`drivemount-win` `events::tests`). Unmounting everything: `MountManager::shutdown`'s tests. A real sign-out: H-08 | – |
 | FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection: `drivemount-win` `winfsp::tests`. Banner and disabled buttons: `without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not`, `without_winfsp_only_starting_a_mount_is_off`. Opening the page: `only_a_secure_web_page_is_opened`, connected in `drivemount_app::app::engine` | – |
@@ -110,14 +110,14 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SET-01 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The theme in the window: `the_theme_can_be_forced_either_way_and_handed_back`. The setting: M2-05 | – |
-| FR-SET-02 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
-| FR-SET-03 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
-| FR-SET-04 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
-| FR-SET-05 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
-| FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
-| FR-SET-07 | M2-05 | – | – |
-| FR-SET-08 | M2-04, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The toast: `toasts_are_silent_unless_the_sound_is_on` (`apps/drivemount/src/ui/tests/toasts.rs`), `a_silent_toast_says_so` (`crates/drivemount-win/src/toast.rs`). The checkbox: M2-05. Hearing it: H-08 | – |
+| FR-SET-01 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). The Run value: `enabling_writes_the_value_and_disabling_removes_it` (`drivemount-win` `startup`), `start_with_windows_writes_the_run_value_and_takes_it_away`, `a_run_value_the_registry_refuses_leaves_the_setting_off_and_says_so`. A real sign-in: M2-06 (FR-APP-03) | – |
+| FR-SET-02 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). In use at once: the close button reads the window's settings, which the page changes (`closing_hides_to_the_tray_only_when_set_to_and_there_is_one`) | – |
+| FR-SET-03 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The theme in the window: `the_theme_can_be_forced_either_way_and_handed_back`. The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`); live: `each_change_is_saved_at_once_and_in_use_before`. By eye: H-08 | – |
+| FR-SET-04 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). The next mount goes by it: `the_next_mount_goes_by_the_saved_letter_setting` (`drivemount-core`) | – |
+| FR-SET-05 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). In use at once: `the_settings_page_turns_toasts_off_and_the_sound_on_at_once` (`ui/tests/toasts.rs`) | – |
+| FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). In use at once: `the_level_changes_while_the_log_is_written` (`logging.rs`). *Open logs folder*: H-08 | – |
+| FR-SET-07 | M2-05 | `the_winfsp_line_has_the_version` (`ui/settings.rs`). By eye: H-08 | – |
+| FR-SET-08 | M2-04, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The toast: `toasts_are_silent_unless_the_sound_is_on` (`apps/drivemount/src/ui/tests/toasts.rs`), `a_silent_toast_says_so` (`crates/drivemount-win/src/toast.rs`). The checkbox: `the_settings_page_turns_toasts_off_and_the_sound_on_at_once`. Hearing it: H-08 | – |
 
 ## SMB backend
 
@@ -204,8 +204,8 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | NFR-LIC-01 | M1-01 | `scripts/check-spdx.sh` in CI; negative test: fails on a missing header | 0.1.0 (local) |
-| NFR-LIC-02 | M2-05, M2-12 | – | – |
-| NFR-LIC-03 | M2-05 | – | – |
+| NFR-LIC-02 | M2-05, M2-12 | The About section's text is fixed in `ui/settings_page.slint`. By eye: H-08. The user guide: M2-12 | – |
+| NFR-LIC-03 | M2-05 | `the_licence_file_that_is_not_there_says_so`; `open_html_file` takes only `.html`. The source link waits for a public repository (`repository` in `Cargo.toml`). Opening the real file: after M2-10 | – |
 | NFR-LIC-04 | M2-10 | – | – |
 | NFR-LIC-05 | M1-01 | CI `cargo deny check`; negative test: a `GPL-2.0-only` crate fails | 0.1.0 (local) |
 | NFR-LIC-06 | M2-13 | – | – |

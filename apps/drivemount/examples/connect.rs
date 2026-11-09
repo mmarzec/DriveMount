@@ -41,5 +41,7 @@ fn main() -> anyhow::Result<()> {
             display_name: "DriveMount (preview)".to_owned(),
             activator: uuid::Uuid::from_u128(0x5d0e_3c1a_7b2f_4e8d_9a61_0c4b_2f7e_93a5),
         }),
+        // Its own too, so that trying *Start with Windows* here leaves the app's value alone.
+        run_value: Some("DriveMount.Preview".to_owned()),
     })
 }

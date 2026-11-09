@@ -24,14 +24,10 @@ use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::{
     ToastActivatedEventArgs, ToastNotification, ToastNotificationManager,
 };
-use windows::Win32::Foundation::{CLASS_E_NOAGGREGATION, ERROR_FILE_NOT_FOUND, WIN32_ERROR};
+use windows::Win32::Foundation::CLASS_E_NOAGGREGATION;
 use windows::Win32::System::Com::{
     CLSCTX_LOCAL_SERVER, COINIT_MULTITHREADED, CoInitializeEx, CoRegisterClassObject,
     CoRevokeClassObject, CoUninitialize, IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
-};
-use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ, RegCloseKey,
-    RegCreateKeyExW, RegDeleteTreeW, RegSetValueExW,
 };
 use windows::Win32::UI::Notifications::{
     INotificationActivationCallback, INotificationActivationCallback_Impl,
@@ -43,7 +39,8 @@ use windows::core::{
 
 use uuid::Uuid;
 
-use crate::{os_error, wide};
+use crate::os_error;
+use crate::registry::{delete_tree, set_string};
 
 /// How many shown toasts are kept for their `Activated` event, which only fires while the object
 /// lives. Older ones are still clicked through the COM class.
@@ -123,51 +120,6 @@ fn clsid_key(clsid: Uuid) -> String {
 /// `{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}`, as the registry spells a CLSID.
 fn clsid_text(clsid: Uuid) -> String {
     format!("{{{:?}}}", guid(clsid))
-}
-
-fn check(result: WIN32_ERROR) -> io::Result<()> {
-    result.ok().map_err(|error| os_error(&error))
-}
-
-/// Sets a string value of an `HKCU` key, made if it is not there. `None` is the key's default value.
-fn set_string(key: &str, name: Option<&str>, value: &str) -> io::Result<()> {
-    let key_name = wide(key);
-    let mut opened = HKEY::default();
-    // SAFETY: the name is nul-terminated, and `opened` outlives the call.
-    check(unsafe {
-        RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            PCWSTR(key_name.as_ptr()),
-            None,
-            PCWSTR::null(),
-            REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE,
-            None,
-            &raw mut opened,
-            None,
-        )
-    })?;
-    let name = name.map(wide);
-    let name = name
-        .as_ref()
-        .map_or(PCWSTR::null(), |name| PCWSTR(name.as_ptr()));
-    let data: Vec<u8> = wide(value).iter().flat_map(|u| u.to_le_bytes()).collect();
-    // SAFETY: `opened` was just opened to set values, the name is nul-terminated or null, and the
-    // data is a nul-terminated UTF-16 string for the type given.
-    let set = check(unsafe { RegSetValueExW(opened, name, None, REG_SZ, Some(&data)) });
-    // SAFETY: `opened` is open and is not used after this. Nothing can be done if closing fails.
-    let _ = unsafe { RegCloseKey(opened) };
-    set
-}
-
-fn delete_tree(key: &str) -> io::Result<()> {
-    let key_name = wide(key);
-    // SAFETY: the name is nul-terminated.
-    let result = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(key_name.as_ptr())) };
-    if result == ERROR_FILE_NOT_FOUND {
-        return Ok(());
-    }
-    check(result)
 }
 
 /// The toast's XML. Text is escaped, and a click is a foreground activation with `launch` as its
@@ -403,10 +355,11 @@ mod tests {
     use std::time::Duration;
 
     use windows::Win32::System::Com::{CLSCTX_LOCAL_SERVER, CoCreateInstance};
-    use windows::Win32::System::Registry::{RRF_RT_REG_SZ, RegGetValueW};
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
     use windows::core::w;
 
     use super::*;
+    use crate::wide;
 
     fn read(key: &str, name: Option<&str>) -> Option<String> {
         let key = wide(key);

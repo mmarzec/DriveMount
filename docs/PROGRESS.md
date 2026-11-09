@@ -2,6 +2,35 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-05 Settings page
+
+**Status: done locally, not yet committed; the owner's look at it (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks pass, as do the workspace's non-ignored tests (1060 passing, 170 ignored). **Not run:** the page on a real desktop (H-08).
+
+- **Added:**
+  - `ui/settings_page.slint`: the page of spec §7.5 in the list's place (toolbar ⚙, ← or Esc back). One card with the seven settings (the sound indented under *Show notifications*, off while it is off, with the hint about Windows' own settings), then About: version, "Licensed under the GNU GPL v3", WinFsp's attribution and link, *Third-party licences*, *Logs folder*.
+  - `ui/settings.rs`: form ↔ `Settings`; what has no control (`op_timeout_secs`, `winfsp_threads`) is kept.
+  - `MainUi`: `set_winfsp(WinFspStatus)` (the version for FR-SET-07), `set_has_logs`. `set_config` now applies the theme too. `UiCommand::OpenSettings` is gone: the page is the window's own. New: `SaveSettings`, `OpenLogsFolder`, `OpenLicences`, `OpenWebPage`.
+  - `MountManager::save_settings`: writes `[settings]` only. Mounts read the settings from the store at each start, so FR-SET-04 needs nothing more.
+  - Engine: `keep_settings`, one task that saves changes in order and keeps only the latest of those waiting. Run value first, then the file; registry refused → the setting stays off; file refused → the Run value is put back and the page reverts. The log level changes through `LogLevelControl` (a `tracing_subscriber::reload` handle on the per-layer filter) once saved.
+  - `drivemount_win::startup` (`enable`, `disable`, `command`, `RUN_VALUE = "DriveMount"`), on a new crate-private `registry` module that `toast` now uses too. `shell::open_folder`, `shell::open_html_file` (only `.html`).
+  - `Setup::run_value`: the app's is `DriveMount`; `examples/connect.rs` uses `DriveMount.Preview`, so trying the setting there leaves the app's value alone.
+- **Choices the plan left open (now in spec §7.5):** at start, with the setting on, the Run value is rewritten (the exe may have moved); with it off nothing is removed, so an installer's value stays. A failed save shows a banner and the page goes back. On a read-only file the controls are disabled.
+- **Open, for the owner:**
+  - **The source link has no URL.** There is no public repository yet (the remote is the LAN Gitea), so `CARGO_PKG_REPOSITORY` is empty and the link is hidden. Set `repository` as the comment in the root `Cargo.toml` says, and it shows. NFR-LIC-03 is not met until then.
+  - **`THIRD-PARTY-LICENSES.html` does not exist until M2-10** (`cargo-about`). The button looks beside the exe and, in a development build, shows a banner that it is not there.
+- **For the owner to check (H-08):** `cargo run -p drivemount --example connect`, ⚙:
+  - The page by eye, light and dark, at 640 × 420 and at the minimum size: nothing cut off, the card scrolls.
+  - Theme: Light / Dark / System change the window at once.
+  - Close button: off → × quits (until M2-06's question, at once).
+  - Log level Debug: the next lines in `%TEMP%\drivemount-connect-preview\logs\drivemount.log` include DEBUG ones; *Open logs folder* opens that folder.
+  - Start with Windows: `HKCU\…\CurrentVersion\Run\DriveMount.Preview` appears with `"<exe>" --tray`, and goes when unticked. (With the real exe the value is `DriveMount`.)
+  - Notifications off: a failed mount gives no toast; sound on: the next toast plays it. The sound's box is greyed while notifications are off.
+  - The WinFsp line shows the installed version.
+- **For later tasks:**
+  - **M2-06:** `--tray` is what the Run value starts with; it is not handled yet, so at present a sign-in shows the window.
+  - **M2-10:** the installer's optional *Start with Windows* should write the same value (`DriveMount`, `"<exe>" --tray`), and the uninstaller remove it. The app does not remove a value it finds with the setting off. Ship `THIRD-PARTY-LICENSES.html` beside the exe.
+- **Next:** H-08 for M2-02 to M2-05, then M2-06.
+
 ## 2026-11-09: M2-04 Notifications
 
 **Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (1039 passing, 170 ignored). On this desktop, the new ignored `a_toast_is_taken_and_goes_to_action_center` passes, as do `it_starts_shows_the_saved_profile_logs_and_closes` and `closing_hides_the_window_to_the_tray_and_the_app_goes_on`; after them both keys of spec §9 were in the registry. The release `drivemount.exe` is 15.51 MB (was 15.45) against the limit of 30 MB.

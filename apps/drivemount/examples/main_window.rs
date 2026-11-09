@@ -210,7 +210,10 @@ auth = "agent"
             UiCommand::CancelTest { .. }
             | UiCommand::OpenFileLocation(_)
             | UiCommand::OpenInExplorer(_)
-            | UiCommand::OpenSettings
+            | UiCommand::SaveSettings(_)
+            | UiCommand::OpenLogsFolder
+            | UiCommand::OpenLicences
+            | UiCommand::OpenWebPage(_)
             | UiCommand::DownloadWinFsp => {}
         }
     }

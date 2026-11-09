@@ -219,3 +219,40 @@ fn a_click_for_a_profile_that_has_gone_only_shows_the_window() {
     assert!(fixture.ui.is_window_up());
     assert!(fixture.take_sent().is_empty());
 }
+
+/// FR-SET-05 and FR-SET-08 without a restart: the page's switches are in use before they are saved.
+#[test]
+fn the_settings_page_turns_toasts_off_and_the_sound_on_at_once() {
+    let a = profile("A");
+    let id = a.id;
+    let fixture = Fixture::new(vec![a]);
+    let toasts = with_toasts(&fixture);
+    let window = fixture.ui.window();
+    window.invoke_settings_pressed();
+    let change = |change: &dyn Fn(&mut crate::ui::SettingsForm)| {
+        let mut form = window.get_settings_form();
+        change(&mut form);
+        window.set_settings_form(form);
+        window.invoke_settings_changed();
+    };
+
+    change(&|form| form.notifications = false);
+    let sent = fixture.take_sent();
+    assert!(
+        matches!(&sent[..], [crate::ui::UiCommand::SaveSettings(settings)] if !settings.notifications),
+        "{sent:?}"
+    );
+    fixture.set_state(id, MountState::Connecting, None);
+    fixture.set_state(id, MountState::Error(auth()), None);
+    assert!(toasts.take().is_empty());
+
+    change(&|form| {
+        form.notifications = true;
+        form.notification_sound = true;
+    });
+    fixture.set_state(id, MountState::Connecting, None);
+    fixture.set_state(id, MountState::Error(lost()), None);
+    let shown = toasts.take();
+    assert_eq!(shown.len(), 1);
+    assert!(!shown[0].silent);
+}

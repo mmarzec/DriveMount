@@ -1010,6 +1010,14 @@ This page replaces the list area inside the main window; a ← back arrow return
 - a *Third-party licences* button;
 - a link to the logs folder. Changes apply immediately. Only "Start with Windows" touches the registry.
 
+- **How a change is saved:** each change is in use in the window at once (theme, close button, toasts) and is then saved in the background, one after another, so a later change is never overtaken; changes made while one is saving count only as the latest. The log level changes once the file has it.
+- **Start with Windows** writes or removes the Run value before the file is saved. If the registry refuses, the box goes back to off and a banner says why. If the file then cannot be saved, the Run value is put back. At start, with the setting on, the value is written again, as the exe may have moved; with it off, nothing is touched, so a value written by someone else (the installer) stays.
+- **A failed save** shows a banner, and the page goes back to what is in use.
+- **Read-only file:** the controls are disabled; the banner above says why.
+- **WinFsp line** (FR-SET-07): "WinFsp 2.1.25156 installed"; too old: "WinFsp 2.0.x is installed, but 2.1 or later is required to mount SSH drives"; missing: the banner's text. The last two have *Download WinFsp*.
+- **Source link:** the package's `repository`. Until the repository is public it is not set, and the About section has no link.
+- **Third-party licences** opens `THIRD-PARTY-LICENSES.html` beside the exe in the browser; if it is not there (a development build), a banner says so.
+
 ### 7.6 Tray menu
 
 ```

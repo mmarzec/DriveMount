@@ -7,6 +7,7 @@
 //!
 //! Only this program's own crates log at the level the user chose. Everything else stays at Warn or
 //! below, so that a library's debug output cannot put what it was handed into the file (NFR-SEC-02).
+//! The level can change while the app runs, through [`LogLevelControl`] (FR-SET-06).
 
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -19,7 +20,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::filter::{LevelFilter, Targets};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::{SubscriberInitExt, TryInitError};
-use tracing_subscriber::{Layer, Registry, fmt};
+use tracing_subscriber::{Layer, Registry, fmt, reload};
 
 /// The name of the file being written.
 pub const LOG_FILE: &str = "drivemount.log";
@@ -56,6 +57,32 @@ fn folder_under(local_app_data: impl Into<PathBuf>) -> Option<PathBuf> {
 #[must_use]
 pub struct LogGuard {
     _worker: WorkerGuard,
+    control: LogLevelControl,
+}
+
+impl LogGuard {
+    /// What changes the level of this log.
+    pub fn control(&self) -> LogLevelControl {
+        self.control.clone()
+    }
+}
+
+/// Changes the level of the log while it is written (FR-SET-06). With no log, it does nothing.
+#[derive(Clone, Default)]
+pub struct LogLevelControl {
+    handle: Option<reload::Handle<Targets, Registry>>,
+}
+
+impl LogLevelControl {
+    /// From now on, log at `level`.
+    pub fn set(&self, level: LogLevel) {
+        if let Some(handle) = &self.handle
+            && let Err(error) = handle.reload(filter(level))
+        {
+            // Only once the log has gone, as the app ends.
+            tracing::debug!(%error, "the log level could not be changed");
+        }
+    }
 }
 
 /// Logs to `folder` from now on, for the whole process.
@@ -66,20 +93,34 @@ pub struct LogGuard {
 /// Something already took the process's logging.
 pub fn start(folder: &Path, level: LogLevel) -> Result<LogGuard, TryInitError> {
     let (writer, guard) = tracing_appender::non_blocking(RollingFile::new(folder));
-    subscriber(writer, level).try_init()?;
-    Ok(LogGuard { _worker: guard })
+    let (subscriber, control) = subscriber(writer, level);
+    subscriber.try_init()?;
+    Ok(LogGuard {
+        _worker: guard,
+        control,
+    })
 }
 
 /// One line for each event: time (UTC), level, the spans it is in, and the message.
-fn subscriber<W>(writer: W, level: LogLevel) -> impl SubscriberExt + SubscriberInitExt + use<W>
+fn subscriber<W>(
+    writer: W,
+    level: LogLevel,
+) -> (
+    impl SubscriberExt + SubscriberInitExt + use<W>,
+    LogLevelControl,
+)
 where
     W: for<'writer> fmt::MakeWriter<'writer> + Send + Sync + 'static,
 {
+    let (filter, handle) = reload::Layer::new(filter(level));
     let layer = fmt::layer()
         .with_ansi(false)
         .with_writer(writer)
-        .with_filter(filter(level));
-    Registry::default().with(layer)
+        .with_filter(filter);
+    let control = LogLevelControl {
+        handle: Some(handle),
+    };
+    (Registry::default().with(layer), control)
 }
 
 fn filter(level: LogLevel) -> Targets {
@@ -370,12 +411,38 @@ mod tests {
     }
 
     fn logged(level: LogLevel, what: impl FnOnce()) -> String {
+        logged_with_control(level, |_| what())
+    }
+
+    fn logged_with_control(level: LogLevel, what: impl FnOnce(&LogLevelControl)) -> String {
         let captured = Captured::default();
-        let subscriber = subscriber(captured.clone(), level);
+        let (subscriber, control) = subscriber(captured.clone(), level);
         let dispatch = tracing::Dispatch::new(subscriber);
-        tracing::dispatcher::with_default(&dispatch, what);
+        tracing::dispatcher::with_default(&dispatch, || what(&control));
         let bytes = captured.0.lock().unwrap().clone();
         String::from_utf8(bytes).unwrap()
+    }
+
+    /// FR-SET-06 without a restart.
+    #[test]
+    fn the_level_changes_while_the_log_is_written() {
+        let text = logged_with_control(LogLevel::Info, |control| {
+            debug!(target: "drivemount_core", "not yet");
+            control.set(LogLevel::Debug);
+            debug!(target: "drivemount_core", "now it is");
+            debug!(target: "russh::client", "still not theirs");
+            control.set(LogLevel::Error);
+            warn!(target: "drivemount_core", "not any more");
+        });
+        assert!(!text.contains("not yet"), "{text}");
+        assert!(text.contains("now it is"), "{text}");
+        assert!(!text.contains("still not theirs"), "{text}");
+        assert!(!text.contains("not any more"), "{text}");
+    }
+
+    #[test]
+    fn with_no_log_a_change_does_nothing() {
+        LogLevelControl::default().set(LogLevel::Debug);
     }
 
     #[test]

@@ -184,6 +184,15 @@ export global Texts {
     public pure function delete-failed(detail: string) -> string {
         return @tr("The connection could not be deleted: {}", detail);
     }
+    public pure function settings-not-saved(detail: string) -> string {
+        return @tr("The settings could not be saved: {}", detail);
+    }
+    public pure function start-with-windows-failed(detail: string) -> string {
+        return @tr("Start with Windows could not be changed: {}", detail);
+    }
+    public pure function licences-not-opened(detail: string) -> string {
+        return @tr("The third-party licences could not be opened: {}", detail);
+    }
 
     // The profile dialog (spec 7.2).
     public pure function add-connection() -> string {

@@ -22,7 +22,7 @@ use tokio::time::timeout;
 use uuid::Uuid;
 
 use super::*;
-use crate::config::LetterConflict;
+use crate::config::{LetterConflict, LogLevel, Theme};
 use crate::profile::{DriveChoice, Field, JumpAuth, JumpHost, Protocol, SftpAuth, SftpProfile};
 
 const PATIENCE: Duration = Duration::from_secs(10);
@@ -2593,4 +2593,72 @@ async fn eventually(mut done: impl FnMut() -> bool) -> bool {
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     done()
+}
+
+// The settings page (FR-SET).
+
+#[tokio::test]
+async fn saved_settings_are_in_the_file_and_the_profiles_stay() {
+    let profile = named("Production");
+    let id = profile.id;
+    let world = world(vec![profile]);
+    let settings = Settings {
+        start_with_windows: true,
+        close_to_tray: false,
+        theme: Theme::Dark,
+        letter_conflict: LetterConflict::Fail,
+        notifications: false,
+        notification_sound: true,
+        log_level: LogLevel::Debug,
+        ..Settings::default()
+    };
+
+    world.manager.save_settings(settings.clone()).await.unwrap();
+
+    let in_the_file = world.in_the_file();
+    assert_eq!(in_the_file.settings, settings);
+    assert_eq!(in_the_file.profiles.len(), 1);
+    assert_eq!(in_the_file.profiles[0].id, id);
+    assert_eq!(world.manager.config().await.settings, settings);
+}
+
+/// FR-SET-04 without a restart: the next mount goes by the new setting.
+#[tokio::test]
+async fn the_next_mount_goes_by_the_saved_letter_setting() {
+    let mut profile = named("Production");
+    profile.drive = DriveChoice::Letter(letter('Z'));
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    let settings = Settings {
+        letter_conflict: LetterConflict::Fail,
+        ..Settings::default()
+    };
+    world.manager.save_settings(settings).await.unwrap();
+    let taken = MountError::LetterTaken(letter('Z'));
+    world.mock.script(NextMount::Fail(taken.clone()));
+
+    world.manager.mount(id).await.unwrap();
+
+    assert_eq!(world.next_state().await, MountState::Connecting);
+    assert_eq!(world.next_state().await, MountState::Error(taken));
+}
+
+#[tokio::test]
+async fn settings_are_not_saved_to_a_newer_file() {
+    let folder = newer_file(vec![named("Production")]);
+    let before = fs::read(path_in(&folder)).unwrap();
+    let world = world_from(folder);
+    let settings = Settings {
+        notifications: false,
+        ..Settings::default()
+    };
+
+    let saved = world.manager.save_settings(settings).await;
+
+    assert!(matches!(
+        saved,
+        Err(SaveError::ReadOnly(ReadOnlyReason::Newer { .. }))
+    ));
+    assert!(world.manager.config().await.settings.notifications);
+    assert_eq!(fs::read(path_in(&world.folder)).unwrap(), before);
 }

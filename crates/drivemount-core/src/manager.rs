@@ -485,6 +485,23 @@ impl MountManager {
             .map_err(|error| ProfileChangeError::Failed(error.to_string()))?
     }
 
+    /// The settings page (FR-SET): writes `[settings]`, keeping the profiles as they are. Mounts that
+    /// start from now on go by them (FR-SET-04); one under way keeps what it started with.
+    ///
+    /// # Errors
+    /// See [`SaveError`]. The settings in use are as they were.
+    pub async fn save_settings(&self, settings: Settings) -> Result<(), SaveError> {
+        let shared = Arc::clone(&self.inner.shared);
+        spawn_blocking(move || {
+            let mut store = shared.store.blocking_lock();
+            let mut config = store.config().clone();
+            config.settings = settings;
+            store.save(&config)
+        })
+        .await
+        .map_err(|error| SaveError::Io(io::Error::other(error.to_string())))?
+    }
+
     /// App quit or sign-out: unmounts everything, and returns when that is done (spec §5.5). The
     /// manager does nothing after this.
     pub async fn shutdown(&self) {

@@ -13,7 +13,9 @@
 pub mod credentials;
 pub mod drives;
 pub mod events;
+mod registry;
 pub mod shell;
+pub mod startup;
 pub mod toast;
 pub mod tray;
 pub mod winfsp;

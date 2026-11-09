@@ -9,6 +9,7 @@ use std::cell::Cell;
 use slint::ComponentHandle;
 use std::fs;
 use std::io;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
@@ -111,13 +112,31 @@ impl DriveLetters for AllFree {
     }
 }
 
+/// The Run value, as a list of what it was set to.
+#[derive(Default)]
+struct RunValueLog {
+    set_to: Mutex<Vec<bool>>,
+    refuses: AtomicBool,
+}
+
+impl StartWithWindows for RunValueLog {
+    fn set(&self, on: bool) -> io::Result<()> {
+        if self.refuses.load(Ordering::SeqCst) {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        self.set_to.lock().unwrap().push(on);
+        Ok(())
+    }
+}
+
 struct Fixture {
-    _folder: TempDir,
+    folder: TempDir,
     ui: MainUi,
     manager: MountManager,
     commands: mpsc::UnboundedSender<UiCommand>,
     actions: std_mpsc::Receiver<UiAction>,
     script: Arc<Script>,
+    run_value: Arc<RunValueLog>,
     runtime: Runtime,
 }
 
@@ -158,14 +177,28 @@ fn fixture_from(folder: TempDir) -> Fixture {
     let to_ui: ToUi = Arc::new(move |action| {
         let _ = post.send(action);
     });
-    start(runtime.handle(), manager.clone(), inbox, to_ui);
+    let run_value = Arc::new(RunValueLog::default());
+    let surroundings = Surroundings {
+        log_level: LogLevelControl::default(),
+        start_with_windows: Arc::clone(&run_value) as _,
+        logs: Some(folder.path().join("logs")),
+        licences: Some(folder.path().join("THIRD-PARTY-LICENSES.html")),
+    };
+    start(
+        runtime.handle(),
+        manager.clone(),
+        inbox,
+        to_ui,
+        surroundings,
+    );
     Fixture {
-        _folder: folder,
+        folder,
         ui,
         manager,
         commands,
         actions,
         script,
+        run_value,
         runtime,
     }
 }
@@ -445,4 +478,173 @@ fn falling_behind_the_events_ends_with_the_right_state() {
             action(&fixture.ui);
         }
     }
+}
+
+// The settings page (FR-SET).
+
+impl Fixture {
+    /// Opens the settings page, changes the form there as the user would, and says so.
+    fn change_settings(&self, change: impl FnOnce(&mut crate::ui::SettingsForm)) {
+        let window = self.ui.window();
+        if !window.get_settings_open() {
+            window.invoke_settings_pressed();
+        }
+        let mut form = window.get_settings_form();
+        change(&mut form);
+        window.set_settings_form(form);
+        window.invoke_settings_changed();
+    }
+
+    fn settings_in_the_file(&self) -> Settings {
+        let store = ConfigStore::open(self.folder.path().join("config.toml"));
+        store.config().settings.clone()
+    }
+
+    fn until_in_the_file(&self, what: &str, holds: impl Fn(&Settings) -> bool) {
+        self.until(what, |f| holds(&f.settings_in_the_file()));
+    }
+}
+
+#[test]
+fn the_settings_page_takes_the_lists_place_and_esc_brings_it_back() {
+    let fixture = fixture(vec![profile("Production")]);
+    let window = fixture.ui.window();
+    window.invoke_settings_pressed();
+    assert!(window.get_settings_open());
+    assert!(window.get_settings_view().editable);
+    window.invoke_settings_back();
+    assert!(!window.get_settings_open());
+}
+
+#[test]
+fn each_change_is_saved_at_once_and_in_use_before() {
+    let fixture = fixture(vec![profile("Production")]);
+    fixture.change_settings(|form| {
+        form.close_to_tray = false;
+        form.notifications = false;
+        form.letter_index = 1;
+        form.theme_index = 2;
+    });
+    // In use before the file has it: the theme here, and the close button and the toasts read the
+    // same copy of the settings.
+    assert!(fixture.ui.window().get_is_dark());
+
+    fixture.until_in_the_file("the change was saved", |settings| {
+        !settings.close_to_tray
+            && !settings.notifications
+            && settings.letter_conflict == drivemount_core::config::LetterConflict::Fail
+            && settings.theme == drivemount_core::config::Theme::Dark
+    });
+    assert!(fixture.failure().is_empty());
+    assert_eq!(
+        fixture.run_value.set_to.lock().unwrap().len(),
+        0,
+        "not touched"
+    );
+}
+
+#[test]
+fn the_latest_change_is_the_one_that_stays() {
+    let fixture = fixture(Vec::new());
+    for level in [3, 0, 1, 3, 0] {
+        fixture.change_settings(|form| form.log_index = level);
+    }
+    fixture.until_in_the_file("the last level was saved", |settings| {
+        settings.log_level == drivemount_core::config::LogLevel::Error
+    });
+    // Nothing later overtakes it.
+    fixture.runtime.block_on(fixture.manager.config());
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        fixture.settings_in_the_file().log_level,
+        drivemount_core::config::LogLevel::Error
+    );
+}
+
+#[test]
+fn start_with_windows_writes_the_run_value_and_takes_it_away() {
+    let fixture = fixture(Vec::new());
+    fixture.change_settings(|form| form.start_with_windows = true);
+    fixture.until_in_the_file("it was saved on", |settings| settings.start_with_windows);
+    assert_eq!(*fixture.run_value.set_to.lock().unwrap(), [true]);
+
+    fixture.change_settings(|form| form.start_with_windows = false);
+    fixture.until_in_the_file("it was saved off", |settings| !settings.start_with_windows);
+    assert_eq!(*fixture.run_value.set_to.lock().unwrap(), [true, false]);
+}
+
+#[test]
+fn a_run_value_the_registry_refuses_leaves_the_setting_off_and_says_so() {
+    let fixture = fixture(Vec::new());
+    fixture.run_value.refuses.store(true, Ordering::SeqCst);
+    fixture.change_settings(|form| form.start_with_windows = true);
+
+    fixture.until("the failure shows", |f| !f.failure().is_empty());
+    assert!(
+        fixture.failure().contains("Start with Windows"),
+        "{}",
+        fixture.failure()
+    );
+    fixture.until("the box is unticked again", |f| {
+        !f.ui.window().get_settings_form().start_with_windows
+    });
+    assert!(!fixture.settings_in_the_file().start_with_windows);
+}
+
+#[test]
+fn a_file_that_will_not_save_puts_the_page_and_the_run_value_back() {
+    let fixture = fixture(Vec::new());
+    // Broken behind the app's back: the next save is refused.
+    fs::write(fixture.folder.path().join("config.toml"), "not = [toml").unwrap();
+    fixture.change_settings(|form| {
+        form.start_with_windows = true;
+        form.notifications = false;
+    });
+
+    fixture.until("the failure shows", |f| !f.failure().is_empty());
+    assert!(
+        fixture.failure().contains("settings"),
+        "{}",
+        fixture.failure()
+    );
+    fixture.until("the page shows what is in use", |f| {
+        let form = f.ui.window().get_settings_form();
+        form.notifications && !form.start_with_windows
+    });
+    assert_eq!(*fixture.run_value.set_to.lock().unwrap(), [true, false]);
+}
+
+#[test]
+fn a_read_only_file_has_a_page_that_cannot_be_changed() {
+    let folder = TempDir::new().unwrap();
+    fs::write(
+        folder.path().join("config.toml"),
+        "schema_version = 99\n[settings]\nnotifications = true\n",
+    )
+    .unwrap();
+    let fixture = fixture_from(folder);
+    fixture
+        .ui
+        .set_read_only(Some(&drivemount_core::config::ReadOnlyReason::Newer {
+            found: 99,
+        }));
+    fixture.change_settings(|form| form.notifications = false);
+
+    let window = fixture.ui.window();
+    assert!(!window.get_settings_view().editable);
+    assert!(window.get_settings_form().notifications, "put back at once");
+    std::thread::sleep(Duration::from_millis(100));
+    assert!(fixture.actions.try_recv().is_err(), "nothing was sent");
+}
+
+#[test]
+fn the_licence_file_that_is_not_there_says_so() {
+    let fixture = fixture(Vec::new());
+    fixture.send(UiCommand::OpenLicences);
+    fixture.until("the failure shows", |f| !f.failure().is_empty());
+    assert!(
+        fixture.failure().contains("licences"),
+        "{}",
+        fixture.failure()
+    );
 }

@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use drivemount_core::config::{Config, UnreadableProfile};
+use drivemount_core::config::{Config, Settings, UnreadableProfile};
 use drivemount_core::manager::{MountDetail, MountEvent, MountState};
 use drivemount_core::profile::{DEFAULT_PORT, DriveChoice, Profile, Protocol};
 use drivemount_vfs::{DriveLetter, MountError};
@@ -186,6 +186,16 @@ impl ListState {
 
     pub(super) fn profiles(&self) -> &[Profile] {
         &self.config.profiles
+    }
+
+    /// The settings in use.
+    pub(super) const fn settings(&self) -> &Settings {
+        &self.config.settings
+    }
+
+    /// Settings changed on the settings page, in use before they are saved.
+    pub(super) fn set_settings(&mut self, settings: Settings) {
+        self.config.settings = settings;
     }
 
     /// Whether the close button hides the window to the tray (FR-APP-02).

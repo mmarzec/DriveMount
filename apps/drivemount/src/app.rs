@@ -7,6 +7,7 @@ mod engine;
 mod system;
 
 use std::cell::RefCell;
+use std::io;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use drivemount_core::config::{ConfigStore, LogLevel};
 use drivemount_core::manager::{ManagerParts, MountManager};
 use drivemount_vfs::SecretStore;
 use drivemount_win::credentials::CredentialStore;
+use drivemount_win::startup;
 use drivemount_win::toast::{self, AppId, Toasts};
 use drivemount_win::tray::{Tray, TrayContent};
 use slint::ComponentHandle;
@@ -25,9 +27,9 @@ use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use self::engine::UiAction;
+use self::engine::{StartWithWindows, Surroundings, UiAction};
 use crate::backend::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
-use crate::logging::{self, LogGuard};
+use crate::logging::{self, LogGuard, LogLevelControl};
 use crate::ui::{MainUi, TrayIcon};
 
 /// Spec §5.3's limits on the runtime's workers.
@@ -59,6 +61,9 @@ pub struct Setup {
     pub secrets: Arc<dyn SecretStore>,
     /// Who toasts are from, or no toasts.
     pub toasts: Option<AppId>,
+    /// The name of the value under the Run key for *Start with Windows* (FR-APP-03), or none, which
+    /// makes the setting change only the file.
+    pub run_value: Option<String>,
 }
 
 impl Setup {
@@ -75,6 +80,7 @@ impl Setup {
             logs: logging::default_folder(),
             secrets: Arc::new(CredentialStore),
             toasts: Some(Self::toasts_from()),
+            run_value: Some(startup::RUN_VALUE.to_owned()),
         })
     }
 
@@ -153,6 +159,33 @@ fn start_toasts(ui: &MainUi, app: &AppId) {
     }
 }
 
+/// The Run value under a name, for this exe.
+struct RunValue {
+    name: Option<String>,
+}
+
+impl StartWithWindows for RunValue {
+    fn set(&self, on: bool) -> io::Result<()> {
+        let Some(name) = &self.name else {
+            tracing::debug!(on, "no Run value in this build");
+            return Ok(());
+        };
+        if on {
+            startup::enable(name, &std::env::current_exe()?)
+        } else {
+            startup::disable(name)
+        }
+    }
+}
+
+/// With the setting on, the Run value is written again, as the exe may have moved since. With it
+/// off, nothing is touched.
+fn refresh_run_value(run_value: &RunValue, on: bool) {
+    if on && let Err(error) = run_value.set(true) {
+        tracing::warn!(%error, "the Run value could not be written");
+    }
+}
+
 fn start_logging(setup: &Setup, level: LogLevel) -> Option<LogGuard> {
     logging::start(setup.logs.as_deref()?, level).ok()
 }
@@ -165,7 +198,8 @@ pub fn run(setup: Setup) -> Result<()> {
     // First, as it says what to log. It logs nothing itself: what it found is reported below.
     let store = ConfigStore::open(&setup.config);
     let log = start_logging(&setup, store.config().settings.log_level);
-    let result = run_logged(setup, store);
+    let log_level = log.as_ref().map(LogGuard::control).unwrap_or_default();
+    let result = run_logged(setup, store, log_level);
     if let Err(error) = &result {
         tracing::error!("{error:#}");
     }
@@ -173,7 +207,7 @@ pub fn run(setup: Setup) -> Result<()> {
     result
 }
 
-fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
+fn run_logged(setup: Setup, store: ConfigStore, log_level: LogLevelControl) -> Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         config = %setup.config.display(),
@@ -208,14 +242,17 @@ fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
     let ui = Rc::new(ui);
     UI.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&ui)));
 
-    let settings = &store.config().settings;
-    ui.set_theme(settings.theme);
+    let run_value = RunValue {
+        name: setup.run_value.clone(),
+    };
+    refresh_run_value(&run_value, store.config().settings.start_with_windows);
     ui.set_config(store.config().clone());
     ui.set_read_only(store.read_only());
     ui.set_setting_problems(store.setting_problems());
     let winfsp = drivemount_win::winfsp::detect();
     tracing::info!(?winfsp, "looked for WinFsp");
-    ui.set_winfsp_ready(winfsp.is_ready());
+    ui.set_winfsp(winfsp);
+    ui.set_has_logs(setup.logs.is_some());
 
     let manager = {
         let _inside = runtime.enter();
@@ -230,11 +267,20 @@ fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
             prompter: ui.prompter(),
         })
     };
+    let licences = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("THIRD-PARTY-LICENSES.html")));
     engine::start(
         runtime.handle(),
         manager.clone(),
         inbox,
         Arc::new(post_to_window),
+        Surroundings {
+            log_level,
+            start_with_windows: Arc::new(run_value),
+            logs: setup.logs.clone(),
+            licences,
+        },
     );
     let system_events = system::start(runtime.handle(), &manager);
     start_tray(&ui);

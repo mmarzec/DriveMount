@@ -13,8 +13,9 @@ import { LoginKind, PageView, ConnectionPage } from "connection_page.slint";
 import { Texts } from "texts.slint";
 import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog } from "dialog.slint";
 import { PromptInput, PromptKind, PromptPanel, PromptView } from "prompts.slint";
+import { SettingsForm, SettingsPage, SettingsView, WinFspState } from "settings_page.slint";
 
-export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, Texts }
+export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, SettingsForm, SettingsView, Texts, WinFspState }
 
 export enum ThemeChoice { system, light, dark }
 
@@ -102,6 +103,11 @@ export component MainWindow inherits Window {
     in property <bool> page-open;
     in property <PageView> page-view;
 
+    // The settings page, in place of the list.
+    in property <bool> settings-open;
+    in-out property <SettingsForm> settings-form;
+    in property <SettingsView> settings-view;
+
     // What is allowed.
     in property <bool> can-add: true;
     in property <bool> can-mount-all;
@@ -150,6 +156,13 @@ export component MainWindow inherits Window {
     callback page-primary();
     callback page-edit();
     callback page-delete();
+
+    callback settings-back();
+    callback settings-changed();
+    callback open-logs-pressed();
+    callback licences-pressed();
+    callback source-pressed();
+    callback winfsp-site-pressed();
 
     callback move-selection(delta: int);
     callback activate-selected();
@@ -213,8 +226,8 @@ export component MainWindow inherits Window {
     property <bool> refocus-dialog;
     property <bool> asking: root.question != "";
     property <bool> interactive: !root.asking && !root.dialog-open && !root.prompt-open;
-    // Neither the connection page nor the Add/Edit page is in the list's place.
-    property <bool> showing-list: !root.page-open && !root.dialog-open;
+    // No page is in the list's place.
+    property <bool> showing-list: !root.page-open && !root.dialog-open && !root.settings-open;
     out property <bool> is-dark: Theme.dark;
 
     // The tooltip of the row under the mouse. Its timer runs only while a row is hovered and the tip
@@ -224,7 +237,7 @@ export component MainWindow inherits Window {
     property <length> tip-top;
     property <length> tip-bottom;
     property <bool> tip-wanted: root.tip-index >= 0 && root.tip-index < root.entries.length
-        && root.interactive && !root.page-open;
+        && root.interactive && root.showing-list;
     property <string> tip-text: !root.tip-wanted ? ""
         : root.entries[root.tip-index].address
             + (root.entries[root.tip-index].address != "" && root.entries[root.tip-index].line != "" ? "\n" : "")
@@ -263,6 +276,15 @@ export component MainWindow inherits Window {
             if (root.dialog-open) {
                 if (event.text == Key.Escape) {
                     root.dialog-cancelled();
+                    return accept;
+                }
+                return reject;
+            }
+            // The page's own controls have every other key.
+            if (root.settings-open) {
+                if (event.text == Key.Escape) {
+                    root.settings-back();
+                    keys.focus();
                     return accept;
                 }
                 return reject;
@@ -314,7 +336,7 @@ export component MainWindow inherits Window {
 
         // What the focused control did not want, so that Enter and Space stay a focused button's.
         key-pressed(event) => {
-            if (!root.interactive) {
+            if (!root.interactive || root.settings-open) {
                 return reject;
             }
             if (event.text == Key.Return) {
@@ -523,6 +545,36 @@ export component MainWindow inherits Window {
                     }
                     delete => {
                         root.page-delete();
+                    }
+                }
+
+                if root.settings-open && !root.dialog-open: SettingsPage {
+                    width: parent.width;
+                    height: parent.height;
+                    form <=> root.settings-form;
+                    view: root.settings-view;
+                    interactive: root.interactive;
+                    back => {
+                        root.settings-back();
+                        keys.focus();
+                    }
+                    changed => {
+                        root.settings-changed();
+                    }
+                    open-logs => {
+                        root.open-logs-pressed();
+                    }
+                    download-winfsp => {
+                        root.download-winfsp-pressed();
+                    }
+                    open-licences => {
+                        root.licences-pressed();
+                    }
+                    open-source => {
+                        root.source-pressed();
+                    }
+                    open-winfsp-site => {
+                        root.winfsp-site-pressed();
                     }
                 }
 
