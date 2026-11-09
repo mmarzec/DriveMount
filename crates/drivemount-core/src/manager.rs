@@ -341,6 +341,22 @@ impl MountManager {
         answer.await.unwrap_or(Err(MountRefused::UnknownProfile))
     }
 
+    /// Starts every profile with *Mount on start* (FR-MNT-08). Each mount runs in its own task, so
+    /// they go on in parallel, and their prompts queue in the `Prompter`. Returns the profiles
+    /// started; one that is refused (it breaks a rule, say) is logged and left out.
+    pub async fn mount_on_start(&self) -> Vec<Uuid> {
+        let config = self.config().await;
+        let wanted = config.profiles.iter().filter(|p| p.mount_on_start);
+        let mut started = Vec::new();
+        for profile in wanted {
+            match self.mount(profile.id).await {
+                Ok(()) => started.push(profile.id),
+                Err(error) => debug!(id = %profile.id, %error, "not mounted on start"),
+            }
+        }
+        started
+    }
+
     async fn why_there_is_no_task(&self, id: Uuid) -> MountRefused {
         let store = self.inner.shared.store.lock().await;
         let mut unreadable = store.config().unreadable.iter();

@@ -2,6 +2,15 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-07 Bulk and start-up mounting
+
+**Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` pass, as do the tests of `drivemount-core` and `drivemount` (453 passing).
+
+- **Already there from earlier tasks:** *Mount all* / *Unmount all* (toolbar and tray, M1-16, M2-03), the prompt queue (`ui::prompts`), the reassigned-letter row note and toast (M2-04), and letters held from choice to unmount (M1-15).
+- **Added:** `MountManager::mount_on_start`, which starts each profile with `mount_on_start`; each runs in its own actor, so they go in parallel. A refused profile (breaks a §7.3 rule) is logged at Debug and skipped. The engine calls it once at start, after subscribing. Test: `mount_on_start_mounts_those_profiles_in_parallel` (FR-MNT-08's criterion).
+- **For the owner to check (H-08):** tick *Mount on start* on two or more profiles, one needing a password; restart: both mount, the prompt shows by itself.
+- **Next:** H-08 for M2-02 to M2-07, then M2-08.
+
 ## 2026-11-09: M2-06 Lifecycle
 
 **Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks pass, as do the workspace's non-ignored tests (1074 passing, 173 ignored). On this desktop, all 7 ignored tests of `tests/drivemount_exe.rs` pass, the 3 new ones and the 2 against S-03 and WinFsp included. The release `drivemount.exe` is 15.95 MB against the limit of 30 MB. **Not run:** a real sign-in with `--tray`, a panic in the release exe.

@@ -2662,3 +2662,32 @@ async fn settings_are_not_saved_to_a_newer_file() {
     assert!(world.manager.config().await.settings.notifications);
     assert_eq!(fs::read(path_in(&world.folder)).unwrap(), before);
 }
+
+/// FR-MNT-08's criterion: 5 profiles with *Mount on start* are all under way before any has
+/// finished, and each gets a letter of its own.
+#[tokio::test]
+async fn mount_on_start_mounts_those_profiles_in_parallel() {
+    let mut profiles: Vec<Profile> = (1..=6).map(|n| named(&format!("Start {n}"))).collect();
+    for profile in &mut profiles[..5] {
+        profile.mount_on_start = true;
+    }
+    let left_alone = profiles[5].id;
+    let mut world = world(profiles);
+    world.mock.script(NextMount::Hang);
+    world.mock.script(NextMount::Hang);
+    world.mock.script(NextMount::Hang);
+    world.mock.script(NextMount::Hang);
+    world.mock.script(NextMount::Hang);
+
+    let started = world.manager.mount_on_start().await;
+
+    assert_eq!(started.len(), 5);
+    assert!(!started.contains(&left_alone));
+    for _ in 0..5 {
+        assert_eq!(world.next_state().await, MountState::Connecting);
+    }
+    for id in &started {
+        assert_eq!(world.state(*id), MountState::Connecting, "all at once");
+    }
+    assert_eq!(world.state(left_alone), MountState::Disconnected);
+}

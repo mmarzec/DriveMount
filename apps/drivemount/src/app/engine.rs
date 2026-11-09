@@ -83,6 +83,15 @@ pub(super) fn start(
         logs: surroundings.logs,
         licences: surroundings.licences,
     };
+    // After subscribing, so the rows follow these mounts too (FR-MNT-08).
+    let starting = engine.manager.clone();
+    runtime.spawn(async move {
+        let started = starting.mount_on_start().await;
+        info!(
+            count = started.len(),
+            "mounting the profiles marked to mount on start"
+        );
+    });
     runtime.spawn(async move {
         while let Some(command) = inbox.recv().await {
             engine.handle(command);
