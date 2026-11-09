@@ -3,10 +3,15 @@
 //! One profile's state machine (spec §5.5), in a task of its own. Nothing a profile does holds up
 //! another's: one can sit in a dialog for as long as the user likes.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use drivemount_vfs::{ConnectError, Health, MountBackend, MountError, Secret, SecretSlot};
+use drivemount_vfs::{
+    ConnectError, Health, HostKeyDecision, HostKeyRequest, KbdIntRequest, LoginAnswer,
+    LoginRequest, MountBackend, MountError, Prompter, Remember, Secret, SecretRequest, SecretSlot,
+    async_trait,
+};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::spawn_blocking;
 use tokio::time::sleep;
@@ -40,6 +45,9 @@ pub(super) enum Message {
     Shutdown {
         reply: oneshot::Sender<()>,
     },
+    /// Windows resumed or the network changed (FR-REC-03). Only *Mounted* and *Reconnecting* act
+    /// on it.
+    NetworkChanged,
 }
 
 /// A mount that is up. Dropping it is what clears what the backend remembers (NFR-SEC-03) and frees
@@ -151,6 +159,7 @@ impl Actor {
                     answer(reply, ());
                     Flow::Exit
                 }
+                Message::NetworkChanged => Flow::Continue,
             };
             if flow == Flow::Exit {
                 return;
@@ -283,7 +292,10 @@ impl Actor {
             }
             tokio::select! {
                 message = self.inbox.recv() => {
-                    if let Some(leaving) = self.while_in_use(message).await {
+                    if matches!(message, Some(Message::NetworkChanged)) {
+                        // A connection the change broke says so as health, which the next round sees.
+                        connected.backend.check_connection().await;
+                    } else if let Some(leaving) = self.while_in_use(message).await {
                         break leaving;
                     }
                 }
@@ -319,25 +331,46 @@ impl Actor {
     /// *Reconnecting*: the drive keeps its letter, and calls on it wait (FR-REC-02, FR-REC-04).
     /// Attempts go on with growing waits until one works, one meets an error that retrying cannot
     /// help, or the mount is to end. Commands are answered all the while, as when *Mounted*.
+    ///
+    /// A network change (FR-REC-03) starts again at once, with the waits from the first. An attempt
+    /// under way is given up for a new one, as it may be stuck on the network that went, unless it
+    /// is asking the user something.
     async fn reconnecting(&mut self, connected: &Connected, detail: MountDetail) -> Reconnected {
         self.set(MountState::Reconnecting, Some(detail));
         let mut attempt = 0;
         loop {
-            let trying = connected.backend.reconnect(&*self.shared.prompter);
+            let asking = AtomicUsize::new(0);
+            let prompter = Watched {
+                prompter: &*self.shared.prompter,
+                asking: &asking,
+            };
+            let trying = connected.backend.reconnect(&prompter);
             let tried = {
                 tokio::pin!(trying);
                 loop {
                     tokio::select! {
                         biased;
-                        message = self.inbox.recv() => {
-                            if let Some(leaving) = self.while_in_use(message).await {
-                                // Dropping the attempt gives it up.
-                                return Reconnected::Leaving(leaving);
+                        message = self.inbox.recv() => match message {
+                            Some(Message::NetworkChanged) => {
+                                if asking.load(Ordering::SeqCst) == 0 {
+                                    info!(id = %self.id, "the network changed, so trying again");
+                                    break None;
+                                }
                             }
-                        }
-                        tried = &mut trying => break tried,
+                            message => {
+                                if let Some(leaving) = self.while_in_use(message).await {
+                                    // Dropping the attempt gives it up.
+                                    return Reconnected::Leaving(leaving);
+                                }
+                            }
+                        },
+                        tried = &mut trying => break Some(tried),
                     }
                 }
+            };
+            let Some(tried) = tried else {
+                attempt = 0;
+                continue;
             };
             let error = match tried {
                 Ok(()) => {
@@ -358,11 +391,18 @@ impl Actor {
             loop {
                 tokio::select! {
                     biased;
-                    message = self.inbox.recv() => {
-                        if let Some(leaving) = self.while_in_use(message).await {
-                            return Reconnected::Leaving(leaving);
+                    message = self.inbox.recv() => match message {
+                        Some(Message::NetworkChanged) => {
+                            info!(id = %self.id, "the network changed, so trying again now");
+                            attempt = 0;
+                            break;
                         }
-                    }
+                        message => {
+                            if let Some(leaving) = self.while_in_use(message).await {
+                                return Reconnected::Leaving(leaving);
+                            }
+                        }
+                    },
                     () = &mut waited => break,
                 }
             }
@@ -427,6 +467,8 @@ impl Actor {
                 }
             }
             Message::Shutdown { reply } => Some(Leaving::Shutdown(reply)),
+            // Nothing is up to check while connecting, and a connection being made is new anyway.
+            Message::NetworkChanged => None,
         }
     }
 
@@ -537,6 +579,46 @@ async fn allocate(
     spawn_blocking(move || shared.allocator.allocate(choice, conflict, &tried))
         .await
         .map_err(|error| MountError::Other(format!("choosing a letter: {error}")))?
+}
+
+/// The prompter, counting the questions open, so that a network change does not give up an attempt
+/// that is waiting for the user.
+struct Watched<'a> {
+    prompter: &'a dyn Prompter,
+    asking: &'a AtomicUsize,
+}
+
+impl Watched<'_> {
+    async fn ask<T>(&self, question: impl Future<Output = T>) -> T {
+        struct Answered<'a>(&'a AtomicUsize);
+        impl Drop for Answered<'_> {
+            fn drop(&mut self) {
+                self.0.fetch_sub(1, Ordering::SeqCst);
+            }
+        }
+        self.asking.fetch_add(1, Ordering::SeqCst);
+        let _answered = Answered(self.asking);
+        question.await
+    }
+}
+
+#[async_trait]
+impl Prompter for Watched<'_> {
+    async fn secret(&self, req: SecretRequest) -> Option<(Secret<String>, Remember)> {
+        self.ask(self.prompter.secret(req)).await
+    }
+
+    async fn login(&self, req: LoginRequest) -> Option<LoginAnswer> {
+        self.ask(self.prompter.login(req)).await
+    }
+
+    async fn keyboard_interactive(&self, req: KbdIntRequest) -> Option<Vec<Secret<String>>> {
+        self.ask(self.prompter.keyboard_interactive(req)).await
+    }
+
+    async fn host_key(&self, req: HostKeyRequest) -> HostKeyDecision {
+        self.ask(self.prompter.host_key(req)).await
+    }
 }
 
 /// The caller may have stopped waiting, which is its own business.

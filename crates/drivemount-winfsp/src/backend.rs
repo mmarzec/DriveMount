@@ -169,6 +169,18 @@ impl<C: Connector> MountBackend for WinFspBackend<C> {
     fn health(&self) -> watch::Receiver<Health> {
         self.health.subscribe()
     }
+
+    /// The watcher probes at each rise of the suspect signal, and says `Lost` if the probe fails. A
+    /// drive being mounted, unmounted or reconnected is not checked: each of those finds out anyway.
+    async fn check_connection(&self) {
+        let Ok(mounted) = self.mounted.try_lock() else {
+            return;
+        };
+        if let Some(mounted) = mounted.as_ref() {
+            debug!(slug = %self.config.slug, "checking the connection");
+            mounted.visible.volume.mark_suspect();
+        }
+    }
 }
 
 /// A drive that Explorer knows about, until it is hidden or dropped. Everything here blocks, for

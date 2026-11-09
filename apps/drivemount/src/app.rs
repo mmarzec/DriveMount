@@ -4,6 +4,7 @@
 //! taken apart in the right order. `examples/connect.rs` runs the same thing on scratch files.
 
 mod engine;
+mod system;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -167,11 +168,13 @@ fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
         inbox,
         Arc::new(post_to_window),
     );
+    let system_events = system::start(runtime.handle(), &manager);
 
     ui.show().context("showing the window")?;
     slint::run_event_loop_until_quit().context("running the window")?;
 
     tracing::info!("quitting");
+    drop(system_events);
     if let Err(error) = ui.window().hide() {
         tracing::debug!(%error, "the window could not be hidden");
     }

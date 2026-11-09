@@ -67,6 +67,12 @@ pub trait MountBackend: Send + Sync + 'static {
     /// [`reconnect`](Self::reconnect) works.
     fn health(&self) -> watch::Receiver<Health>;
 
+    /// Asks the connection whether it still answers, as after Windows resumed or the network changed
+    /// (FR-REC-03). The answer comes as [`health`](Self::health): `Lost` if it did not. This returns
+    /// without waiting for it. The default does nothing, for a backend whose connection Windows looks
+    /// after (SMB).
+    async fn check_connection(&self) {}
+
     /// Takes what the user asked to remember during [`mount`](Self::mount), for the manager to store
     /// (NFR-SEC-01). Each secret is handed over once. A backend that logs in some other way has none.
     fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)> {

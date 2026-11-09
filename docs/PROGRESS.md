@@ -2,9 +2,35 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-02 Windows events
+
+**Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (1007 passing, 166 ignored). **Not run:** the ignored suites against S-03 and WinFsp, as nothing under the drive changed beyond `Volume::mark_suspect`; real sleep, a Wi-Fi switch and a sign-out, which are H-08.
+
+- **Added:**
+  - `drivemount_win::events`: `SystemEvents`, a hidden top-level window on a thread of its own, plus `NotifyIpInterfaceChange` and `NotifyUnicastIpAddressChange`. It reports `Suspending`, `Resumed` (`PBT_APMRESUMEAUTOMATIC`) and `NetworkChanged`, and calls `on_session_end` inside `WM_ENDSESSION` (wParam TRUE), which may block. `WM_QUERYENDSESSION` is always allowed, and sets a `ShutdownBlockReasonCreate` text ("Disconnecting network drives"), which Windows only shows if the drives take too long. Dropping it cancels the notifications and ends the thread.
+  - `MountBackend::check_connection`, with a default that does nothing. `WinFspBackend` raises the volume's suspect signal (`Volume::mark_suspect`), so the watcher of M2-01 probes and says `Lost` if nothing answers. `SftpDrive` passes it on.
+  - `MountManager::network_changed` and `Message::NetworkChanged`. *Mounted*: `check_connection`. *Reconnecting*, waiting: try at once, with the waits from 1 s again. *Reconnecting*, an attempt under way: give it up and start a new one, unless it is asking the user something (a `Watched` prompter counts open questions). Every other state ignores it. Sent with `try_send`: a full inbox means the profile is busy unmounting or saving.
+  - `drivemount_app::app::system`: starts `SystemEvents` after the engine and drops it after the event loop ends. Resume and network changes go through `settle`: act at the first, then once more after 1 s with no further change, or after 5 s of one that keeps changing. The session's end runs `manager.shutdown()` on the window's thread for at most 4 s, then quits the event loop. If the events cannot be followed, that is logged at Warn and the app carries on.
+- **For the owner to check (H-08):** with an SFTP drive mounted and the log at Info (`%LOCALAPPDATA%\DriveMount\logs`):
+  - **Sleep and resume:** look for `Windows woke from sleep`, then `the network changed, so retrying and checking the connections`, and either `the connection is lost` → `reconnected`, or nothing more if the connection survived. The drive should work within 5 s of the network being back.
+  - **Wi-Fi switch:** the same lines without the sleep. A drive that was *Reconnecting* logs `the network changed, so trying again`.
+  - **Sign-out with a file being copied to the drive:** `the Windows session is ending, so unmounting everything`, then `unmounted everything for the session's end` with `took` under 5 s. Sign-out should not stop at "apps are preventing sign-out". The part of the file written should be on the server.
+- **Choices the plan left open (now in the spec, §5.3 and §5.5):**
+  - **The hidden window has a thread of its own,** not the UI thread as the spike had it. The session's end has to be dealt with inside `WM_ENDSESSION`, as Windows may end the process once it returns, and blocking the UI thread for up to 4 s would freeze the window.
+  - **Address changes count too** (`NotifyUnicastIpAddressChange`), not only interfaces. An interface can come up before DHCP has given it an address, and a retry then fails and waits; the address arriving is what says the network is usable.
+  - **Unmounting starts at `WM_ENDSESSION`, not `WM_QUERYENDSESSION`,** as another app can still cancel the sign-out after the query.
+  - **An attempt under way is given up on a network change,** as a TCP connect started on the network that went can hang until its timeout.
+- **Worth knowing:**
+  - **The log is written by a background thread** (`tracing_appender::non_blocking`). If Windows ends the process right after `WM_ENDSESSION` returns, the last lines may not reach the file. If H-08 finds them missing, flushing from `end_session` is the fix.
+  - **A heredoc with Python in it broke the Bash tool here**; scripts went into files in the scratchpad instead.
+- **For later tasks:**
+  - **M2-06:** the "show window" message from a second instance (FR-APP-01) can go to this window: find it by its class, `DriveMountSystemEvents`, and add a message to `meaning` and a handler to `Handlers`.
+  - **M2-04:** nothing new to notify: resuming is not an event of FR-NOT.
+- **Next:** H-08 for M2-02 (it can wait for M2-03/04/06, which share it), then M2-03.
+
 ## 2026-11-09: M2-01 Reconnect
 
-**Status: done locally, not yet committed.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (995 passing, 166 ignored), twice. Against S-03: all of `drivemount-sftp`'s ignored tests (128, 4 new, the 1 GiB contract case included), `real_drive.rs` but its GiB test (9, 3 new), `mount_one.rs` (15) and `drivemount_exe.rs` (3). `drivemount-winfsp`: `lifecycle.rs` (37, 13 new, 3 of them over SFTP through a proxy), and `read_path.rs` and `write_path.rs` with `DRIVEMOUNT_TEST_SERVER=sftp` (51 and 102), as `SessionFs` is now under every drive. **Not run:** the Linux container check, `fsx` and `winfsp_tests`, the GiB test of `real_drive.rs`.
+**Status: done, committed (`77c3a67`).** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (995 passing, 166 ignored), twice. Against S-03: all of `drivemount-sftp`'s ignored tests (128, 4 new, the 1 GiB contract case included), `real_drive.rs` but its GiB test (9, 3 new), `mount_one.rs` (15) and `drivemount_exe.rs` (3). `drivemount-winfsp`: `lifecycle.rs` (37, 13 new, 3 of them over SFTP through a proxy), and `read_path.rs` and `write_path.rs` with `DRIVEMOUNT_TEST_SERVER=sftp` (51 and 102), as `SessionFs` is now under every drive. **Not run:** the Linux container check, `fsx` and `winfsp_tests`, the GiB test of `real_drive.rs`.
 
 - **Added:**
   - `drivemount_vfs::SessionFs`: the drive's file system across reconnects (spec §5.6, "Sessions across reconnects"). It sits under the deadline layer, `CachedFs<DeadlineFs<SessionFs>>`, so a wait for a session has the same limit as any call. Calls wait while there is no session, and safe ones go again after a `ConnectionLost`. Handles are its own, with a generation, and are opened again by path, never creating or truncating.

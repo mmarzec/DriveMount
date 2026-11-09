@@ -35,6 +35,7 @@ use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::spawn_blocking;
 use tokio_util::sync::CancellationToken;
+use tracing::debug;
 use uuid::Uuid;
 
 use self::actor::{Actor, Message};
@@ -369,6 +370,21 @@ impl MountManager {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .cancel();
+        }
+    }
+
+    /// Windows resumed from sleep or a network interface changed (FR-REC-03). Every *Reconnecting*
+    /// profile tries again at once, giving up an attempt that started before unless it is asking the
+    /// user something, and its waits start again from a second. Every *Mounted* one checks its
+    /// connection, so that one the change broke goes to *Reconnecting* without waiting for a call
+    /// to time out. The rest ignore it.
+    pub fn network_changed(&self) {
+        for (id, actor) in self.actors().iter() {
+            // A full inbox is a profile with commands waiting, which only happens while it unmounts
+            // or saves: it is busy with something else, and the next change reaches it.
+            if actor.inbox.try_send(Message::NetworkChanged).is_err() {
+                debug!(%id, "did not hear of the network change");
+            }
         }
     }
 

@@ -90,6 +90,11 @@ impl Volume {
         self.deadline.suspect()
     }
 
+    /// Raises the suspect signal without a call having timed out, so that the connection is probed.
+    pub fn mark_suspect(&self) {
+        self.deadline.mark_suspect();
+    }
+
     /// The sessions the drive goes to: a reconnect puts the next one here (FR-REC-05).
     #[must_use]
     pub fn sessions(&self) -> &Arc<SessionFs> {

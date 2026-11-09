@@ -36,6 +36,8 @@ enum NextMount {
     Fail(MountError),
     /// Waits until it is dropped, like a slow handshake or a dialog.
     Hang,
+    /// Asks about a host key, and then works.
+    Ask,
 }
 
 /// The backends' shared script and log. Without a script, a mount works.
@@ -62,6 +64,12 @@ struct Mock {
     next_reconnects: Mutex<VecDeque<NextMount>>,
     /// When each reconnect was asked for.
     reconnected_at: Mutex<Vec<Instant>>,
+    /// Calls of `MountBackend::check_connection`.
+    checks: AtomicUsize,
+    /// Whether a check finds the connection gone.
+    gone_on_check: AtomicBool,
+    /// Whether a question waits until it is dropped, like a dialog nobody answers.
+    questions_hang: AtomicBool,
 }
 
 impl Default for Mock {
@@ -84,6 +92,9 @@ impl Default for Mock {
             announced_first: AtomicBool::new(false),
             next_reconnects: Mutex::default(),
             reconnected_at: Mutex::default(),
+            checks: AtomicUsize::default(),
+            gone_on_check: AtomicBool::new(false),
+            questions_hang: AtomicBool::new(false),
         }
     }
 }
@@ -103,6 +114,10 @@ impl Mock {
 
     fn reconnect_times(&self) -> Vec<Instant> {
         self.reconnected_at.lock().unwrap().clone()
+    }
+
+    fn checks(&self) -> usize {
+        self.checks.load(Ordering::SeqCst)
     }
 
     fn mounted_on(&self) -> Vec<char> {
@@ -161,7 +176,8 @@ impl MountBackend for MockBackend {
                 self.0.hanging.notify_one();
                 std::future::pending::<()>().await;
             }
-            None => {}
+            // Mounts are not asked to.
+            Some(NextMount::Ask) | None => {}
         }
         self.0.letters.lock().unwrap().push(letter.as_char());
         Ok(())
@@ -175,7 +191,7 @@ impl MountBackend for MockBackend {
         }
     }
 
-    async fn reconnect(&self, _: &dyn Prompter) -> Result<(), MountError> {
+    async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError> {
         self.0.reconnected_at.lock().unwrap().push(Instant::now());
         let next = self.0.next_reconnects.lock().unwrap().pop_front();
         match next {
@@ -183,6 +199,15 @@ impl MountBackend for MockBackend {
             Some(NextMount::Hang) => {
                 self.0.hanging.notify_one();
                 std::future::pending::<()>().await;
+            }
+            Some(NextMount::Ask) => {
+                let request = HostKeyRequest {
+                    host: "example.com".to_owned(),
+                    port: 22,
+                    key_type: "ssh-ed25519".to_owned(),
+                    fingerprint: "SHA256:x".to_owned(),
+                };
+                prompter.host_key(request).await;
             }
             None => {}
         }
@@ -192,6 +217,13 @@ impl MountBackend for MockBackend {
 
     fn health(&self) -> watch::Receiver<Health> {
         self.0.health.subscribe()
+    }
+
+    async fn check_connection(&self) {
+        self.0.checks.fetch_add(1, Ordering::SeqCst);
+        if self.0.gone_on_check.load(Ordering::SeqCst) {
+            self.0.health.send_replace(lost());
+        }
     }
 
     fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)> {
@@ -242,8 +274,8 @@ impl BackendFactory for MockFactory {
     }
 }
 
-/// No test gets as far as asking: the mock backend does not.
-struct NoPrompts;
+/// Nobody answers: each question is cancelled at once, or, if the mock says so, hangs.
+struct NoPrompts(Arc<Mock>);
 
 #[async_trait]
 impl Prompter for NoPrompts {
@@ -257,6 +289,10 @@ impl Prompter for NoPrompts {
         None
     }
     async fn host_key(&self, _: HostKeyRequest) -> HostKeyDecision {
+        if self.0.questions_hang.load(Ordering::SeqCst) {
+            self.0.hanging.notify_one();
+            std::future::pending::<()>().await;
+        }
         HostKeyDecision::Reject
     }
 }
@@ -380,7 +416,7 @@ fn world_from(folder: TempDir) -> World {
         factory: Arc::new(MockFactory(Arc::clone(&mock))),
         secrets: Arc::clone(&secrets) as _,
         letters: Arc::clone(&letters) as _,
-        prompter: Arc::new(NoPrompts),
+        prompter: Arc::new(NoPrompts(Arc::clone(&mock))),
     });
     let events = manager.subscribe();
     *mock.watcher.lock().unwrap() = Some(manager.subscribe());
@@ -1070,6 +1106,120 @@ async fn unmount_during_an_attempt_drops_it_and_unmounts() {
     world.unmounted(id).await;
     assert_eq!(world.mock.unmounts(), 1);
     assert_eq!(world.mock.alive(), 0);
+}
+
+// Windows resumed or the network changed (FR-REC-03).
+
+#[tokio::test]
+async fn a_network_change_checks_a_mounted_connection_and_nothing_else() {
+    let (first, second) = (named("First"), named("Second"));
+    let (first_id, second_id) = (first.id, second.id);
+    let mut world = world(vec![first, second]);
+    world.mounted(first_id).await;
+
+    world.manager.network_changed();
+
+    world.no_more_events(first_id).await;
+    world.settled(second_id).await;
+    assert_eq!(world.mock.checks(), 1);
+    assert_eq!(world.state(first_id), MountState::Mounted);
+    assert_eq!(world.state(second_id), MountState::Disconnected);
+}
+
+#[tokio::test]
+async fn a_check_that_finds_the_connection_gone_reconnects() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    let mounted = world.mounted(id).await;
+    world.mock.gone_on_check.store(true, Ordering::SeqCst);
+
+    world.manager.network_changed();
+
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Reconnecting);
+    assert_eq!(event.detail, mounted.detail);
+    assert_eq!(world.next_state().await, MountState::Mounted);
+    assert_eq!(world.mock.reconnects(), 1);
+}
+
+#[tokio::test]
+async fn a_network_change_while_connecting_is_ignored() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.hanging(id).await;
+
+    world.manager.network_changed();
+
+    world.no_more_events(id).await;
+    assert_eq!(world.state(id), MountState::Connecting);
+    assert_eq!(world.mock.checks(), 0);
+}
+
+/// The waits run a hundred times faster here, so the seventh is 600 ms.
+#[tokio::test]
+async fn a_network_change_while_waiting_retries_at_once_with_the_waits_from_the_start() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    for _ in 0..8 {
+        world
+            .mock
+            .script_reconnect(NextMount::Fail(MountError::Connect(
+                ConnectError::ConnectionLost,
+            )));
+    }
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert!(eventually(|| world.mock.reconnects() >= 7).await);
+    world.manager.network_changed();
+    assert_eq!(world.next_state().await, MountState::Mounted);
+
+    let times = world.mock.reconnect_times();
+    assert_eq!(times.len(), 9);
+    let soon = Duration::from_millis(300);
+    assert!(times[7] - times[6] < soon, "{:?}", times[7] - times[6]);
+    assert!(times[8] - times[7] < soon, "{:?}", times[8] - times[7]);
+}
+
+#[tokio::test]
+async fn a_network_change_gives_up_an_attempt_under_way_for_a_new_one() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world.mock.script_reconnect(NextMount::Hang);
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+    world.manager.network_changed();
+
+    assert_eq!(world.next_state().await, MountState::Mounted);
+    assert_eq!(world.mock.reconnects(), 2);
+    assert_eq!(world.mock.unmounts(), 0);
+}
+
+#[tokio::test]
+async fn a_network_change_leaves_an_attempt_that_is_asking_the_user() {
+    let profile = named("Production");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mounted(id).await;
+    world.mock.questions_hang.store(true, Ordering::SeqCst);
+    world.mock.script_reconnect(NextMount::Ask);
+
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.wait_until_hanging().await;
+    world.manager.network_changed();
+
+    world.no_more_events(id).await;
+    assert_eq!(world.mock.reconnects(), 1);
+    world.unmounted(id).await;
 }
 
 #[tokio::test]
@@ -2389,7 +2539,7 @@ async fn remember_is_only_ticked_for_a_secret_that_was_stored() {
         factory: Arc::new(MockFactory(Arc::clone(&mock))),
         secrets: Arc::clone(&secrets) as _,
         letters: Arc::new(Letters::default()),
-        prompter: Arc::new(NoPrompts),
+        prompter: Arc::new(NoPrompts(Arc::clone(&mock))),
     });
     let mut events = manager.subscribe();
 

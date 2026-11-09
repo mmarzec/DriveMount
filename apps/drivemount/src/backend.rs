@@ -265,6 +265,10 @@ mod windows {
             self.drive.health()
         }
 
+        async fn check_connection(&self) {
+            self.drive.check_connection().await;
+        }
+
         fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)> {
             let own = self
                 .own_slot
