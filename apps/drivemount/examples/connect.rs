@@ -6,7 +6,7 @@
 //! drives. Not shipped.
 //!
 //! ```text
-//! cargo run -p drivemount --example connect -- [--fresh]
+//! cargo run -p drivemount --example connect -- [--fresh] [--tray]
 //! ```
 //!
 //! `--fresh` starts with no connections and no known hosts. With the S-03 server running
@@ -43,5 +43,8 @@ fn main() -> anyhow::Result<()> {
         }),
         // Its own too, so that trying *Start with Windows* here leaves the app's value alone.
         run_value: Some("DriveMount.Preview".to_owned()),
+        // Its own too, so that it runs beside the app, once. `--tray` tries a start in the tray.
+        instance: Some(r"Local\DriveMount.Preview".to_owned()),
+        start_in_tray: env::args().any(|argument| argument == "--tray"),
     })
 }

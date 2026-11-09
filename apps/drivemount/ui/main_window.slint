@@ -118,9 +118,12 @@ export component MainWindow inherits Window {
     in property <string> read-only-text;
     in property <string> settings-text;
     in property <string> failure-text;
+    // A crash report from the last run (FR-APP-07), with Open logs folder.
+    in property <string> crash-text;
 
-    // Asking first.
+    // Asking first: the question, and the button that says yes.
     in property <string> question;
+    in property <string> question-yes: @tr("Delete");
 
     // The profile dialog.
     in property <bool> dialog-open;
@@ -144,6 +147,7 @@ export component MainWindow inherits Window {
     callback unmount-all-pressed();
     callback settings-pressed();
     callback download-winfsp-pressed();
+    callback crash-logs-pressed();
 
     // A click on a row, which opens its page.
     callback row-pressed(index: int);
@@ -434,6 +438,15 @@ export component MainWindow inherits Window {
                 text: root.failure-text;
             }
 
+            if root.crash-text != "": Banner {
+                text: root.crash-text;
+                button-text: @tr("Open logs folder");
+                interactive: root.interactive;
+                clicked => {
+                    root.crash-logs-pressed();
+                }
+            }
+
             Rectangle {
                 vertical-stretch: 1;
 
@@ -685,7 +698,7 @@ export component MainWindow inherits Window {
                         spacing: 8px;
 
                         AppButton {
-                            text: @tr("Delete");
+                            text: root.question-yes;
                             danger: true;
                             enabled: !root.prompt-open;
                             clicked => {

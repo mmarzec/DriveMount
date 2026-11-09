@@ -2,6 +2,33 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-06 Lifecycle
+
+**Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks pass, as do the workspace's non-ignored tests (1074 passing, 173 ignored). On this desktop, all 7 ignored tests of `tests/drivemount_exe.rs` pass, the 3 new ones and the 2 against S-03 and WinFsp included. The release `drivemount.exe` is 15.95 MB against the limit of 30 MB. **Not run:** a real sign-in with `--tray`, a panic in the release exe.
+
+- **Added:**
+  - `drivemount_win::instance` (FR-APP-01): `claim(name)` → `Claim::First(Instance)` or `Running`; `Instance::listen(on_show)` → `ShowRequests`, a message-only window of class `DriveMountInstance` titled with the name, on a thread of its own; `ask_to_show(name, patience)` finds it, calls `AllowSetForegroundWindow` for its process, and posts the registered `DriveMount.ShowWindow`. `APP_INSTANCE = Local\DriveMount`. Needs the `Win32_System_Threading` feature.
+  - `drivemount_app::crash` (FR-APP-07): `install(logs)` (panic hook: report, Error line, then the hook before), `take_unnoticed(logs)`, with `last-crash-noticed` beside the reports. Our own UTC date code, as there is no date crate.
+  - `app::run`: claims the instance before anything, even the log, and a second start hands over and returns `Ok`, writing nothing. Then the crash hook, then as before; a report left by the last run is logged at Warn and shown. `Setup` has `instance: Option<String>` and `start_in_tray: bool`; `main` sets the latter from `--tray`.
+  - The window: `MainUi::bring_to_front`, `has_tray`, `set_crash_report`. The question has `question-yes` for its button (*Delete* or *Unmount and quit*), and `Inner::asking` (`Asking::Delete(key)` or `Quit`) replaces `deleting`. × that does not hide, and the tray's *Quit*, go through `Inner::quit`. A window first shown by `bring_to_front` is put where it was remembered, which `--tray` needed.
+  - Texts: `quit-question` (plural through `@tr`'s `|`), `quit-yes`, `delete-yes`, `crashed`.
+- **Choices the plan left open (now in spec §5.3 and §6.4):**
+  - **The "show" message has its own message-only window, not `DriveMountSystemEvents`** (as M2-02's note suggested): found by class *and* title, so the preview (`Local\DriveMount.Preview`) and tests never reach the app, and it needs no broadcasts.
+  - **What counts as "mounts present":** *Connecting*, *Mounted* and *Reconnecting*, the profiles *Unmount all* takes. The question brings the window up when it comes from the tray.
+  - **`--tray` waits for the icon:** at sign-in Explorer may not be up, so the window stays hidden while the tray retries, and shows after 70 s if the icon never got in.
+  - **A crash is told about once,** at the start after it, as a banner in the window; a start in the tray shows it when the window is next opened. No toast.
+  - **A second start logs nothing,** as the log is the first one's and two writers would share its rolling. The first logs "the app was started again, so showing the window".
+  - **The tests of the real exe need their own instance name:** a debug build reads `DRIVEMOUNT_TEST_INSTANCE`. A release build ignores it.
+- **Fixed in passing:** spec §6.4's log path had a form-feed byte where `\d` was, from an earlier edit script.
+- **For the owner to check (H-08):** the release `drivemount.exe` (or `cargo run -p drivemount --example connect`, whose instance is its own):
+  - **Second start:** with the app in the tray, start it again from Explorer: no second icon, the window comes to the front, not just flashing in the taskbar.
+  - **Quit question:** mount a drive; tray → *Quit*: "Unmount 1 drive and quit?". *Cancel* keeps it; *Unmount and quit* leaves no drive letter and no process. With *Close button minimizes to tray* off, × asks the same. With nothing mounted, both quit at once.
+  - **Start with Windows:** tick it, sign out and in: the icon appears, no window, *Mount on start* profiles mount. The log has "started in the tray" or "the icon is in the tray, so the window stays hidden".
+  - **Crash notice:** put any `crash-2026-01-01T000000.000Z.txt` into `%LOCALAPPDATA%\DriveMount\logs` and start: the banner names it; *Open logs folder* opens the folder; the next start says nothing.
+- **For later tasks:**
+  - **M2-10:** the uninstaller may remove `%LOCALAPPDATA%\DriveMount\logs\last-crash-noticed` with the logs. An upgrade must close a running app first (its mutex is `Local\DriveMount`); quitting with drives up asks the user.
+- **Next:** H-08 for M2-02 to M2-06, then M2-07.
+
 ## 2026-11-09: M2-05 Settings page
 
 **Status: done locally, not yet committed; the owner's look at it (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks pass, as do the workspace's non-ignored tests (1060 passing, 170 ignored). **Not run:** the page on a real desktop (H-08).

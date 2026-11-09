@@ -371,7 +371,7 @@ impl Engine {
                     }
                 });
             }
-            // M2-06 asks first while something is mounted.
+            // The window has asked, if drives were up (FR-APP-04). `app::run` unmounts them.
             UiCommand::Quit => {
                 to_ui(Box::new(|_| {
                     if let Err(error) = slint::quit_event_loop() {

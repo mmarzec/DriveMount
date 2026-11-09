@@ -203,13 +203,24 @@ impl ToastSink for Toasts {
     }
 }
 
+/// What a question on screen is about.
+#[derive(Debug, Clone, PartialEq)]
+enum Asking {
+    /// Deleting this (FR-PROF-07).
+    Delete(Key),
+    /// Quitting with drives up (FR-APP-04).
+    Quit,
+}
+
 struct Inner {
     window: slint::Weak<MainWindow>,
     commands: Box<dyn Fn(UiCommand)>,
     entries: Rc<VecModel<ListEntry>>,
     list: RefCell<ListState>,
     /// What the question on screen is about.
-    deleting: RefCell<Option<Key>>,
+    asking: RefCell<Option<Asking>>,
+    /// Whether the window has been put where it was, which its first showing does.
+    placed: Cell<bool>,
     /// What the connection page is showing, while it is up.
     page: RefCell<Option<Key>>,
     /// Whether the settings page is up. It and the connection page are never up together.
@@ -289,7 +300,8 @@ impl MainUi {
             commands: Box::new(commands),
             entries,
             list: RefCell::new(ListState::new()),
-            deleting: RefCell::new(None),
+            asking: RefCell::new(None),
+            placed: Cell::new(false),
             page: RefCell::new(None),
             settings_open: Cell::new(false),
             winfsp: Cell::new(WinFspStatus::Missing),
@@ -319,6 +331,27 @@ impl MainUi {
     pub fn show(&self) -> Result<(), PlatformError> {
         self.inner.restore_placement();
         self.window.show()
+    }
+
+    /// Shows the window in front, wherever it was: hidden, minimized or behind others. Another start
+    /// of the app asks for this (FR-APP-01).
+    pub fn bring_to_front(&self) {
+        self.inner.bring_to_front();
+    }
+
+    /// Whether the icon is in the tray, so that the window can be hidden and got back.
+    #[must_use]
+    pub fn has_tray(&self) -> bool {
+        self.inner.has_tray()
+    }
+
+    /// The crash report the last run left (FR-APP-07), or none. It shows in a banner until *Open
+    /// logs folder* is pressed.
+    pub fn set_crash_report(&self, report: Option<&str>) {
+        let text = report.map_or_else(SharedString::new, |report| {
+            self.window.global::<Texts>().invoke_crashed(report.into())
+        });
+        self.window.set_crash_text(text);
     }
 
     /// The window itself.
@@ -510,6 +543,12 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_unmount_all_pressed(on(Inner::unmount_all));
     window.on_settings_pressed(on(Inner::open_settings));
     window.on_download_winfsp_pressed(on(|inner| inner.send(UiCommand::DownloadWinFsp)));
+    window.on_crash_logs_pressed(on(|inner| {
+        if let Some(window) = inner.window.upgrade() {
+            window.set_crash_text(SharedString::new());
+        }
+        inner.send(UiCommand::OpenLogsFolder);
+    }));
     window.on_hide_pressed(on(Inner::hide));
 
     window.on_row_pressed(on_row(Inner::open_page_at));
@@ -571,7 +610,7 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
         if handler.list.borrow().close_to_tray() && handler.has_tray() {
             CloseRequestResponse::HideWindow
         } else {
-            handler.send(UiCommand::Quit);
+            handler.quit();
             CloseRequestResponse::KeepWindowShown
         }
     });
@@ -618,6 +657,25 @@ impl Inner {
         }
     }
 
+    /// Quits, asking first if drives are up (FR-APP-04). Those connecting count, as they are about
+    /// to be drives.
+    fn quit(&self) {
+        let drives = self.list.borrow().unmountable().len();
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if drives == 0 {
+            self.send(UiCommand::Quit);
+            return;
+        }
+        // From the tray, the window may be hidden.
+        self.bring_to_front();
+        let texts = window.global::<Texts>();
+        *self.asking.borrow_mut() = Some(Asking::Quit);
+        window.set_question_yes(texts.invoke_quit_yes());
+        window.set_question(texts.invoke_quit_question(i32::try_from(drives).unwrap_or(i32::MAX)));
+    }
+
     fn has_tray(&self) -> bool {
         self.tray
             .borrow()
@@ -659,7 +717,7 @@ impl Inner {
             }
             TrayChoice::UnmountAll => self.unmount_all(),
             TrayChoice::Open => self.bring_to_front(),
-            TrayChoice::Quit => self.send(UiCommand::Quit),
+            TrayChoice::Quit => self.quit(),
         }
     }
 
@@ -922,18 +980,27 @@ impl Inner {
                 texts.invoke_delete_unreadable_question(name)
             }
         };
-        *self.deleting.borrow_mut() = Some(item.key.clone());
+        *self.asking.borrow_mut() = Some(Asking::Delete(item.key.clone()));
+        window.set_question_yes(texts.invoke_delete_yes());
         window.set_question(question);
     }
 
     fn answer(&self, yes: bool) {
-        let key = self.deleting.borrow_mut().take();
+        let asking = self.asking.borrow_mut().take();
         if let Some(window) = self.window.upgrade() {
             window.set_question(SharedString::new());
         }
         if !yes {
             return;
         }
+        let key = match asking {
+            Some(Asking::Delete(key)) => Some(key),
+            Some(Asking::Quit) => {
+                self.send(UiCommand::Quit);
+                return;
+            }
+            None => None,
+        };
         // An unreadable entry is known by its place, which the next one takes once it is gone.
         if self.page.borrow().is_some() && *self.page.borrow() == key {
             *self.page.borrow_mut() = None;
@@ -991,6 +1058,7 @@ impl Inner {
         let Some(window) = self.window.upgrade() else {
             return;
         };
+        self.placed.set(true);
         let window = window.window();
         let remembered = self.remembered.borrow();
         if let Some(place) = remembered.placement {

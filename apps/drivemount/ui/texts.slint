@@ -277,6 +277,22 @@ export global Texts {
     public pure function delete-mounted-question(name: string) -> string {
         return @tr("Unmount and delete \"{}\"? Its saved password is removed too.", name);
     }
+    public pure function delete-yes() -> string {
+        return @tr("Delete");
+    }
+
+    // Quitting with drives up (FR-APP-04).
+    public pure function quit-question(drives: int) -> string {
+        return @tr("Unmount {n} drive and quit?" | "Unmount {n} drives and quit?" % drives);
+    }
+    public pure function quit-yes() -> string {
+        return @tr("Unmount and quit");
+    }
+
+    // The last run ended in a crash (FR-APP-07).
+    public pure function crashed(report: string) -> string {
+        return @tr("DriveMount closed unexpectedly last time. A crash report was saved as {} in the logs folder.", report);
+    }
     public pure function delete-unreadable-question(name: string) -> string {
         return @tr("Remove \"{}\" from the configuration file? It could not be read, and it cannot be brought back.", name);
     }

@@ -7,28 +7,29 @@ mod engine;
 mod system;
 
 use std::cell::RefCell;
-use std::io;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use std::{env, io, thread};
 
 use anyhow::{Context, Result};
 use drivemount_core::config::{ConfigStore, LogLevel};
 use drivemount_core::manager::{ManagerParts, MountManager};
 use drivemount_vfs::SecretStore;
 use drivemount_win::credentials::CredentialStore;
+use drivemount_win::instance::{self, Claim, Instance, ShowRequests};
 use drivemount_win::startup;
 use drivemount_win::toast::{self, AppId, Toasts};
 use drivemount_win::tray::{Tray, TrayContent};
-use slint::ComponentHandle;
+use slint::{ComponentHandle, Timer, TimerMode};
 use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use self::engine::{StartWithWindows, Surroundings, UiAction};
 use crate::backend::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
+use crate::crash;
 use crate::logging::{self, LogGuard, LogLevelControl};
 use crate::ui::{MainUi, TrayIcon};
 
@@ -39,6 +40,15 @@ const MOST_WORKERS: usize = 4;
 const UNMOUNTING_AT_QUIT: Duration = Duration::from_secs(10);
 /// How long quitting waits for what is left on the runtime, such as a connection being tested.
 const WINDING_DOWN: Duration = Duration::from_secs(1);
+/// How long a second start looks for the first one's window, which may be starting too.
+const HANDING_OVER: Duration = Duration::from_secs(5);
+/// How long a start in the tray waits for the icon to get in before it shows the window. The tray
+/// tries for a minute, as Explorer may still be starting at sign-in.
+const WAITING_FOR_THE_TRAY: Duration = Duration::from_secs(70);
+const LOOKING_AT_THE_TRAY: Duration = Duration::from_millis(500);
+/// In a debug build, a single-instance name of the caller's own, so that tests of the real exe can
+/// run beside each other and beside the user's own app.
+const TEST_INSTANCE_VARIABLE: &str = "DRIVEMOUNT_TEST_INSTANCE";
 
 /// The AppUserModelID toasts come from. An installer's Start-menu shortcut should carry the same one
 /// (M2-10), and an uninstaller should remove the keys of [`toast::register`].
@@ -64,6 +74,10 @@ pub struct Setup {
     /// The name of the value under the Run key for *Start with Windows* (FR-APP-03), or none, which
     /// makes the setting change only the file.
     pub run_value: Option<String>,
+    /// The single-instance name (FR-APP-01), or none, to allow any number.
+    pub instance: Option<String>,
+    /// Start with the window hidden, once the icon is in the tray: `--tray` (FR-APP-03).
+    pub start_in_tray: bool,
 }
 
 impl Setup {
@@ -81,6 +95,8 @@ impl Setup {
             secrets: Arc::new(CredentialStore),
             toasts: Some(Self::toasts_from()),
             run_value: Some(startup::RUN_VALUE.to_owned()),
+            instance: Some(instance_name()),
+            start_in_tray: false,
         })
     }
 
@@ -93,6 +109,15 @@ impl Setup {
             activator: TOAST_ACTIVATOR,
         }
     }
+}
+
+fn instance_name() -> String {
+    if cfg!(debug_assertions)
+        && let Some(name) = env::var_os(TEST_INSTANCE_VARIABLE).and_then(|n| n.into_string().ok())
+    {
+        return name;
+    }
+    instance::APP_INSTANCE.to_owned()
 }
 
 thread_local! {
@@ -115,7 +140,8 @@ fn post_to_window(action: UiAction) {
 }
 
 /// Puts the icon in the tray (FR-TRAY-01). Without it the window cannot be hidden, so it stays up.
-fn start_tray(ui: &MainUi) {
+/// Returns whether there is a tray, which may still be trying to get the icon in.
+fn start_tray(ui: &MainUi) -> bool {
     // Filled in from the list at once.
     let empty = TrayContent {
         icon: TrayIcon::Idle.file(),
@@ -133,9 +159,71 @@ fn start_tray(ui: &MainUi) {
                 );
             }
             ui.set_tray(Some(Box::new(tray)));
+            true
         }
-        Err(error) => tracing::warn!(%error, "there is no tray icon"),
+        Err(error) => {
+            tracing::warn!(%error, "there is no tray icon");
+            false
+        }
     }
+}
+
+/// Hears other starts of the app asking for the window (FR-APP-01).
+fn listen_for_other_starts(instance: &Instance) -> Option<ShowRequests> {
+    let on_show = Box::new(|| {
+        post_to_window(Box::new(|ui| {
+            tracing::info!("the app was started again, so showing the window");
+            ui.bring_to_front();
+        }));
+    });
+    instance
+        .listen(on_show)
+        .inspect_err(|error| {
+            tracing::warn!(%error, "another start of the app cannot bring up this window");
+        })
+        .ok()
+}
+
+/// Shows the window, unless started in the tray (FR-APP-03). Then it stays hidden once the icon is
+/// in, and is shown if the icon does not get in in time, as there would be no way to it. The timer
+/// that waits is returned, to keep it going.
+fn show_at_start(ui: &Rc<MainUi>, in_tray: bool, tray_trying: bool) -> Result<Option<Rc<Timer>>> {
+    if !in_tray || !tray_trying {
+        if in_tray {
+            tracing::warn!("started for the tray, but there is none, so showing the window");
+        }
+        ui.show().context("showing the window")?;
+        return Ok(None);
+    }
+    if ui.has_tray() {
+        tracing::info!("started in the tray");
+        return Ok(None);
+    }
+    tracing::info!("started for the tray, so waiting for the icon to get in");
+    let timer = Rc::new(Timer::default());
+    let this = Rc::downgrade(&timer);
+    let ui: Weak<MainUi> = Rc::downgrade(ui);
+    let started = Instant::now();
+    timer.start(TimerMode::Repeated, LOOKING_AT_THE_TRAY, move || {
+        let Some(ui) = ui.upgrade() else {
+            return;
+        };
+        if ui.has_tray() {
+            tracing::info!("the icon is in the tray, so the window stays hidden");
+        } else if started.elapsed() >= WAITING_FOR_THE_TRAY {
+            tracing::warn!("the icon did not get into the tray, so showing the window");
+            if !ui.is_window_up() {
+                ui.bring_to_front();
+            }
+        } else {
+            return;
+        }
+        // Done: nothing more to wake up for (NFR-PERF-05).
+        if let Some(timer) = this.upgrade() {
+            timer.stop();
+        }
+    });
+    Ok(Some(timer))
 }
 
 /// Makes toasts show (spec §9), and clicks on them reach the window, from Action Center too
@@ -195,11 +283,28 @@ fn start_logging(setup: &Setup, level: LogLevel) -> Option<LogGuard> {
 /// # Errors
 /// There is no way to run the window or the runtime. This also goes to the log.
 pub fn run(setup: Setup) -> Result<()> {
+    // Before anything, so that a second start touches neither the files nor the log.
+    let claimed = setup.instance.as_deref().map(instance::claim);
+    let (instance, not_claimed) = match claimed {
+        None => (None, None),
+        Some(Ok(Claim::First(instance))) => (Some(instance), None),
+        Some(Ok(Claim::Running)) => {
+            return hand_over(setup.instance.as_deref().unwrap_or_default());
+        }
+        // One app is better than none.
+        Some(Err(error)) => (None, Some(error)),
+    };
+    if let Some(logs) = &setup.logs {
+        crash::install(logs.clone());
+    }
     // First, as it says what to log. It logs nothing itself: what it found is reported below.
     let store = ConfigStore::open(&setup.config);
     let log = start_logging(&setup, store.config().settings.log_level);
     let log_level = log.as_ref().map(LogGuard::control).unwrap_or_default();
-    let result = run_logged(setup, store, log_level);
+    if let Some(error) = not_claimed {
+        tracing::warn!(%error, "could not tell whether the app is running already");
+    }
+    let result = run_logged(setup, store, log_level, instance.as_ref());
     if let Err(error) = &result {
         tracing::error!("{error:#}");
     }
@@ -207,7 +312,18 @@ pub fn run(setup: Setup) -> Result<()> {
     result
 }
 
-fn run_logged(setup: Setup, store: ConfigStore, log_level: LogLevelControl) -> Result<()> {
+/// The app is running already: its window comes up instead (FR-APP-01), and this start ends. Nothing
+/// is logged, as the log is the other one's.
+fn hand_over(name: &str) -> Result<()> {
+    instance::ask_to_show(name, HANDING_OVER).context("asking the running app to show its window")
+}
+
+fn run_logged(
+    setup: Setup,
+    store: ConfigStore,
+    log_level: LogLevelControl,
+    instance: Option<&Instance>,
+) -> Result<()> {
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         config = %setup.config.display(),
@@ -253,6 +369,10 @@ fn run_logged(setup: Setup, store: ConfigStore, log_level: LogLevelControl) -> R
     tracing::info!(?winfsp, "looked for WinFsp");
     ui.set_winfsp(winfsp);
     ui.set_has_logs(setup.logs.is_some());
+    if let Some(report) = setup.logs.as_deref().and_then(crash::take_unnoticed) {
+        tracing::warn!(%report, "the last run crashed");
+        ui.set_crash_report(Some(&report));
+    }
 
     let manager = {
         let _inside = runtime.enter();
@@ -283,15 +403,19 @@ fn run_logged(setup: Setup, store: ConfigStore, log_level: LogLevelControl) -> R
         },
     );
     let system_events = system::start(runtime.handle(), &manager);
-    start_tray(&ui);
+    let tray_trying = start_tray(&ui);
     if let Some(app) = &setup.toasts {
         start_toasts(&ui, app);
     }
+    let other_starts = instance.and_then(listen_for_other_starts);
 
-    ui.show().context("showing the window")?;
+    let waiting_for_the_tray = show_at_start(&ui, setup.start_in_tray, tray_trying)?;
     slint::run_event_loop_until_quit().context("running the window")?;
 
     tracing::info!("quitting");
+    drop(waiting_for_the_tray);
+    // A start from now on finds this one still running, and gives up after a while.
+    drop(other_starts);
     ui.set_tray(None);
     ui.set_toasts(None);
     drop(system_events);

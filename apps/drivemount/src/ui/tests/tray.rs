@@ -19,7 +19,7 @@ use crate::ui::{TrayIcon, TraySink, UiCommand};
 
 /// What the window last showed in the tray.
 #[derive(Clone, Default)]
-struct Recorded {
+pub(super) struct Recorded {
     shown: Rc<RefCell<Option<TrayContent>>>,
     in_tray: Rc<Cell<bool>>,
 }
@@ -54,7 +54,7 @@ impl Recorded {
             .collect()
     }
 
-    fn item(&self, text: &str) -> MenuItem {
+    pub(super) fn item(&self, text: &str) -> MenuItem {
         self.items()
             .into_iter()
             .find(|item| item.text == text)
@@ -62,7 +62,7 @@ impl Recorded {
     }
 }
 
-fn with_tray(fixture: &Fixture) -> Recorded {
+pub(super) fn with_tray(fixture: &Fixture) -> Recorded {
     let tray = Recorded::default();
     tray.in_tray.set(true);
     fixture.ui.set_tray(Some(Box::new(tray.clone())));
@@ -250,6 +250,9 @@ fn unmount_all_open_and_quit_do_what_they_say() {
     fixture
         .ui
         .tray_event(TrayEvent::Chosen(tray.item("Quit").id));
+    // Drives are up, so it asks first (FR-APP-04).
+    assert!(fixture.take_sent().is_empty());
+    fixture.press("Unmount and quit");
     assert_eq!(fixture.take_sent(), [UiCommand::Quit]);
 
     fixture.ui.tray_event(TrayEvent::Chosen(9_999));

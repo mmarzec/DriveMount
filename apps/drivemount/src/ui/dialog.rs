@@ -686,6 +686,10 @@ impl Inner {
 
     /// Spec §7.4.1: the user has to see that something waits for them. Also the tray's way back.
     pub(super) fn bring_to_front(&self) {
+        // Started in the tray (FR-APP-03), it has not been put where it was yet.
+        if !self.placed.get() {
+            self.restore_placement();
+        }
         let Some(window) = self.window.upgrade() else {
             return;
         };

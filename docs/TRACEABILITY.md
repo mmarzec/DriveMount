@@ -98,13 +98,13 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-APP-01 | M1-11, M2-02, M2-06 | – | – |
-| FR-APP-02 | M1-11, M2-02, M2-03, M2-06 | `closing_hides_to_the_tray_only_when_set_to_and_there_is_one` (`ui/tests/tray.rs`); on the real binary, `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`, ignored). The quit question: M2-06 | – |
-| FR-APP-03 | M1-11, M2-02, M2-05, M2-06 | The Run value and its command: `enabling_writes_the_value_and_disabling_removes_it`, `the_command_quotes_the_path_and_starts_in_the_tray` (`drivemount-win` `startup`). `--tray` itself: M2-06 | – |
-| FR-APP-04 | M1-11, M2-02, M2-06 | – | – |
+| FR-APP-01 | M1-11, M2-02, M2-06 | The mutex and the hand-over: `the_second_claim_finds_the_first_until_it_goes`, `asking_reaches_the_first_and_only_it`, `with_nobody_listening_asking_gives_up`, `once_stopped_nobody_hears` (`drivemount-win` `instance`); the window coming up: `another_start_brings_the_window_up` (`ui/tests/lifecycle.rs`); on the real binary, `a_second_start_brings_up_the_first_and_ends` (`tests/drivemount_exe.rs`, ignored) | – |
+| FR-APP-02 | M1-11, M2-02, M2-03, M2-06 | `closing_hides_to_the_tray_only_when_set_to_and_there_is_one` (`ui/tests/tray.rs`); on the real binary, `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`, ignored). The quit question: FR-APP-04 | – |
+| FR-APP-03 | M1-11, M2-02, M2-05, M2-06 | The Run value and its command: `enabling_writes_the_value_and_disabling_removes_it`, `the_command_quotes_the_path_and_starts_in_the_tray` (`drivemount-win` `startup`). `--tray` itself, on the real binary: `with_tray_it_starts_with_no_window` (`tests/drivemount_exe.rs`, ignored). At a real sign-in: H-08 | – |
+| FR-APP-04 | M1-11, M2-02, M2-06 | `quitting_with_drives_up_asks_first`, `quitting_with_nothing_up_asks_nothing`, `quitting_from_the_tray_brings_the_question_up` (`ui/tests/lifecycle.rs`); unmounting at quit, on the real binary: `a_mount_from_the_window_asks_about_the_key_and_closing_takes_the_drive_away` (`tests/drivemount_exe.rs`, ignored, needs S-03 and WinFsp) | – |
 | FR-APP-05 | M1-11, M2-02, M2-06 | The window hearing a sent `WM_ENDSESSION`: `the_hidden_window_hears_resume_and_session_end_and_stays_hidden` (`drivemount-win` `events::tests`). Unmounting everything: `MountManager::shutdown`'s tests. A real sign-out: H-08 | – |
 | FR-APP-06 | M1-11, M1-16, M2-02, M2-06 | Detection: `drivemount-win` `winfsp::tests`. Banner and disabled buttons: `without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not`, `without_winfsp_only_starting_a_mount_is_off`. Opening the page: `only_a_secure_web_page_is_opened`, connected in `drivemount_app::app::engine` | – |
-| FR-APP-07 | M1-11, M2-02, M2-06 | – | – |
+| FR-APP-07 | M1-11, M2-02, M2-06 | The report: `a_panic_writes_a_report`, `names_are_the_utc_time_and_sort_by_it`, `a_new_report_is_told_about_once` (`drivemount_app::crash`); the banner: `a_crash_report_is_noticed_until_the_logs_are_opened` (`ui/tests/lifecycle.rs`); on the real binary, `a_crash_report_from_the_last_run_is_told_about_once` (`tests/drivemount_exe.rs`, ignored). A panic in the release exe, which aborts after the hook: not tried, as nothing there forces one | – |
 
 ## Settings
 

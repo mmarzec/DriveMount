@@ -13,6 +13,7 @@
 pub mod credentials;
 pub mod drives;
 pub mod events;
+pub mod instance;
 mod registry;
 pub mod shell;
 pub mod startup;
