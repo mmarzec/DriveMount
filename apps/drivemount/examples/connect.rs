@@ -22,6 +22,7 @@ fn main() -> anyhow::Result<()> {
 
     use drivemount_app::app::{Setup, run};
     use drivemount_vfs::MemorySecretStore;
+    use drivemount_win::toast::AppId;
 
     let folder = env::temp_dir().join("drivemount-connect-preview");
     if env::args().any(|argument| argument == "--fresh") && folder.exists() {
@@ -34,5 +35,11 @@ fn main() -> anyhow::Result<()> {
         window_state: Some(folder.join("ui-state.toml")),
         logs: Some(folder.join("logs")),
         secrets: Arc::new(MemorySecretStore::new()),
+        // Its own, so that a click on its toasts after it has gone starts it, not the app.
+        toasts: Some(AppId {
+            aumid: "DriveMount.Preview".to_owned(),
+            display_name: "DriveMount (preview)".to_owned(),
+            activator: uuid::Uuid::from_u128(0x5d0e_3c1a_7b2f_4e8d_9a61_0c4b_2f7e_93a5),
+        }),
     })
 }

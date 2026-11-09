@@ -155,6 +155,10 @@ export global Texts {
     public pure function tray-quit() -> string {
         return @tr("Quit");
     }
+    // A toast's line when the profile's own letter was taken (FR-MNT-04, FR-NOT-01).
+    public pure function toast-letter-moved(letter: string, wanted: string) -> string {
+        return @tr("Mounted on {} because {} was in use.", letter, wanted);
+    }
 
     // Banners (NFR-REL-05). What to do goes with what happened.
     public pure function read-only-damaged(detail: string) -> string {

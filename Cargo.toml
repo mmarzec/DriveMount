@@ -45,6 +45,9 @@ winfsp-sys = "=0.12.1"
 # Windows API. Not the latest (0.62): 0.61 is what winfsp's error conversions were tested with in
 # spike M0-1, and the UI spike uses it too. Each crate lists the API features it needs.
 windows = "=0.61.3"
+# For `#[implement]`, whose expansion names this crate: the toasts' COM class (M2-04). Already a
+# dependency of `windows`.
+windows-core = "=0.61.2"
 
 # UI: the winit back-end and software renderer only, with accessibility for NFR-UX-04 (spike M0-3).
 slint = { version = "=1.18.1", default-features = false, features = [

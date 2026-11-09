@@ -7,13 +7,14 @@
 //!
 //! The markup is in `ui/*.slint`, and only draws what it is given. What the list shows is worked out
 //! in [`list`], what the dialog's boxes mean in [`form`], the queue of prompts is in [`prompts`], and
-//! error texts in [`errors`], and what the tray shows in [`tray`]. All of this runs on the UI thread
-//! but [`UiPrompter`].
+//! error texts in [`errors`], what the tray shows in [`tray`], and which changes call for a toast in
+//! [`notices`]. All of this runs on the UI thread but [`UiPrompter`].
 
 mod dialog;
 pub mod errors;
 mod form;
 mod list;
+mod notices;
 mod page;
 mod prompts;
 mod remembered;
@@ -31,6 +32,7 @@ use drivemount_core::config::{
 use drivemount_core::manager::{MountEvent, MountState, ProfileChangeError};
 use drivemount_core::profile::Profile;
 use drivemount_vfs::{ConnectError, DriveLetter, HostKeyDecision, MountError, Secret, SecretSlot};
+use drivemount_win::toast::{Toast, Toasts};
 use drivemount_win::tray::{Tray, TrayContent, TrayEvent};
 use slint::{
     CloseRequestResponse, ComponentHandle, LogicalSize, Model, ModelRc, PhysicalPosition,
@@ -41,6 +43,7 @@ use uuid::Uuid;
 use self::dialog::{Dialog, Room};
 use self::errors::{read_only_text, setting_problems_text, shown_error};
 use self::list::{Body, Item, Key, Line, ListState, Primary, ProfileItem};
+use self::notices::Notice;
 use self::page::{Details, Login};
 pub use self::prompts::UiPrompter;
 use self::prompts::{Mailbox, Prompts};
@@ -164,6 +167,21 @@ impl TraySink for Tray {
     }
 }
 
+/// Where toasts go: [`Toasts`] in the app, something that records them in tests.
+pub trait ToastSink {
+    /// Show this toast.
+    fn show(&self, toast: Toast);
+}
+
+impl ToastSink for Toasts {
+    fn show(&self, toast: Toast) {
+        // The row has the error anyway.
+        if let Err(error) = Self::show(self, &toast) {
+            tracing::warn!(%error, "the toast could not be shown");
+        }
+    }
+}
+
 struct Inner {
     window: slint::Weak<MainWindow>,
     commands: Box<dyn Fn(UiCommand)>,
@@ -186,6 +204,7 @@ struct Inner {
     remembered_path: Option<PathBuf>,
     tray: RefCell<Option<Box<dyn TraySink>>>,
     tray_ids: RefCell<TrayIds>,
+    toasts: RefCell<Option<Box<dyn ToastSink>>>,
 }
 
 /// The main window, and what it needs to keep showing the right thing. Dropping it closes the window,
@@ -258,6 +277,7 @@ impl MainUi {
             remembered_path,
             tray: RefCell::new(None),
             tray_ids: RefCell::default(),
+            toasts: RefCell::new(None),
         });
         connect(&window, &inner);
         inner.refresh();
@@ -287,10 +307,14 @@ impl MainUi {
     }
 
     /// A profile's new state. A changed host key brings up its dialog (spec §7.4.3).
+    /// A failure or a moved letter is a toast, if they are on (FR-NOT-01, FR-NOT-03).
     pub fn apply_event(&self, event: &MountEvent) {
-        self.inner.list.borrow_mut().apply(event);
+        let notice = self.inner.list.borrow_mut().apply(event);
         self.inner.refresh();
         self.inner.dialog_follows_list();
+        if let Some(notice) = notice {
+            self.inner.notify(event.id, &notice);
+        }
         if let MountState::Error(MountError::Connect(ConnectError::HostKeyChanged(details))) =
             &event.state
         {
@@ -378,6 +402,20 @@ impl MainUi {
                     self.inner.tray_chose(choice);
                 }
             }
+        }
+    }
+
+    /// Where toasts go, or nowhere.
+    pub fn set_toasts(&self, toasts: Option<Box<dyn ToastSink>>) {
+        *self.inner.toasts.borrow_mut() = toasts;
+    }
+
+    /// A toast was clicked, with this as its launch text: the window comes up with the toast's profile
+    /// selected (FR-NOT-04). A profile that has gone since leaves the selection as it was.
+    pub fn toast_clicked(&self, launch: &str) {
+        self.inner.bring_to_front();
+        if let Some(id) = notices::clicked_profile(launch) {
+            self.inner.select_profile(id);
         }
     }
 
@@ -559,6 +597,44 @@ impl Inner {
             TrayChoice::Open => self.bring_to_front(),
             TrayChoice::Quit => self.send(UiCommand::Quit),
         }
+    }
+
+    fn notify(&self, id: Uuid, notice: &Notice) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let toast = {
+            let list = self.list.borrow();
+            if !list.notifications() {
+                return;
+            }
+            let Some(profile) = list.profile(id) else {
+                return;
+            };
+            notices::toast(
+                &window.global::<Texts>(),
+                id,
+                &profile.name,
+                notice,
+                list.notification_sound(),
+            )
+        };
+        if let Some(toasts) = self.toasts.borrow().as_ref() {
+            tracing::debug!(%id, ?notice, "showing a toast");
+            toasts.show(toast);
+        }
+    }
+
+    /// Selects a profile's row and keeps it in view. An open page shows it instead of what it showed.
+    fn select_profile(&self, id: Uuid) {
+        if !self.list.borrow_mut().select_profile(id) {
+            return;
+        }
+        if self.page.borrow().is_some() {
+            *self.page.borrow_mut() = Some(Key::Profile(id));
+        }
+        self.refresh();
+        self.keep_selection_in_view();
     }
 
     fn update_tray(&self, texts: &Texts<'_>, list: &ListState) {

@@ -2,6 +2,43 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-09: M2-04 Notifications
+
+**Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` and the workspace's non-ignored tests pass (1039 passing, 170 ignored). On this desktop, the new ignored `a_toast_is_taken_and_goes_to_action_center` passes, as do `it_starts_shows_the_saved_profile_logs_and_closes` and `closing_hides_the_window_to_the_tray_and_the_app_goes_on`; after them both keys of spec §9 were in the registry. The release `drivemount.exe` is 15.51 MB (was 15.45) against the limit of 30 MB.
+
+- **Action Center clicks (plan M2-04): a COM activator, with no shortcut.** The AUMID key gets `CustomActivator = {F458B6D8-450A-4371-8114-627B7E93EBBC}`, and that CLSID gets `LocalServer32 = "<exe>"` under `HKCU\Software\Classes\CLSID`. The app registers the class (`CoRegisterClassObject`, `REGCLS_MULTIPLEUSE`) on a thread of its own in the MTA. Windows calls `INotificationActivationCallback::Activate` for a click anywhere; with the app closed, it starts the exe with `-Embedding`, which `main` ignores. This is what the Windows Community Toolkit does for unpackaged apps.
+  - **Protocol activation was not chosen:** every click starts a new process, even with the app running, so it does nothing useful until M2-06's single-instance hand-over exists.
+  - **Tested without a real click:** `a_call_to_the_class_reaches_the_callback` does what Windows does, `CoCreateInstance(CLSCTX_LOCAL_SERVER)` then `Activate`, and checks that the class is gone on drop. That a real click in Action Center makes that call is H-08.
+  - **The toast's own `Activated` handler is kept** (spike M0-3's proven path, for toasts on screen). Both may fire for one click; bringing the window up and selecting a row twice changes nothing.
+- **Added:**
+  - `drivemount_win::toast`: `AppId`, `register` / `unregister` (the keys), `Toasts::start(app, on_click)`, `show(&Toast)`, `remove(tag)`. Needs `windows-core` as a direct dependency for `#[implement]`; it was already in `Cargo.lock`.
+  - `ui/notices.rs`: `notice(before, event)` says which changes call for a toast, `toast(..)` makes it from `shown_error` (spec §7.8), `clicked_profile` reads the launch text `profile=<uuid>`.
+  - `ListState::apply` now returns the notice; `notifications()`, `select_profile(id)`.
+  - `MainUi::set_toasts(Option<Box<dyn ToastSink>>)`, `toast_clicked(launch)`. `Setup::toasts: Option<AppId>`; `Setup::toasts_from()` is the app's. `examples/connect.rs` has its own AUMID and CLSID (`DriveMount.Preview`), so its toasts do not start the real app.
+  - Text `toast-letter-moved`: "Mounted on Y: because Z: was in use."
+  - **FR-SET-08, *Notification sound*, default off** (the owner's choice): `notification_sound` in `[settings]`, read like the others, and `Toast::silent`, which adds `<audio silent="true"/>`. No schema change: a file without it gets the default, and an older app keeps it as an unknown key. Only in `config.toml` until M2-05's checkbox.
+- **For the owner to check (H-08):** run `drivemount.exe` with the log at Info.
+  - **A failed mount:** a profile with a wrong password or a stopped server: one toast, "DriveMount" as the sender, the profile's name in bold, the error and hint under it. Then with the window hidden, from the tray: the toast is the only sign.
+  - **Click it on screen:** the window comes up in front with that row selected. The log has `a toast was clicked`.
+  - **Click it in Action Center**, with the app running: the same. This is what M0-3 could not do.
+  - **Quit, then click one in Action Center:** the app starts and shows the row selected. (With *Mount on start* profiles, they mount as at any start.)
+  - **Connection lost** (stop sshd with `auto_reconnect = false`) and **reconnect stops** (change the password while *Reconnecting*): one toast each.
+  - **A letter taken:** map something to the profile's letter first: one toast, "Mounted on Y: because Z: was in use."
+  - **Notifications off** (`notifications = false` in `config.toml` until M2-05): none of these toasts, the rows still say it.
+  - **Sound:** silent by default; with `notification_sound = true`, Windows' notification sound plays.
+  - **Mount on start of several profiles that work:** no toasts.
+- **Choices the plan left open (now in the spec, §3.6, §5.3, §9):** a toast is tagged with its profile's id, so Action Center keeps one per profile; the same error again is no toast, another error is; toasts are shown from the UI thread; the AUMID is `DriveMount`.
+- **Worth knowing:**
+  - **Toasts have no icon of their own:** the AUMID key has no `IconUri`, as there is no image file on disk to point at. Windows shows a generic one. The installer (M2-10) could put a PNG next to the exe and the app could name it.
+  - **Releasing a toast after the activator's thread has left the MTA crashes the process** (`0xC0000005`, found in the ignored test). `Toasts::drop` releases its toasts first.
+  - **Running the debug exe (or its tests) points the CLSID at `target\debug\drivemount.exe`** until the release exe starts again and rewrites it.
+  - **The portable zip leaves the two HKCU keys behind**, as it has no uninstaller. `drivemount_win::toast::unregister` removes them.
+- **For later tasks:**
+  - **M2-05:** turning notifications or their sound on or off needs only `set_config`; `notify` reads both at each toast. The sound's checkbox goes under *Show notifications*, off while that is off, with a hint naming Windows' own notification settings.
+  - **M2-06:** a cold start by COM comes with `-Embedding`; `--tray`-style starting hidden is not wanted there, since the click asks for the window. With single instance, a second process started by COM would hand over to the first, but COM goes straight to the running one anyway, as it has the class registered.
+  - **M2-10:** the shortcut's AUMID must be `DriveMount` (`app::AUMID`); the uninstaller removes `HKCU\Software\Classes\AppUserModelId\DriveMount` and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}`.
+- **Next:** H-08 for M2-02, M2-03 and M2-04, then M2-05.
+
 ## 2026-11-09: M2-03 Tray
 
 **Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX check and the workspace's non-ignored tests pass (1024 passing, 169 ignored). On this desktop, the two ignored tray tests in `drivemount-win` pass, as do `it_starts_shows_the_saved_profile_logs_and_closes` and the new `closing_hides_the_window_to_the_tray_and_the_app_goes_on` (`tests/drivemount_exe.rs`). The release `drivemount.exe` is 15.45 MB against the limit of 30 MB. **Not run:** the S-03 tests of `drivemount_exe.rs`, whose only change is `close_to_tray = false` in its file.
@@ -30,7 +67,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
   - **M2-06:** `UiCommand::Quit` in `app/engine.rs` is where the quit question goes; the tray's *Quit* and × (with `close_to_tray` off) both send it. `--tray` (FR-APP-03) is `ui.show()` left out of `app::run` when the icon is in the tray.
   - **M2-04:** a toast for a mount started from the tray with the window hidden matters most, as nothing else on screen says it failed.
   - **M2-05:** changing `close_to_tray` needs only `set_config`; the window reads it at each ×.
-- **Next:** H-08 for M2-02 and M2-03, then M2-04.
+- **Next:** H-08 for M2-02 and M2-03, then M2-04 (done since).
 
 ## 2026-11-09: M2-02 Windows events
 

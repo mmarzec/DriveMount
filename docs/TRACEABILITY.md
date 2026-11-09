@@ -73,8 +73,8 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-REC-03 | M2-01, M2-02 | What the manager does: `a_network_change_checks_a_mounted_connection_and_nothing_else`, `a_check_that_finds_the_connection_gone_reconnects`, `a_network_change_while_waiting_retries_at_once_with_the_waits_from_the_start`, `a_network_change_gives_up_an_attempt_under_way_for_a_new_one`, `a_network_change_leaves_an_attempt_that_is_asking_the_user`, `a_network_change_while_connecting_is_ignored` (`crates/drivemount-core/src/manager/tests.rs`). The bursts: `drivemount_app::app::system` tests. The window hearing a sent resume: `the_hidden_window_hears_resume_and_session_end_and_stays_hidden` (`drivemount-win` `events::tests`). Real sleep and a Wi-Fi switch: H-08 | – |
 | FR-REC-04 | M2-01, M2-02 | Below the drive: `a_call_while_down_waits_for_the_next_session_and_goes_there`, `under_the_deadline_a_wait_for_a_session_ends_in_time` (`crates/drivemount-vfs/tests/session.rs`). Through a drive: `while_the_connection_is_down_calls_fail_as_unreachable_within_the_timeout`, and over SFTP with a stalled proxy, the criterion scaled to a 3 s timeout: `with_the_cable_pulled_browsing_fails_within_the_timeout` (`crates/drivemount-winfsp/tests/lifecycle.rs`). A real cable and Explorer: H-08 | – |
 | FR-REC-05 | M2-01, M2-02 | Below the drive: `a_handle_is_opened_again_without_truncating_and_keeps_writing`, `a_handle_opened_again_follows_a_rename_made_through_it` and companions (`crates/drivemount-vfs/tests/session.rs`). Through a drive: `files_open_across_a_reconnect_carry_on_where_they_were`, and over SFTP, 64 MiB read while the server goes for 2 s: `a_large_read_carries_on_across_the_server_going_away_and_the_copy_matches` (`crates/drivemount-winfsp/tests/lifecycle.rs`). The criterion against OpenSSH: `a_server_restart_during_a_large_read_comes_back_by_itself_and_the_hash_matches` (`apps/drivemount/tests/real_drive.rs`, needs S-03) | – |
-| FR-REC-06 | M2-01, M2-02 | `an_auth_failure_stops_reconnecting_unmounts_and_is_an_error`, `a_changed_host_key_stops_reconnecting_too`, `only_what_needs_the_user_stops_the_retries` (`crates/drivemount-core/src/manager/tests.rs`). The criterion, a password changed on OpenSSH: `a_password_changed_on_the_server_is_an_auth_error_with_no_retries` (`apps/drivemount/tests/real_drive.rs`, needs S-03). The notification: M2-04 | – |
-| FR-REC-07 | M2-01, M2-02 | `a_lost_connection_without_auto_reconnect_unmounts_and_is_an_error` (`crates/drivemount-core/src/manager/tests.rs`). Against OpenSSH, the connection dropped: `without_auto_reconnect_a_dropped_connection_removes_the_drive` (`apps/drivemount/tests/real_drive.rs`, needs S-03). The toast: M2-04 | – |
+| FR-REC-06 | M2-01, M2-02 | `an_auth_failure_stops_reconnecting_unmounts_and_is_an_error`, `a_changed_host_key_stops_reconnecting_too`, `only_what_needs_the_user_stops_the_retries` (`crates/drivemount-core/src/manager/tests.rs`). The criterion, a password changed on OpenSSH: `a_password_changed_on_the_server_is_an_auth_error_with_no_retries` (`apps/drivemount/tests/real_drive.rs`, needs S-03). The toast: `each_of_the_four_events_is_one_toast_with_the_name_and_the_text` (M2-04) | – |
+| FR-REC-07 | M2-01, M2-02 | `a_lost_connection_without_auto_reconnect_unmounts_and_is_an_error` (`crates/drivemount-core/src/manager/tests.rs`). Against OpenSSH, the connection dropped: `without_auto_reconnect_a_dropped_connection_removes_the_drive` (`apps/drivemount/tests/real_drive.rs`, needs S-03). The toast: `each_of_the_four_events_is_one_toast_with_the_name_and_the_text` (M2-04) | – |
 
 ## Tray
 
@@ -89,10 +89,10 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-NOT-01 | M0-3, M2-04 | – | – |
-| FR-NOT-02 | M0-3, M2-04 | – | – |
-| FR-NOT-03 | M0-3, M2-04 | – | – |
-| FR-NOT-04 | M0-3, M2-04 | – | – |
+| FR-NOT-01 | M0-3, M2-04 | `the_four_events_each_have_a_notice`, `the_same_error_or_letter_again_is_not_new` (`apps/drivemount/src/ui/notices.rs`); `each_of_the_four_events_is_one_toast_with_the_name_and_the_text` (`apps/drivemount/src/ui/tests/toasts.rs`). Windows takes the toast: `a_toast_is_taken_and_goes_to_action_center` (`crates/drivemount-win/src/toast.rs`, ignored, needs a desktop). On screen: H-08 | – |
+| FR-NOT-02 | M0-3, M2-04 | `success_and_ordinary_changes_have_none`, `mounts_and_reconnects_that_work_are_no_toasts` | – |
+| FR-NOT-03 | M0-3, M2-04 | `with_notifications_off_there_are_none_and_the_row_still_says_it`. The switch itself: M2-05 | – |
+| FR-NOT-04 | M0-3, M2-04 | `a_click_shows_the_window_with_the_profile_selected`, `a_click_for_a_profile_that_has_gone_only_shows_the_window`, `a_click_gives_back_the_profile`. The COM path a click in Action Center takes: `a_call_to_the_class_reaches_the_callback`, `registering_writes_the_keys_and_unregistering_removes_them` (`crates/drivemount-win/src/toast.rs`). Real clicks, and a click with the app not running: H-08 | – |
 
 ## Application lifecycle
 
@@ -117,6 +117,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SET-05 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
 | FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The setting: M2-05 | – |
 | FR-SET-07 | M2-05 | – | – |
+| FR-SET-08 | M2-04, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The toast: `toasts_are_silent_unless_the_sound_is_on` (`apps/drivemount/src/ui/tests/toasts.rs`), `a_silent_toast_says_so` (`crates/drivemount-win/src/toast.rs`). The checkbox: M2-05. Hearing it: H-08 | – |
 
 ## SMB backend
 

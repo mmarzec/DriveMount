@@ -18,10 +18,12 @@ use drivemount_core::config::{ConfigStore, LogLevel};
 use drivemount_core::manager::{ManagerParts, MountManager};
 use drivemount_vfs::SecretStore;
 use drivemount_win::credentials::CredentialStore;
+use drivemount_win::toast::{self, AppId, Toasts};
 use drivemount_win::tray::{Tray, TrayContent};
 use slint::ComponentHandle;
 use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use self::engine::UiAction;
 use crate::backend::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
@@ -36,6 +38,13 @@ const UNMOUNTING_AT_QUIT: Duration = Duration::from_secs(10);
 /// How long quitting waits for what is left on the runtime, such as a connection being tested.
 const WINDING_DOWN: Duration = Duration::from_secs(1);
 
+/// The AppUserModelID toasts come from. An installer's Start-menu shortcut should carry the same one
+/// (M2-10), and an uninstaller should remove the keys of [`toast::register`].
+pub const AUMID: &str = "DriveMount";
+/// The COM class a click on a toast calls (spec §5.3). Fixed, as Action Center keeps toasts across
+/// restarts of the app.
+const TOAST_ACTIVATOR: Uuid = Uuid::from_u128(0xf458_b6d8_450a_4371_8114_627b_7e93_ebbc);
+
 /// Where the program keeps things.
 pub struct Setup {
     /// `config.toml`.
@@ -48,6 +57,8 @@ pub struct Setup {
     pub logs: Option<PathBuf>,
     /// Where remembered secrets go.
     pub secrets: Arc<dyn SecretStore>,
+    /// Who toasts are from, or no toasts.
+    pub toasts: Option<AppId>,
 }
 
 impl Setup {
@@ -63,7 +74,18 @@ impl Setup {
             known_hosts: default_known_hosts().context("USERPROFILE is not set")?,
             logs: logging::default_folder(),
             secrets: Arc::new(CredentialStore),
+            toasts: Some(Self::toasts_from()),
         })
+    }
+
+    /// The app's own toast identity (FR-NOT).
+    #[must_use]
+    pub fn toasts_from() -> AppId {
+        AppId {
+            aumid: AUMID.to_owned(),
+            display_name: "DriveMount".to_owned(),
+            activator: TOAST_ACTIVATOR,
+        }
     }
 }
 
@@ -107,6 +129,27 @@ fn start_tray(ui: &MainUi) {
             ui.set_tray(Some(Box::new(tray)));
         }
         Err(error) => tracing::warn!(%error, "there is no tray icon"),
+    }
+}
+
+/// Makes toasts show (spec §9), and clicks on them reach the window, from Action Center too
+/// (FR-NOT-04). Without them, errors are still in the rows and the tray.
+fn start_toasts(ui: &MainUi, app: &AppId) {
+    match std::env::current_exe() {
+        Ok(exe) => {
+            if let Err(error) = toast::register(app, &exe) {
+                tracing::warn!(%error, "toasts could not be registered, so may not show");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "the exe's path is not known, so toasts may not show"),
+    }
+    let on_click = Arc::new(|launch: String| {
+        tracing::info!(%launch, "a toast was clicked");
+        post_to_window(Box::new(move |ui| ui.toast_clicked(&launch)));
+    });
+    match Toasts::start(app, on_click) {
+        Ok(toasts) => ui.set_toasts(Some(Box::new(toasts))),
+        Err(error) => tracing::warn!(%error, "there are no toasts"),
     }
 }
 
@@ -195,12 +238,16 @@ fn run_logged(setup: Setup, store: ConfigStore) -> Result<()> {
     );
     let system_events = system::start(runtime.handle(), &manager);
     start_tray(&ui);
+    if let Some(app) = &setup.toasts {
+        start_toasts(&ui, app);
+    }
 
     ui.show().context("showing the window")?;
     slint::run_event_loop_until_quit().context("running the window")?;
 
     tracing::info!("quitting");
     ui.set_tray(None);
+    ui.set_toasts(None);
     drop(system_events);
     if let Err(error) = ui.window().hide() {
         tracing::debug!(%error, "the window could not be hidden");

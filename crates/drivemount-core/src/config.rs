@@ -90,6 +90,8 @@ pub struct Settings {
     pub letter_conflict: LetterConflict,
     /// FR-SET-05.
     pub notifications: bool,
+    /// FR-SET-08: whether toasts play Windows' notification sound.
+    pub notification_sound: bool,
     /// FR-SET-06.
     pub log_level: LogLevel,
     /// Not in the UI. 5–120.
@@ -106,6 +108,7 @@ impl Default for Settings {
             theme: Theme::System,
             letter_conflict: LetterConflict::Auto,
             notifications: true,
+            notification_sound: false,
             log_level: LogLevel::Info,
             op_timeout_secs: 15,
             winfsp_threads: 0,

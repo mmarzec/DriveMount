@@ -24,6 +24,7 @@ close_to_tray      = true
 theme              = "system"     # system | light | dark
 letter_conflict    = "auto"       # auto | fail
 notifications      = true
+notification_sound = false
 log_level          = "info"       # error | warn | info | debug
 op_timeout_secs    = 15           # not in UI, 5..=120
 winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
@@ -378,6 +379,7 @@ fn settings_come_back() {
         theme: Theme::Dark,
         letter_conflict: LetterConflict::Fail,
         notifications: false,
+        notification_sound: true,
         log_level: LogLevel::Debug,
         op_timeout_secs: 120,
         winfsp_threads: 8,
@@ -831,6 +833,7 @@ fn a_bad_setting_gets_its_default_and_the_file_stays_usable() {
         ("letter_conflict", "\"maybe\""),
         ("log_level", "\"trace\""),
         ("notifications", "\"yes\""),
+        ("notification_sound", "\"loud\""),
         ("start_with_windows", "1"),
         ("close_to_tray", "\"no\""),
         ("op_timeout_secs", "4"),

@@ -166,7 +166,13 @@ States, transitions and events are defined in §5.5.
 | FR-NOT-01 | M | A Windows toast is shown when a mount fails, a connection is lost without auto-reconnect, reconnect stops (FR-REC-06), or a letter is reassigned (FR-MNT-04). | Each of the four events produces exactly one toast naming the profile and the error text from §7.8. |
 | FR-NOT-02 | M | No toasts for successful mounts or successful reconnects. | Mount-on-start of 5 profiles produces no toasts. |
 | FR-NOT-03 | M | Toasts can be switched off in Settings. | With notifications off, the FR-NOT-01 events produce no toasts; row errors are still shown. |
-| FR-NOT-04 | M | Clicking a toast opens the main window with the profile selected. Spike M0-3: works while the toast is on screen; a click from Action Center does nothing so far (to settle in M2-04). | Clicking a toast for "Dev box" shows the window with that row selected. |
+| FR-NOT-04 | M | Clicking a toast opens the main window with the profile selected, from the screen or from Action Center, whether or not the app is running (through a COM activator, §5.3). | Clicking a toast for "Dev box" shows the window with that row selected. |
+
+- **What a toast says:** the profile's name, then the error's text and hint from §7.8; for a moved letter, "Mounted on Y: because Z: was in use."
+- **Which changes:** every change into *Error* from another state, or to a different error; and the first event of a mount with `instead_of`. The same error or letter sent again is not another toast.
+- **Sound:** none unless FR-SET-08 is on, as the row and the tray icon already show what happened.
+- **One per profile in Action Center:** a toast is tagged with its profile's id, so a later one for the same profile replaces it.
+- **A click** brings the window up and selects the profile's row; an open connection page shows that profile. A profile deleted since leaves the selection as it was.
 
 ### 3.7 Application lifecycle (FR-APP)
 
@@ -191,6 +197,7 @@ A single settings page (§7.5). The settings are stored in `config.toml` (§6.1)
 | FR-SET-03 | M | Theme: System / Light / Dark | System |
 | FR-SET-04 | M | When a drive letter is in use: Use another free letter / Don't mount | Use another free letter |
 | FR-SET-05 | M | Show notifications | On |
+| FR-SET-08 | M | Notification sound (under *Show notifications*, off while it is off). Off adds `<audio silent="true"/>` to the toast. A hint says that Windows' own *Settings → System → Notifications → DriveMount* has more | Off |
 | FR-SET-06 | M | Log level: Error / Warning / Info / Debug, plus an *Open logs folder* button | Info |
 | FR-SET-07 | M | WinFsp status (read-only line): "WinFsp 2.1.25156 installed", or the missing banner | n/a |
 
@@ -374,7 +381,8 @@ apps/drivemount ──▶ all of the above
 ### 5.3 Process and threading model
 
 - **One process** holds the UI and the engine. It runs unelevated in the user's session, so drive letters land in the user's logon session and are visible to their Explorer.
-- **UI thread**: runs the Slint event loop. Toast clicks arrive through the toast's `Activated` handler. Everything reaches Slint through `invoke_from_event_loop`.
+- **UI thread**: runs the Slint event loop, and shows toasts. Everything reaches Slint through `invoke_from_event_loop`.
+- **Toast activator thread** (`drivemount_win::toast`): in the multithreaded apartment, it registers the COM class named by the AUMID key's `CustomActivator` (§9). Windows calls its `INotificationActivationCallback::Activate` on a COM thread for every click on a toast, on screen or in Action Center; a toast still on screen also fires its own `Activated` event, and both go to the window, where a second one changes nothing. If the app is not running, Windows starts the exe (with `-Embedding`) and makes the call once the class is registered. M2-04 chose this over `activationType="protocol"`, which starts a new process for every click, even with the app running, and so needs the single-instance hand-over of FR-APP-01 to work at all.
 - **System events thread** (`drivemount_win::events`): a hidden top-level window, not a message-only one, as those get no broadcasts. It receives `WM_POWERBROADCAST`, `WM_QUERYENDSESSION`/`WM_ENDSESSION`, and later the "show window" message from a second instance. It has a thread of its own because the session's end is handled inside `WM_ENDSESSION`: Windows waits for that message, and may end the process once it returns. Network changes come from `NotifyIpInterfaceChange` and `NotifyUnicastIpAddressChange`, on the system's thread pool. Resume and network changes are handled as below (§5.5, "Network changes"); the session's end unmounts everything from that thread, for at most 4 s, then quits the event loop (FR-APP-05).
 - **Tray thread** (`drivemount_win::tray`): the notification-area icon, on `Shell_NotifyIconW` directly, with a hidden top-level window of its own, so that it hears `TaskbarCreated` and puts the icon back when Explorer restarts, and the menu's modal loop holds up nothing else. Clicks and menu choices reach the window through `invoke_from_event_loop`; the window sends the icon, tooltip and menu after every change to its list. If the shell does not take the icon, it is tried again every 2 s for a minute, and on `TaskbarCreated`. M2-03 chose this over Slint's `SystemTrayIcon` (its Windows menu has no check marks, and its window is message-only, so the icon is lost when Explorer restarts) and over `tray-icon` (it ignores a failed `NIM_ADD`, so the app could not know the window has no way back).
 - **Tokio runtime**: multi-threaded with 2–4 workers. All network I/O, the mount manager and the reconnect timers run here.
@@ -726,6 +734,7 @@ close_to_tray      = true
 theme              = "system"     # system | light | dark
 letter_conflict    = "auto"       # auto | fail
 notifications      = true
+notification_sound = false
 log_level          = "info"       # error | warn | info | debug
 op_timeout_secs    = 15           # not in UI, 5..=120
 winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
@@ -1087,7 +1096,7 @@ This page replaces the list area inside the main window; a ← back arrow return
   - Checks the WinFsp version in the registry (`HKLM\SOFTWARE\WOW6432Node\WinFsp`, `InstallDir` + DLL version). If WinFsp is missing or older than 2.1, it offers the official, **unmodified** WinFsp MSI as a chained install (allowed by WinFsp's FLOSS exception, ADR-0003) or a link (OD-5).
   - Start-menu shortcut; optional *Start with Windows* checkbox (writes the HKCU Run key for the installing user).
   - Uninstall removes the program. It keeps `%APPDATA%\DriveMount` and the credentials unless "Remove my settings" is ticked.
-- **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\<id>` with a `DisplayName`. Spike M0-3 showed this is what makes toasts appear; a shortcut with an AUMID alone did not.
+- **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\DriveMount` with a `DisplayName` and a `CustomActivator` (a CLSID), and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}\LocalServer32` = `"<exe>"`. Spike M0-3 showed the AUMID key is what makes toasts appear; a shortcut with an AUMID alone did not. The CLSID is what a click in Action Center starts or calls (§5.3). Both are rewritten at every start, as the exe may have moved. The uninstaller removes them; the portable zip leaves them behind, as it has no uninstaller.
 - **Portable:** a zip with `drivemount.exe`. It needs WinFsp installed separately.
 - **Signing:** Authenticode for `drivemount.exe` and the MSI (OD-3).
 - **Updates:** none in v1. Users install a newer MSI over the old one. Settings and profiles are kept and migrated (§6.1).

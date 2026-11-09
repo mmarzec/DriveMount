@@ -4,6 +4,7 @@
 //! no screen. What the list holds is tested in `list.rs`, and the profile dialog in `tests/dialog.rs`.
 
 mod dialog;
+mod toasts;
 mod tray;
 
 use std::cell::{Cell, RefCell};

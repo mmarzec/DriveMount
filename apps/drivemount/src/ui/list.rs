@@ -12,6 +12,8 @@ use drivemount_core::profile::{DEFAULT_PORT, DriveChoice, Profile, Protocol};
 use drivemount_vfs::{DriveLetter, MountError};
 use uuid::Uuid;
 
+use super::notices::{Notice, notice};
+
 /// Logical pixels. Fixed, so that where a row is can be worked out without laying it out, which is
 /// how the selection is kept in view. Every row is one line: what does not fit is on its page.
 const ROW_HEIGHT: f32 = 44.0;
@@ -210,10 +212,33 @@ impl ListState {
         !self.read_only
     }
 
-    /// A state from the manager.
-    pub(super) fn apply(&mut self, event: &MountEvent) {
+    /// A state from the manager, and what the user should hear of it, if anything.
+    pub(super) fn apply(&mut self, event: &MountEvent) -> Option<Notice> {
+        let notice = notice(self.status.get(&event.id), event);
         self.status
             .insert(event.id, (event.state.clone(), event.detail));
+        notice
+    }
+
+    /// Whether toasts are on (FR-NOT-03).
+    pub(super) const fn notifications(&self) -> bool {
+        self.config.settings.notifications
+    }
+
+    /// Whether toasts play a sound (FR-SET-08).
+    pub(super) const fn notification_sound(&self) -> bool {
+        self.config.settings.notification_sound
+    }
+
+    /// Selects a profile's row. Returns whether there is one.
+    pub(super) fn select_profile(&mut self, id: Uuid) -> bool {
+        let key = Key::Profile(id);
+        let Some(place) = self.items().iter().position(|item| item.key == key) else {
+            return false;
+        };
+        self.selected = Some(key);
+        self.selected_place = place;
+        true
     }
 
     /// The selection.
