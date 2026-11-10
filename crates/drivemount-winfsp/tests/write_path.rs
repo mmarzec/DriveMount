@@ -1405,7 +1405,10 @@ fn copying_within_the_drive_makes_a_second_file() {
     let drive = Drive::new();
     let data = pattern(1 << 20, 2);
     drive.put("/a", &data);
-    drive.mkdir("/dir");
+    // Through the drive: Windows Server 2025 lists a new drive's root as soon as it is up, and its
+    // CopyFileExW looks up the target's directory in that listing, which would not show a
+    // directory made on the server until the cache's TTL ran out.
+    fs::create_dir(drive.path("dir")).unwrap();
     copy(&drive.path("a"), &drive.path(r"dir\b"), false).unwrap();
     assert!(drive.get("/dir/b") == data);
     assert!(drive.get("/a") == data);
