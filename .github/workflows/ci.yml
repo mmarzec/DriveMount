@@ -133,6 +133,9 @@ jobs:
         run: rustup toolchain install
       - name: Cache cargo registry and target
         uses: Swatinem/rust-cache@v2
+      - name: Install WinFsp
+        shell: powershell
+        run: scripts\install-winfsp.ps1
       - name: Build release drivemount.exe
         run: cargo build --release -p drivemount --locked
       - name: Check size (NFR-PERF-03)
