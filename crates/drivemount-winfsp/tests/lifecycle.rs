@@ -400,7 +400,10 @@ fn files_left_open_do_not_hold_up_unmounting_and_are_closed() {
 
 #[test]
 fn a_flush_that_fails_as_the_drive_stops_does_not_fail_the_unmount() {
-    let setup = setup();
+    // The failed flush waits one operation timeout for a reconnect that never comes: keep it short.
+    let mut settings = config("Production");
+    settings.op_timeout = Duration::from_secs(1);
+    let setup = setup_with(settings);
     let letter = setup.mount();
     let mut writing = fs::File::create(root(letter).join("a.txt")).unwrap();
     writing.write_all(b"x").unwrap();
@@ -839,12 +842,16 @@ impl Connector for Shared<Sftp> {
 }
 
 fn over_sftp() -> OverSftp {
+    over_sftp_with(config("Over SFTP"))
+}
+
+fn over_sftp_with(config: VolumeConfig) -> OverSftp {
     let order = one_at_a_time();
     let runtime = Runtime::new().unwrap();
     let probe = Arc::new(Probe::default());
     let sftp = Arc::new(runtime.block_on(Sftp::start(Arc::clone(&probe), Duration::from_secs(10))));
     OverSftp {
-        backend: WinFspBackend::new(Shared(Arc::clone(&sftp)), config("Over SFTP")),
+        backend: WinFspBackend::new(Shared(Arc::clone(&sftp)), config),
         runtime,
         probe,
         sftp,
@@ -968,7 +975,10 @@ fn losing_the_server_fails_calls_and_does_not_stop_unmounting() {
     /// ERROR_NETWORK_UNREACHABLE.
     const UNREACHABLE: i32 = 1231;
 
-    let setup = over_sftp();
+    // Each failing write waits one operation timeout for a reconnect that never comes: keep it short.
+    let mut settings = config("Over SFTP");
+    settings.op_timeout = Duration::from_secs(1);
+    let setup = over_sftp_with(settings);
     let letter = setup.mount();
     let mut open = fs::File::create(root(letter).join("a.txt")).unwrap();
     open.write_all(b"x").unwrap();

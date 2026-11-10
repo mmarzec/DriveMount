@@ -4,7 +4,9 @@
 //! that a mock cannot show. These need the S-03 server (`tests\docker\servers.ps1 up`) and WinFsp,
 //! and tell Explorer about their drives. Secrets go to a store in memory, not Credential Manager.
 //!
-//! `cargo test -p drivemount --test real_drive -- --ignored --test-threads=1`
+//! `cargo test -p drivemount --test real_drive -- --ignored`
+//!
+//! The tests take turns by themselves (see [`ONE_AT_A_TIME`]).
 
 #![cfg(windows)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -13,8 +15,8 @@ use std::env;
 use std::fs;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use drivemount_app::backend::{SftpWinFspFactory, SystemDriveLetters};
@@ -85,7 +87,14 @@ struct World {
     secrets: Arc<MemorySecretStore>,
     manager: MountManager,
     events: broadcast::Receiver<MountEvent>,
+    /// Last, so it is let go only once the manager and its drives have gone.
+    _turn: MutexGuard<'static, ()>,
 }
+
+/// One test at a time, whatever `--test-threads` says. Some restart the `sshd` container or end its
+/// connections, which breaks any test beside them; run in parallel, a restart during the 1 GiB copy
+/// left a test process stuck in a drive's I/O, impossible to kill.
+static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
 
 fn host() -> String {
     env::var("DRIVEMOUNT_TEST_HOST").unwrap_or_else(|_| "localhost".to_owned())
@@ -98,6 +107,7 @@ fn profile(name: &str, auth: SftpAuth) -> Profile {
 }
 
 fn world(profiles: Vec<Profile>, typist: Typist) -> World {
+    let turn = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let folder = TempDir::new().unwrap();
     let path = folder.path().join("config.toml");
     let mut store = ConfigStore::open(path);
@@ -127,6 +137,7 @@ fn world(profiles: Vec<Profile>, typist: Typist) -> World {
         secrets,
         manager,
         events,
+        _turn: turn,
     }
 }
 

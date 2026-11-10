@@ -799,7 +799,11 @@ fn a_lost_connection_reads_as_an_unreachable_network() {
     if support::not_over_sftp("tests/lifecycle.rs loses a real connection instead") {
         return;
     }
-    let drive = Drive::new();
+    // The read waits for a reconnect that never comes, for one operation timeout: keep it short.
+    let drive = Drive::with_options(Options {
+        op_timeout: Duration::from_secs(1),
+        ..Options::default()
+    });
     drive.put("/file", b"x");
     let mut file = File::open(drive.path("file")).unwrap();
     drive.probe.fail(Op::Read, FsError::ConnectionLost);

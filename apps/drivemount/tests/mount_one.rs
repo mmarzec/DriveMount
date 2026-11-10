@@ -15,6 +15,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use drivemount_core::config::{Config, ConfigStore, LogLevel, Settings};
@@ -81,6 +82,39 @@ fn folder_with(profile: Profile) -> TempDir {
     folder
 }
 
+/// `examples/mount_one.rs`, built once for all the tests here.
+///
+/// Built with `--workspace`, which picks the same dependency features as `cargo test --workspace`, so
+/// that after one the build finds everything fresh. `cargo run -p drivemount` picked fewer, rebuilt
+/// the shared crates for them (one to two minutes, in the first test to ask), and left them for the
+/// next `cargo test` to rebuild again.
+fn example() -> &'static Path {
+    static EXAMPLE: OnceLock<PathBuf> = OnceLock::new();
+    EXAMPLE.get_or_init(|| {
+        let output = Command::new(env!("CARGO"))
+            .args(["build", "--quiet", "--workspace", "--example", "mount_one"])
+            .arg("--message-format=json")
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "building the example: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let messages = String::from_utf8(output.stdout).unwrap();
+        let line = messages
+            .lines()
+            .find(|line| {
+                line.contains(r#""kind":["example"]"#) && line.contains(r#""name":"mount_one""#)
+            })
+            .expect("cargo names the example it built");
+        let (_, after) = line.split_once(r#""executable":""#).unwrap();
+        let (path, _) = after.split_once('"').unwrap();
+        PathBuf::from(path.replace(r"\\", r"\"))
+    })
+}
+
 fn mount_one(folder: &TempDir, secret: Option<&str>, more: &[&str]) -> Output {
     mount_one_answering(folder, secret, &[], more)
 }
@@ -92,17 +126,8 @@ fn mount_one_answering(
     answers: &[&str],
     more: &[&str],
 ) -> Output {
-    let mut command = Command::new(env!("CARGO"));
+    let mut command = Command::new(example());
     command
-        .args([
-            "run",
-            "--quiet",
-            "-p",
-            "drivemount",
-            "--example",
-            "mount_one",
-            "--",
-        ])
         .arg("--config")
         .arg(folder.path().join("config.toml"))
         .args(["--host-key", "once"])

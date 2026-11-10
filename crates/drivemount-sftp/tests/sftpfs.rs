@@ -193,7 +193,10 @@ async fn the_contract_holds_on_a_server_without_the_extensions() {
     assert_eq!(capabilities.max_write, 32 * 1024);
     assert_eq!(fs.statfs().await, Ok(FsStats::PLACEHOLDER));
 
-    contract::run_all(&fs, &RemotePath::root()).await;
+    // Not the 1 GiB case: `the_contract_holds_on_openssh` runs it, and `longer_than_a_chunk` covers
+    // ProFTPD's 32 KiB requests. Here it is 32,768 writes and as many reads, which take over 20
+    // minutes through the Windows port-forward relay.
+    contract::run_quick(&fs, &RemotePath::root()).await;
 }
 
 /// `/` as the mount's root, where nothing is added to a path.

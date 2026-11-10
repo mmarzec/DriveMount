@@ -902,9 +902,11 @@ mod tests {
     #[test]
     fn encrypted_keys_ask_open_and_notice_a_wrong_passphrase() {
         let dir = tempfile::tempdir().unwrap();
+        // `-a 1`: one bcrypt-pbkdf round instead of 16. Each load of these keys pays the rounds, and
+        // in a debug build 16 of them take about a second; the format is the same either way.
         for (name, options) in [
-            ("ed25519", &["-t", "ed25519"][..]),
-            ("ecdsa", &["-t", "ecdsa"][..]),
+            ("ed25519", &["-t", "ed25519", "-a", "1"][..]),
+            ("ecdsa", &["-t", "ecdsa", "-a", "1"][..]),
             ("rsa_pem", &["-t", "rsa", "-b", "2048", "-m", "PEM"][..]),
         ] {
             let path = keygen(dir.path(), name, PASSPHRASE, options);
