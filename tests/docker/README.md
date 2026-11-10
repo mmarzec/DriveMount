@@ -54,7 +54,7 @@ The same users and image also run with one difference each, for testing failures
 
 ## SFTP server `proftpd`: `localhost:2230`
 
-ProFTPD 1.3.8 `mod_sftp`, with every optional extension off (FR-SSH-14). User `tester`, password `tester`, host key `keys/ssh_host_rsa_key`. Its own log is `/var/log/proftpd/sftp.log` in the container, and says why it refused something.
+ProFTPD 1.3.8c `mod_sftp` (Debian trixie; bookworm's 1.3.8 aborts with a heap error after `mkdir` of some name lengths), with every optional extension off (FR-SSH-14). User `tester`, password `tester`, host key `keys/ssh_host_rsa_key`. Its own log is `/var/log/proftpd/sftp.log` in the container, and says why it refused something.
 
 ## Notes
 

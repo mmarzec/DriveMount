@@ -1,5 +1,5 @@
 # ProFTPD mod_sftp test server: an SFTP v3 server without the OpenSSH extensions (see ../README.md).
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
