@@ -17,6 +17,8 @@ create_allocation_test  # expects the allocation size asked for at create to be 
 create_notraverse_test  # expects a directory's own descriptor to deny traversal
 getfileattr_test  # expects a file's own descriptor to deny reading its attributes
 setsecurity_test  # SetSecurity gets STATUS_NOT_SUPPORTED on purpose (spec §5.8)
+create_backup_test  # expects a file's own descriptor to deny reading it; only runs with SeBackupPrivilege, as on an elevated CI runner
+create_restore_test  # expects a directory's own descriptor to deny making a file in it; only runs with SeRestorePrivilege, as on an elevated CI runner
 
 # Reparse points: not offered (spec §5.8). Symbolic links on the server show as their targets.
 reparse_guid_test  # no reparse points
