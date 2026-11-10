@@ -12,6 +12,7 @@ name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 env:
@@ -42,14 +43,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       - name: Install WinFsp
         if: runner.os == 'Windows'
         shell: powershell
         run: scripts\install-winfsp.ps1
       - name: Install cargo-deny and cargo-audit
-        run: |
-          cargo install --locked --version 0.20.2 cargo-deny
-          cargo install --locked --version 0.22.2 cargo-audit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
       - name: fmt
         run: cargo fmt --all --check
       - name: clippy
@@ -69,6 +72,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       - name: Install WinFsp
         if: runner.os == 'Windows'
         shell: powershell
@@ -86,6 +91,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       - name: Install WinFsp
         if: runner.os == 'Windows'
         shell: powershell
@@ -107,6 +114,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       - name: Build the tests
         run: cargo test -p drivemount-sftp --locked --no-run
       - name: Start the test servers
@@ -122,6 +131,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install the pinned toolchain
         run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
       - name: Build release drivemount.exe
         run: cargo build --release -p drivemount --locked
       - name: Check size (NFR-PERF-03)
