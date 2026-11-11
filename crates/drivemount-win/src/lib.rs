@@ -14,6 +14,7 @@ pub mod credentials;
 pub mod drives;
 pub mod events;
 pub mod instance;
+pub mod process;
 mod registry;
 pub mod shell;
 pub mod startup;

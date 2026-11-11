@@ -250,7 +250,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-PERF-07 | Copying 10,000 × 4 KB files to the drive (robocopy) on LAN | ≤ 3× the time of `scp -r` (relaxed from 1.3× in M2-08: robocopy needs about 10 round trips a file where `scp` streams, docs/perf/v1.md) |
 | NFR-PERF-08 | Listing a directory of 1,000 entries: first listing on LAN / repeated within cache TTL | < 300 ms / < 20 ms |
 | NFR-PERF-09 | Opening a mounted drive root in Explorer on LAN | < 500 ms until contents are shown |
-| NFR-PERF-10 | UI responsiveness: no UI-thread work > 16 ms. All network and file system work runs off the UI thread. | Verified with tracing spans |
+| NFR-PERF-10 | UI responsiveness: no UI-thread work > 16 ms. All network and file system work runs off the UI thread. | Verified with the app's UI-thread clock (logged). One first redraw of new content a session at up to ~18 ms is accepted (M2-08, docs/perf/v1.md) |
 
 ### 4.2 Reliability (NFR-REL)
 

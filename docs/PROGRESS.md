@@ -2,6 +2,18 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-11: M2-08 Performance pass, part 2: the app's own budgets
+
+**Status: done; all NFR-PERF budgets met (M2-08's exit).** The owner accepted NFR-PERF-10's one ~18 ms redraw a session (`perf/v1.md` §3, choice a; spec §4.1 says so). `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and the workspace's non-ignored tests pass (1100 passing, 180 ignored). Results in [perf/v1.md](perf/v1.md) §1.
+
+- **Added: start times in the log.** `drivemount_win::process::since_start` (from `GetProcessTimes`); the app logs `since_start_ms` at the first frame and when the tray takes the icon.
+- **Added: `app::ui_clock`**, which times each stretch the UI thread is busy (a winit event to the next turn of the event loop, and each posted action), logs those over 16 ms at Debug and the longest at quit. It replaces any other winit event hook on the main window (there was none).
+- **Added: `apps/drivemount/tests/perf_app.rs`**, ignored tests on the real release exe for NFR-PERF-01, 02, 04, 05, 09 (Explorer, through UI Automation) and 10. How to run: `perf/v1.md` §2.
+- **Met:** 01 (max 240 ms, little margin), 02 (max 90 ms), 03 (16.03 MB), 04 (22.9–25.7 MiB, 1.25 MiB a drive), 05 (0.023% of one CPU), 09 (median 380 ms, as fast as a local folder; one round of five 629 ms).
+- **NFR-PERF-10: accepted by the owner,** the first redraw after *Mount all* at 17.6–17.9 ms, once a session; everything else ≤ 15.5 ms.
+- **Not done:** a truly cold start (after a reboot); a WPR profile of the first frame and of that redraw.
+- **WSL stops the S-03 containers** once nothing runs in it; keep a `wsl ... sleep` going during long runs.
+
 ## 2026-11-10: M2-08 Performance pass, part 1 (branch `feat/m2-08-performance`)
 
 **Status: in progress, not committed.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and the workspace's non-ignored tests pass (1099 passing, 176 ignored). Results so far are in [perf/v1.md](perf/v1.md).

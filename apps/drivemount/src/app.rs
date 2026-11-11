@@ -5,6 +5,7 @@
 
 mod engine;
 mod system;
+mod ui_clock;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -19,6 +20,7 @@ use drivemount_core::manager::{ManagerParts, MountManager};
 use drivemount_vfs::SecretStore;
 use drivemount_win::credentials::CredentialStore;
 use drivemount_win::instance::{self, Claim, Instance, ShowRequests};
+use drivemount_win::process;
 use drivemount_win::startup;
 use drivemount_win::toast::{self, AppId, Toasts};
 use drivemount_win::tray::{Tray, TrayContent};
@@ -130,13 +132,18 @@ fn post_to_window(action: UiAction) {
     let posted = slint::invoke_from_event_loop(move || {
         let ui = UI.with(|ui| ui.borrow().clone());
         if let Some(ui) = ui {
-            action(&ui);
+            ui_clock::time("action", || action(&ui));
         }
     });
     // Only as the app ends.
     if let Err(error) = posted {
         tracing::debug!(%error, "the window has gone");
     }
+}
+
+/// How long ago the process was created, in ms, for the start-up budgets (NFR-PERF-01, 02).
+fn ms_since_start() -> Option<f64> {
+    process::since_start().map(|age| age.as_secs_f64() * 1000.0)
 }
 
 /// Puts the icon in the tray (FR-TRAY-01). Without it the window cannot be hidden, so it stays up.
@@ -152,7 +159,8 @@ fn start_tray(ui: &MainUi) -> bool {
     match Tray::start(empty, on_event) {
         Ok(tray) => {
             if tray.is_in_tray() {
-                tracing::info!("the icon is in the tray");
+                // NFR-PERF-02 for a start with `--tray`.
+                tracing::info!(since_start_ms = ms_since_start(), "the icon is in the tray");
             } else {
                 tracing::warn!(
                     "the tray did not take the icon, so trying again; the window stays up meanwhile"
@@ -357,6 +365,18 @@ fn run_logged(
     .context("making the window")?;
     let ui = Rc::new(ui);
     UI.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&ui)));
+    // NFR-PERF-01 for a start that shows the window; one in the tray draws it when it is asked for.
+    let in_tray = setup.start_in_tray;
+    ui_clock::watch(
+        ui.window().window(),
+        Box::new(move || {
+            tracing::info!(
+                since_start_ms = ms_since_start(),
+                in_tray,
+                "the first frame is drawn"
+            );
+        }),
+    );
 
     let run_value = RunValue {
         name: setup.run_value.clone(),
@@ -413,6 +433,15 @@ fn run_logged(
     slint::run_event_loop_until_quit().context("running the window")?;
 
     tracing::info!("quitting");
+    let (longest, over) = ui_clock::longest();
+    if let Some((took, what)) = longest {
+        tracing::info!(
+            longest_ms = took.as_secs_f64() * 1000.0,
+            what,
+            over_a_frame = over,
+            "the UI thread's longest busy stretch (NFR-PERF-10)"
+        );
+    }
     drop(waiting_for_the_tray);
     // A start from now on finds this one still running, and gives up after a while.
     drop(other_starts);
