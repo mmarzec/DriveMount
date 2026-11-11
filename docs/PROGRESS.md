@@ -2,6 +2,29 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-10: M2-08 Performance pass, part 1 (branch `feat/m2-08-performance`)
+
+**Status: in progress, not committed.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and the workspace's non-ignored tests pass (1099 passing, 176 ignored). Results so far are in [perf/v1.md](perf/v1.md).
+
+- **Fixed: a new file no longer costs a listing of its folder** (M1-19's finding, `m1-exit.md` §4). `CachedFs` keeps each directory's names in a `NameIndex` (`drivemount-vfs::names`), hashed by how they compare on Windows ignoring case. Unlike the listing, the names are updated in place by creates, `mkdir`s, removes and renames that succeed, and dropped by one whose outcome is unknown. `CachedFs::find_name` is what the adapter's `find_entry` now uses; going down a path now `stat`s each component (usually from the cache) instead of reading kinds off the listing. Spec §5.6 has the rule. 10,000 small files in: 44 minutes before, 158 s now, and linear.
+  - Tests: unit and property tests of `NameIndex` against `resolve_name`; `find_name` in `tests/cache.rs`, including the model test, which now has upper-case paths and compares `find_name` with the server after every step. Two mutants (removes not applied, unknown outcomes kept) were each caught by two tests.
+- **Added: spans.** `Adapter::run` takes the callback's name and opens a `callback` span at Debug; `DeadlineFs` wraps each remote call in a `remote` span at Trace. `drivemount-vfs` now depends on `tracing`.
+- **Added: `apps/drivemount/tests/perf.rs`**, ignored tests measuring NFR-PERF-06 to 09 against `scp`/`sftp` on the same link, with a span profile of the small-files copy and netem for WAN (`PERF_DELAY_MS`). How to run: `perf/v1.md` §2.
+- **NFR-PERF-07: the owner relaxed it to ≤ 3× `scp -r`** (it was 5.5× against 1.3×; tuning cannot reach 1.3×, as robocopy costs ~10 round trips a file and `scp` streams). Spec §4.1 is changed. Two cheap steps followed:
+  - **No fsync at Cleanup**; `Flush` still has one (spec §5.6 and the callback table). Moving it to Close had been tried and reverted: programs then reopened each file about 30 times. Tests: `closing_a_file_does_not_flush_it` replaces the test that closing flushed, and the failed-flush-on-close test is gone.
+  - **`CachedFs` keeps what `set_attr` and `fstat` answer** for the path, using the same `Fill` check as `stat`. `fstat` answers count only while the handle's path still names its file: `OpenFile::detached` is set by a local remove, a rename over the path, or a rename whose outcome is unknown. The rename's handle bookkeeping now runs in its `OnDrop`. Tests: four new ones in `tests/cache.rs`, and the model test now also has `fstat` and `set_attr` by path. Two mutants (detached ignored, overtaken answer kept) were caught.
+  - **Result:** LAN 158 s → 90 s, **2.90×**, just within the budget. WAN (300 files) **3.58×**: `set_attr` is ~2.7 round trips there. The owner then set NFR-PERF-07 for LAN only (spec §4.1). For WAN, a later cheap step would be sending `setstat` and the `stat` after it together (`perf/v1.md` §3).
+  - Also run: `write_path`/`read_path` over SFTP, `lifecycle` with its ignored tests, and `real_drive` without its GiB test. All pass.
+- **Not yet measured:** NFR-PERF-01 to 05 and 10 (start times, memory, idle CPU, the UI thread). NFR-PERF-03 was 15.95 MB at M2-06.
+- **Built: the bounded write-behind** (OD-4), in the adapter per Windows handle: new `drivemount-winfsp/src/behind.rs`, design in the new **[ADR-0002](adr/0002-write-behind.md)**, spec §5.6 and §5.8 updated.
+  - A `Write` returns once its data is on its way, at most 4 MiB unacknowledged per handle. The size Windows is told comes from what the handle last told it, not an `fstat`; an append still asks.
+  - Reads, size and attribute changes, `Flush`, `Cleanup` and `Close` wait for writes to the path. Overlapping writes, and writes through two handles to one path, keep their order.
+  - The first failure is returned once by the next `Write` or `Flush`, then cleared (Linux's way). `Cleanup` logs one nobody heard of.
+  - **Paging I/O (`ConstrainedIo`) does not go behind:** Windows waits for a flushed mapped view, and it can come after `Cleanup`. `fsx` over SFTP found this (a seed lost a flushed view's data at close). `a_flushed_mapped_view_is_on_the_server` now covers it.
+  - Tests: 3 unit tests in `behind.rs`; 8 new in `write_path.rs`. Changed to the new rules: the failure tests hear on the next call, `the_limit_is_for_the_whole_callback` uses a flush, and two tests look at the server once the writes are in. Four mutants (no wait in read, cleanup, overlap, size change) were each caught.
+  - Run: workspace tests, `write_path`/`read_path` on MemFs and over SFTP, `fsx` both ways, `lifecycle` with ignored (twice; once, under load from parallel suites, `many_files_on_a_server_that_stopped_answering_still_take_one_timeout_in_all` took over 2 s; alone and in full runs it passes in 0.7 s), `real_drive` without its GiB test.
+  - **Result:** NFR-PERF-06 write on WAN 4.16 → **1.02** of `sftp`, LAN 0.50, the file compared byte for byte. NFR-PERF-07 LAN 2.87.
+
 ## 2026-11-09: M2-07 Bulk and start-up mounting
 
 **Status: done locally, not yet committed; the owner's check (H-08) is still to do.** `fmt`, `clippy --workspace --all-targets -D warnings` pass, as do the tests of `drivemount-core` and `drivemount` (453 passing).

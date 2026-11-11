@@ -17,7 +17,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 use tokio::runtime::Handle;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::time::timeout;
-use tracing::{debug, warn};
+use tracing::{debug, debug_span, warn};
 use windows::Win32::Foundation::{
     NTSTATUS, STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_END_OF_FILE,
     STATUS_INVALID_DEVICE_REQUEST, STATUS_IO_TIMEOUT, STATUS_MEDIA_WRITE_PROTECTED,
@@ -34,6 +34,7 @@ use winfsp::filesystem::{
 use winfsp::{FspError, U16CStr};
 use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
+use crate::behind::{self, Behind};
 use crate::status::fail;
 use crate::{attrs, paths, security};
 
@@ -87,8 +88,10 @@ pub(crate) struct OpenFile {
     /// Something changed this file, so what `reader` fetched before now must not be returned. Taken
     /// by the next read, so that a change never waits for a read of the same file.
     stale: AtomicBool,
-    /// The handle for writes. Overlapping writes can share it.
+    /// The handle for writes. Overlapping writes can share it, as can the writes still on their way.
     writer: RwLock<Option<RemoteHandle>>,
+    /// The writes on their way, and the attributes Windows was told while they are (spec §5.6).
+    behind: Behind,
     /// The listing as of the start of an enumeration, so that later pages neither list the directory
     /// again nor see it change.
     listing: DirBuffer,
@@ -134,8 +137,9 @@ pub(crate) struct Adapter {
     pub(crate) open_files: Arc<Mutex<Vec<Arc<OpenFile>>>>,
 }
 
-/// Closes a file's remote handles. Both go even if closing one fails.
+/// Closes a file's remote handles, once its writes have arrived. Both go even if closing one fails.
 async fn release(fs: &Stack, file: &OpenFile) -> FsResult<()> {
+    file.behind.settle().await;
     let reader = file.reader.lock().await.take();
     let writer = file.writer.write().await.take();
     let reader = match reader {
@@ -155,6 +159,9 @@ pub(crate) async fn close_left_open(fs: &Stack, files: Vec<Arc<OpenFile>>) {
     stream::iter(files)
         .for_each_concurrent(FILES_CLOSED_AT_A_TIME, |file| async move {
             let path = file.path();
+            if let Err(error) = settle(&file).await {
+                warn!(%error, path = %path.as_str(), "writing failed as the drive stopped");
+            }
             if let Some(writer) = file.writer.read().await.as_ref()
                 && let Err(error) = fs.flush(writer).await
             {
@@ -167,13 +174,43 @@ pub(crate) async fn close_left_open(fs: &Stack, files: Vec<Arc<OpenFile>>) {
         .await;
 }
 
+/// Waits for `file`'s writes still on their way, and returns the first that failed and was not yet
+/// reported.
+async fn settle(file: &OpenFile) -> FsResult<()> {
+    file.behind.settle().await;
+    file.behind.take_failed().map_or(Ok(()), Err)
+}
+
+/// Writes all of `data`, in pieces the server takes, side by side (spec §5.6).
+async fn write_all(fs: &Stack, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()> {
+    let chunk = fs.capabilities().max_write.max(1) as usize;
+    let at_a_time = (MAX_BYTES_IN_FLIGHT / chunk).clamp(1, MAX_CHUNKS_IN_FLIGHT);
+    let starts = (0..data.len()).step_by(chunk);
+    stream::iter(starts)
+        .map(|start| {
+            let end = data.len().min(start + chunk);
+            fs.write(handle, offset + start as u64, data.slice(start..end))
+        })
+        .buffer_unordered(at_a_time)
+        .try_collect()
+        .await
+}
+
 impl Adapter {
     /// Runs `work` to its end on this dispatcher thread, for at most the operation timeout in all,
     /// however many remote calls it makes (NFR-REL-03).
     ///
     /// Running out of time while there is no connection is the network being unreachable, not a
     /// server slow to answer (FR-REC-04), and no reason to probe the connection.
-    fn run<T>(&self, work: impl Future<Output = winfsp::Result<T>>) -> winfsp::Result<T> {
+    ///
+    /// Each run is a `callback` span named by `op`, at Debug, so that a profile can see where time
+    /// goes; the remote calls it makes are spans inside it (spec §5.6, NFR-PERF-10).
+    fn run<T>(
+        &self,
+        op: &'static str,
+        work: impl Future<Output = winfsp::Result<T>>,
+    ) -> winfsp::Result<T> {
+        let _span = debug_span!("callback", op).entered();
         let result = self.runtime.block_on(async {
             timeout(self.op_timeout, work).await.unwrap_or_else(|_| {
                 if self.sessions.current().is_some() {
@@ -212,33 +249,64 @@ impl Adapter {
     }
 
     /// Makes the context of a newly opened file.
-    fn track(&self, path: RemotePath, is_dir: bool, writer: Option<RemoteHandle>) -> Arc<OpenFile> {
+    fn track(
+        &self,
+        path: RemotePath,
+        is_dir: bool,
+        writer: Option<RemoteHandle>,
+        told: Option<Attr>,
+    ) -> Arc<OpenFile> {
         let file = Arc::new(OpenFile {
             path: Mutex::new(path),
             is_dir,
             reader: tokio::sync::Mutex::new(None),
             stale: AtomicBool::new(false),
             writer: RwLock::new(writer),
+            behind: Behind::new(told),
             listing: DirBuffer::new(),
         });
         self.open_files().push(Arc::clone(&file));
         file
     }
 
-    /// Tells every reader of `path` that what it fetched so far is out of date (spec §5.6). Called
-    /// however the change ended: a call that failed may still have reached the server.
-    fn contents_changed(&self, path: &RemotePath) {
+    /// Tells every reader of `path` that what it fetched so far is out of date (spec §5.6), and every
+    /// other handle that what it told Windows may be. Called however the change ended: a call that
+    /// failed may still have reached the server.
+    fn contents_changed(&self, path: &RemotePath, by: &Arc<OpenFile>) {
         for file in self.open_files().iter() {
             if *file.path.lock().unwrap_or_else(PoisonError::into_inner) == *path {
                 file.stale.store(true, Ordering::Release);
+                if !Arc::ptr_eq(file, by) {
+                    file.behind.forget();
+                }
             }
         }
     }
 
-    /// Open files follow a rename, whether of the file itself or of a directory above it.
+    /// Waits for the writes on their way to `path` through any handle but `except`, so that what
+    /// comes next sees them. A failure is for those handles' own programs to hear about.
+    async fn settle_path(&self, path: &RemotePath, except: Option<&Arc<OpenFile>>) {
+        let writing: Vec<Arc<OpenFile>> = self
+            .open_files()
+            .iter()
+            .filter(|file| except.is_none_or(|except| !Arc::ptr_eq(file, except)))
+            .filter(|file| file.behind.is_pending())
+            .filter(|file| *file.path.lock().unwrap_or_else(PoisonError::into_inner) == *path)
+            .cloned()
+            .collect();
+        for file in writing {
+            file.behind.settle().await;
+        }
+    }
+
+    /// Open files follow a rename, whether of the file itself or of a directory above it. Those that
+    /// were at the destination no longer know what their name holds.
     fn moved(&self, from: &RemotePath, to: &RemotePath) {
         for file in self.open_files().iter() {
             let mut path = file.path.lock().unwrap_or_else(PoisonError::into_inner);
+            if moved_path(&path, to, to).is_some() {
+                file.behind.forget();
+            }
             if let Some(moved) = moved_path(&path, from, to) {
                 *path = moved;
             }
@@ -259,26 +327,49 @@ impl Adapter {
             .map_err(|_| FsError::Other("the file's handle went away".to_owned()))
     }
 
-    /// Writes all of `data`, in pieces the server takes, side by side (spec §5.6).
-    async fn write_all(&self, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()> {
-        let chunk = self.fs.capabilities().max_write.max(1) as usize;
-        let at_a_time = (MAX_BYTES_IN_FLIGHT / chunk).clamp(1, MAX_CHUNKS_IN_FLIGHT);
-        let starts = (0..data.len()).step_by(chunk);
-        stream::iter(starts)
-            .map(|start| {
-                let end = data.len().min(start + chunk);
-                self.fs
-                    .write(handle, offset + start as u64, data.slice(start..end))
-            })
-            .buffer_unordered(at_a_time)
-            .try_collect()
-            .await
+    /// Sends `data` and returns once there is room for it, before the server has it (spec §5.6). A
+    /// write overlapping one still on its way waits for it, as the two could arrive in either order;
+    /// so does one to a file other handles are writing to.
+    async fn write_behind(&self, file: &Arc<OpenFile>, offset: u64, data: Bytes) -> FsResult<()> {
+        let range = offset..offset + data.len() as u64;
+        if data.is_empty() {
+            return Ok(());
+        }
+        // Opened before anything waits, so that the write below always finds it.
+        drop(self.writer(file).await?);
+        self.settle_path(&file.path(), Some(file)).await;
+        if file.behind.overlaps(&range) {
+            file.behind.settle().await;
+        }
+        let permit = file.behind.begin(range.clone()).await?;
+        let fs = Arc::clone(&self.fs);
+        let file = Arc::clone(file);
+        self.runtime.spawn(async move {
+            // `release` waits for this before it takes the handle.
+            let result = match file.writer.read().await.as_ref() {
+                Some(handle) => write_all(&fs, handle, offset, data).await,
+                None => Err(FsError::Other("the file's handle went away".to_owned())),
+            };
+            if let Err(error) = &result {
+                debug!(%error, path = %file.path().as_str(), "a write behind failed");
+            }
+            behind::finish(&file.behind, &range, result, permit);
+        });
+        Ok(())
     }
 
     /// The attributes of an open file. One with a remote handle has an answer that does not depend
     /// on its path, and that is never stale: a size up to a TTL old is how readers run into the zeros
     /// of NEO's bug class (spec §5.6).
+    ///
+    /// While writes are on their way, the answer is what this handle told Windows, kept up to date by
+    /// those writes: asking the server would mean waiting for them (spec §5.6).
     async fn attr_of(&self, file: &OpenFile) -> FsResult<Attr> {
+        if file.behind.is_pending()
+            && let Some(told) = file.behind.told()
+        {
+            return Ok(told);
+        }
         if let Some(writer) = file.writer.read().await.as_ref() {
             return self.fs.fstat(writer).await;
         }
@@ -290,12 +381,19 @@ impl Adapter {
 
     /// Changes an open file's attributes through its handle if it has one, as that also works on a
     /// file that became read-only since. No handle is opened just for this.
-    async fn set_attr_of(&self, file: &OpenFile, changes: AttrChanges) -> FsResult<Attr> {
-        if let Some(writer) = file.writer.read().await.as_ref() {
-            return self.fs.set_attr(AttrTarget::Handle(writer), changes).await;
-        }
+    ///
+    /// Writes on their way to the file go first, through whichever handle, so that a size set
+    /// afterwards is not undone by a write that arrives later.
+    async fn set_attr_of(&self, file: &Arc<OpenFile>, changes: AttrChanges) -> FsResult<Attr> {
         let path = file.path();
-        self.fs.set_attr(AttrTarget::Path(&path), changes).await
+        self.settle_path(&path, None).await;
+        let attr = if let Some(writer) = file.writer.read().await.as_ref() {
+            self.fs.set_attr(AttrTarget::Handle(writer), changes).await
+        } else {
+            self.fs.set_attr(AttrTarget::Path(&path), changes).await
+        }?;
+        file.behind.tell(attr);
+        Ok(attr)
     }
 
     /// Whether `path` is a link: `stat` shows a link as its target, and a link to a directory is
@@ -341,72 +439,57 @@ impl Adapter {
         }
 
         let mut current = RemotePath::root();
+        let mut attr = None;
         for (index, component) in components.iter().enumerate() {
             let last = index + 1 == components.len();
-            let (next, entry) = self.find_entry(&current, component, last).await?;
-            if !last {
-                self.require_directory(&next, &entry).await?;
+            current = self.find_entry(&current, component, last).await?;
+            // `stat` follows links, so a link to a directory leads on, as a directory does.
+            let found = match self.fs.stat(&current).await {
+                Ok(found) => found,
+                Err(FsError::NotFound | FsError::PathNotFound) if !last => {
+                    return Err(status(STATUS_OBJECT_PATH_NOT_FOUND));
+                }
+                Err(error) => return Err(fail(error)),
+            };
+            if !last && !found.is_dir() {
+                return Err(status(STATUS_OBJECT_PATH_NOT_FOUND));
             }
-            current = next;
+            attr = Some(found);
         }
-        let attr = self.fs.stat(&current).await.map_err(fail)?;
+        let attr = attr.ok_or_else(|| status(STATUS_OBJECT_NAME_INVALID))?;
         Ok(Found {
             path: current,
             attr,
         })
     }
 
-    /// The entry of a directory that a Windows name means.
+    /// The path in a directory that a Windows name means. Looked up in the directory's names, which
+    /// changes through this drive keep up to date, so creating many files in one folder does not
+    /// list it each time (NFR-PERF-07).
     async fn find_entry(
         &self,
         directory: &RemotePath,
         name: &str,
         last: bool,
-    ) -> winfsp::Result<(RemotePath, DirEntry)> {
-        let missing = || {
-            status(if last {
-                STATUS_OBJECT_NAME_NOT_FOUND
-            } else {
-                STATUS_OBJECT_PATH_NOT_FOUND
-            })
-        };
-        let entries = self
+    ) -> winfsp::Result<RemotePath> {
+        let invalid = || status(STATUS_OBJECT_NAME_INVALID);
+        let found = self
             .fs
-            .read_dir(directory)
+            .find_name(directory, name)
             .await
             .map_err(|error| match error {
                 FsError::NotFound | FsError::PathNotFound => status(STATUS_OBJECT_PATH_NOT_FOUND),
                 error => fail(error),
-            })?;
-        let names = entries.iter().map(|entry| entry.name.as_str());
-        let resolved = resolve_name(name, names).map_err(|_| status(STATUS_OBJECT_NAME_INVALID))?;
-        let remote_name = match resolved {
-            Resolved::Exact(name) | Resolved::CaseInsensitive(name) => name,
-            Resolved::Ambiguous | Resolved::NotFound => return Err(missing()),
+            })?
+            .map_err(|_| invalid())?;
+        let Some(remote_name) = found else {
+            return Err(status(if last {
+                STATUS_OBJECT_NAME_NOT_FOUND
+            } else {
+                STATUS_OBJECT_PATH_NOT_FOUND
+            }));
         };
-        let path = directory
-            .join(remote_name)
-            .map_err(|_| status(STATUS_OBJECT_NAME_INVALID))?;
-        let entry = entries
-            .iter()
-            .find(|entry| entry.name == remote_name)
-            .cloned()
-            .ok_or_else(missing)?;
-        Ok((path, entry))
-    }
-
-    /// Refuses to go on through anything but a directory, or a link to one.
-    async fn require_directory(&self, path: &RemotePath, entry: &DirEntry) -> winfsp::Result<()> {
-        let not_found = || status(STATUS_OBJECT_PATH_NOT_FOUND);
-        match entry.attr.kind {
-            FileKind::Dir => Ok(()),
-            FileKind::File | FileKind::Other => Err(not_found()),
-            FileKind::Symlink => match self.fs.stat(path).await {
-                Ok(target) if target.is_dir() => Ok(()),
-                Ok(_) | Err(FsError::NotFound | FsError::PathNotFound) => Err(not_found()),
-                Err(error) => Err(fail(error)),
-            },
-        }
+        directory.join(&remote_name).map_err(|_| invalid())
     }
 
     /// What a search for one name in a directory finds, from the listing.
@@ -563,7 +646,7 @@ impl FileSystemContext for Adapter {
         _reparse_point_resolver: impl FnOnce(&U16CStr) -> Option<FileSecurity>,
     ) -> winfsp::Result<FileSecurity> {
         let components = paths::components(file_name)?;
-        let found = self.run(self.find(&components))?;
+        let found = self.run("get_security_by_name", self.find(&components))?;
         Ok(FileSecurity {
             reparse: false,
             sz_security_descriptor: security::copy_descriptor(
@@ -590,11 +673,11 @@ impl FileSystemContext for Adapter {
         file_info: &mut OpenFileInfo,
     ) -> winfsp::Result<Arc<OpenFile>> {
         let components = paths::components(file_name)?;
-        let found = self.run(self.find(&components))?;
+        let found = self.run("open", self.find(&components))?;
         *file_info.as_mut() = attrs::file_info(&found.attr, &found.path);
         // The name as it is on the server, whatever case was asked for.
         file_info.set_normalized_name(&paths::windows_path(&found.path), None);
-        Ok(self.track(found.path, found.attr.is_dir(), None))
+        Ok(self.track(found.path, found.attr.is_dir(), None, None))
     }
 
     fn create(
@@ -614,7 +697,7 @@ impl FileSystemContext for Adapter {
         let is_dir = create_options & FILE_DIRECTORY_FILE != 0;
         let read_only = file_attributes & FILE_ATTRIBUTE_READONLY.0 != 0;
 
-        let (path, attr, writer) = self.run(async {
+        let (path, attr, writer) = self.run("create", async {
             let place = self.place(&components).await?;
             if place.existing.is_some() {
                 return Err(status(STATUS_OBJECT_NAME_COLLISION));
@@ -638,7 +721,7 @@ impl FileSystemContext for Adapter {
 
         *file_info.as_mut() = attrs::file_info(&attr, &path);
         file_info.set_normalized_name(&paths::windows_path(&path), None);
-        Ok(self.track(path, is_dir, writer))
+        Ok(self.track(path, is_dir, writer, Some(attr)))
     }
 
     fn overwrite(
@@ -659,8 +742,10 @@ impl FileSystemContext for Adapter {
             ..AttrChanges::default()
         };
         let path = context.path();
-        let attr = self.run(async { self.set_attr_of(context, changes).await.map_err(fail) });
-        self.contents_changed(&path);
+        let attr = self.run("overwrite", async {
+            self.set_attr_of(context, changes).await.map_err(fail)
+        });
+        self.contents_changed(&path, context);
         *file_info = attrs::file_info(&attr?, &path);
         Ok(())
     }
@@ -679,27 +764,53 @@ impl FileSystemContext for Adapter {
             return Err(status(STATUS_INVALID_DEVICE_REQUEST));
         }
         let path = context.path();
-        let result = self.run(async {
-            let handle = self.writer(context).await.map_err(fail)?;
+        let result = self.run("write", async {
+            // A write that failed after its call returned is reported here, once.
+            if let Some(error) = context.behind.take_failed() {
+                return Err(fail(error));
+            }
+            // What the file is like before this write: known while this handle's own writes are the
+            // only change, asked otherwise, after the writes on their way have arrived. An append
+            // always asks, as another client may have added to the file.
+            let told = match context.behind.told().filter(|_| !write_to_eof) {
+                Some(told) => told,
+                None => {
+                    self.settle_path(&path, None).await;
+                    let handle = self.writer(context).await.map_err(fail)?;
+                    let attr = self.fs.fstat(&handle).await.map_err(fail)?;
+                    context.behind.tell(attr);
+                    attr
+                }
+            };
             let mut offset = offset;
             let mut len = buffer.len() as u64;
-            if write_to_eof || constrained_io {
-                let size = self.fs.fstat(&handle).await.map_err(fail)?.size;
-                if write_to_eof {
-                    offset = size;
-                } else {
-                    // Paging I/O does not change a file's size.
-                    len = len.min(size.saturating_sub(offset));
-                }
+            if write_to_eof {
+                offset = told.size;
+            } else if constrained_io {
+                // Paging I/O does not change a file's size.
+                len = len.min(told.size.saturating_sub(offset));
             }
             let data = &buffer[..usize::try_from(len).unwrap_or(buffer.len())];
-            self.write_all(&handle, offset, Bytes::copy_from_slice(data))
+            self.write_behind(context, offset, Bytes::copy_from_slice(data))
                 .await
                 .map_err(fail)?;
-            let attr = self.fs.fstat(&handle).await.map_err(fail)?;
+            // Paging I/O is the cache manager writing back, or a mapped view being flushed, which
+            // Windows waits for (`FlushViewOfFile`, and `CloseHandle` after a mapped write): these
+            // can come after `Cleanup`, which can then no longer wait for them. So they arrive before
+            // this returns. A program's own writes come as other writes.
+            if constrained_io {
+                settle(context).await.map_err(fail)?;
+            }
+            // The times stay the server's last answer until the writes have arrived: a time from
+            // this machine's clock could be far from the server's.
+            let attr = Attr {
+                size: told.size.max(offset + len),
+                ..told
+            };
+            context.behind.tell(attr);
             Ok((data.len(), attr))
         });
-        self.contents_changed(&path);
+        self.contents_changed(&path, context);
         let (written, attr) = result?;
         *file_info = attrs::file_info(&attr, &path);
         Ok(u32::try_from(written).unwrap_or(u32::MAX))
@@ -711,11 +822,12 @@ impl FileSystemContext for Adapter {
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
         self.check_writable()?;
-        // Writes are acknowledged before they return, so the volume has nothing waiting.
+        // Each handle's writes on their way are its own to wait for: a volume flush has none.
         let Some(context) = context else {
             return Ok(());
         };
-        let attr = self.run(async {
+        let attr = self.run("flush", async {
+            settle(context).await.map_err(fail)?;
             if let Some(writer) = context.writer.read().await.as_ref() {
                 self.fs.flush(writer).await.map_err(fail)?;
             }
@@ -731,26 +843,31 @@ impl FileSystemContext for Adapter {
             return;
         }
         let path = context.path();
-        let done = if FspCleanupFlags::FspCleanupDelete.is_flagged(flags) {
-            // Handles go first: some servers will not remove an open file.
-            self.run(async {
-                if let Err(error) = release(&self.fs, context).await {
-                    debug!(%error, path = %path.as_str(), "closing failed");
-                }
-                if context.is_dir && !self.is_link(&path).await.map_err(fail)? {
-                    self.fs.remove_dir(&path).await.map_err(fail)
-                } else {
-                    self.fs.remove_file(&path).await.map_err(fail)
-                }
-            })
-        } else {
-            self.run(async {
-                match context.writer.read().await.as_ref() {
-                    Some(writer) => self.fs.flush(writer).await.map_err(fail),
-                    None => Ok(()),
-                }
-            })
-        };
+        // The writes still on their way arrive before the program's `CloseHandle` returns, so that
+        // whoever opens the file next sees them. A failure can only go to the log.
+        if context.behind.is_pending() || context.behind.has_failed() {
+            let written = self.run("cleanup", async { settle(context).await.map_err(fail) });
+            if let Err(error) = written {
+                warn!(status = error.to_ntstatus(), path = %path.as_str(), "writing failed after the program was told it worked");
+            }
+        }
+        // Without the delete flag there is nothing more to do. Closing a file promises no more than
+        // its writes, as on Windows: `FlushFileBuffers` is what asks for the disk (spec §5.6). An
+        // fsync here cost ~5 ms a file (docs/perf/v1.md).
+        if !FspCleanupFlags::FspCleanupDelete.is_flagged(flags) {
+            return;
+        }
+        // Handles go first: some servers will not remove an open file.
+        let done = self.run("cleanup", async {
+            if let Err(error) = release(&self.fs, context).await {
+                debug!(%error, path = %path.as_str(), "closing failed");
+            }
+            if context.is_dir && !self.is_link(&path).await.map_err(fail)? {
+                self.fs.remove_dir(&path).await.map_err(fail)
+            } else {
+                self.fs.remove_file(&path).await.map_err(fail)
+            }
+        });
         // Windows has no way to hear about a failed cleanup: the handle is already closed.
         if let Err(error) = done {
             warn!(status = error.to_ntstatus(), path = %path.as_str(), "cleanup failed");
@@ -777,7 +894,7 @@ impl FileSystemContext for Adapter {
             atime: attrs::system_time(last_access_time),
             size: None,
         };
-        let attr = self.run(async {
+        let attr = self.run("set_basic_info", async {
             if changes == AttrChanges::default() {
                 self.attr_of(context).await
             } else {
@@ -798,7 +915,7 @@ impl FileSystemContext for Adapter {
     ) -> winfsp::Result<()> {
         self.check_writable()?;
         let path = context.path();
-        let attr = self.run(async {
+        let attr = self.run("set_file_size", async {
             if set_allocation_size {
                 // Servers have no allocation to set, but cutting it short does cut the file.
                 let attr = self.attr_of(context).await.map_err(fail)?;
@@ -812,7 +929,7 @@ impl FileSystemContext for Adapter {
             };
             self.set_attr_of(context, changes).await.map_err(fail)
         });
-        self.contents_changed(&path);
+        self.contents_changed(&path, context);
         *file_info = attrs::file_info(&attr?, &path);
         Ok(())
     }
@@ -830,7 +947,7 @@ impl FileSystemContext for Adapter {
             return Ok(());
         }
         let path = context.path();
-        self.run(async {
+        self.run("set_delete", async {
             if self.is_link(&path).await.map_err(fail)? {
                 return Ok(());
             }
@@ -852,7 +969,7 @@ impl FileSystemContext for Adapter {
         self.check_writable()?;
         let components = paths::components(new_file_name)?;
         let from = context.path();
-        let to = self.run(async {
+        let to = self.run("rename", async {
             let place = self.place(&components).await?;
             let to = match place.existing {
                 // The same file, perhaps in another case.
@@ -905,7 +1022,9 @@ impl FileSystemContext for Adapter {
     fn close(&self, context: Arc<OpenFile>) {
         self.open_files()
             .retain(|file| !Arc::ptr_eq(file, &context));
-        let closed = self.run(async { release(&self.fs, &context).await.map_err(fail) });
+        let closed = self.run("close", async {
+            release(&self.fs, &context).await.map_err(fail)
+        });
         if let Err(error) = closed {
             debug!(status = error.to_ntstatus(), path = %context.path().as_str(), "closing failed");
         }
@@ -916,13 +1035,15 @@ impl FileSystemContext for Adapter {
         context: &Arc<OpenFile>,
         file_info: &mut FileInfo,
     ) -> winfsp::Result<()> {
-        let attr = self.run(async { self.attr_of(context).await.map_err(fail) })?;
+        let attr = self.run("get_file_info", async {
+            self.attr_of(context).await.map_err(fail)
+        })?;
         *file_info = attrs::file_info(&attr, &context.path());
         Ok(())
     }
 
     fn get_volume_info(&self, out_volume_info: &mut VolumeInfo) -> winfsp::Result<()> {
-        let stats = self.run(self.volume_stats())?;
+        let stats = self.run("get_volume_info", self.volume_stats())?;
         out_volume_info.total_size = stats.total_bytes;
         out_volume_info.free_size = stats.free_bytes;
         out_volume_info.set_volume_label(&self.label);
@@ -934,7 +1055,9 @@ impl FileSystemContext for Adapter {
             return Err(status(STATUS_INVALID_DEVICE_REQUEST));
         }
         let len = u32::try_from(buffer.len()).unwrap_or(u32::MAX);
-        let result = self.run(async {
+        let result = self.run("read", async {
+            // A read sees every write before it, through whichever handle.
+            self.settle_path(&context.path(), None).await;
             let mut slot = context.reader.lock().await;
             let stale = context.stale.swap(false, Ordering::AcqRel);
             let reader = match &mut *slot {
@@ -989,7 +1112,7 @@ impl FileSystemContext for Adapter {
         // WinFsp reports success as a failure to acquire it.
         match context.listing.acquire(marker.is_none(), None) {
             Ok(lock) => {
-                for mut entry in self.run(self.listing(&context.path()))? {
+                for mut entry in self.run("read_directory", self.listing(&context.path()))? {
                     lock.write(&mut entry)?;
                 }
             }
@@ -1007,7 +1130,10 @@ impl FileSystemContext for Adapter {
     ) -> winfsp::Result<()> {
         let name = String::from_utf16(file_name.as_slice())
             .map_err(|_| status(STATUS_OBJECT_NAME_INVALID))?;
-        *out_dir_info = self.run(self.find_listed(&context.path(), &name))?;
+        *out_dir_info = self.run(
+            "get_dir_info_by_name",
+            self.find_listed(&context.path(), &name),
+        )?;
         Ok(())
     }
 }

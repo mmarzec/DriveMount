@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use tokio::sync::watch;
 use tokio::time::timeout;
+use tracing::{Instrument as _, trace_span};
 
 use crate::{
     Attr, AttrChanges, AttrTarget, Capabilities, DirEntry, FsError, FsResult, FsStats, OpenMode,
@@ -58,8 +59,15 @@ impl<F: RemoteFs> DeadlineFs<F> {
         self.suspect.send_modify(|count| *count += 1);
     }
 
-    async fn limit<T>(&self, call: impl Future<Output = FsResult<T>> + Send) -> FsResult<T> {
+    /// Runs one remote call under the deadline, as a `remote` span named by `op`, at Trace, so that a
+    /// profile can count round trips and see how long each took.
+    async fn limit<T>(
+        &self,
+        op: &'static str,
+        call: impl Future<Output = FsResult<T>> + Send,
+    ) -> FsResult<T> {
         let result = timeout(self.op_timeout, call)
+            .instrument(trace_span!("remote", op))
             .await
             .unwrap_or(Err(FsError::Timeout));
         if matches!(result, Err(FsError::Timeout)) {
@@ -72,63 +80,68 @@ impl<F: RemoteFs> DeadlineFs<F> {
 #[async_trait]
 impl<F: RemoteFs> RemoteFs for DeadlineFs<F> {
     async fn stat(&self, path: &RemotePath) -> FsResult<Attr> {
-        self.limit(self.inner.stat(path)).await
+        self.limit("stat", self.inner.stat(path)).await
     }
 
     async fn lstat(&self, path: &RemotePath) -> FsResult<Attr> {
-        self.limit(self.inner.lstat(path)).await
+        self.limit("lstat", self.inner.lstat(path)).await
     }
 
     async fn fstat(&self, handle: &RemoteHandle) -> FsResult<Attr> {
-        self.limit(self.inner.fstat(handle)).await
+        self.limit("fstat", self.inner.fstat(handle)).await
     }
 
     async fn read_dir(&self, path: &RemotePath) -> FsResult<Vec<DirEntry>> {
-        self.limit(self.inner.read_dir(path)).await
+        self.limit("read_dir", self.inner.read_dir(path)).await
     }
 
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle> {
-        self.limit(self.inner.open(path, mode)).await
+        self.limit("open", self.inner.open(path, mode)).await
     }
 
     async fn read(&self, handle: &RemoteHandle, offset: u64, len: u32) -> FsResult<Bytes> {
-        self.limit(self.inner.read(handle, offset, len)).await
+        self.limit("read", self.inner.read(handle, offset, len))
+            .await
     }
 
     async fn write(&self, handle: &RemoteHandle, offset: u64, data: Bytes) -> FsResult<()> {
-        self.limit(self.inner.write(handle, offset, data)).await
+        self.limit("write", self.inner.write(handle, offset, data))
+            .await
     }
 
     async fn flush(&self, handle: &RemoteHandle) -> FsResult<()> {
-        self.limit(self.inner.flush(handle)).await
+        self.limit("flush", self.inner.flush(handle)).await
     }
 
     async fn close(&self, handle: RemoteHandle) -> FsResult<()> {
-        self.limit(self.inner.close(handle)).await
+        self.limit("close", self.inner.close(handle)).await
     }
 
     async fn set_attr(&self, target: AttrTarget<'_>, changes: AttrChanges) -> FsResult<Attr> {
-        self.limit(self.inner.set_attr(target, changes)).await
+        self.limit("set_attr", self.inner.set_attr(target, changes))
+            .await
     }
 
     async fn mkdir(&self, path: &RemotePath) -> FsResult<Attr> {
-        self.limit(self.inner.mkdir(path)).await
+        self.limit("mkdir", self.inner.mkdir(path)).await
     }
 
     async fn remove_file(&self, path: &RemotePath) -> FsResult<()> {
-        self.limit(self.inner.remove_file(path)).await
+        self.limit("remove_file", self.inner.remove_file(path))
+            .await
     }
 
     async fn remove_dir(&self, path: &RemotePath) -> FsResult<()> {
-        self.limit(self.inner.remove_dir(path)).await
+        self.limit("remove_dir", self.inner.remove_dir(path)).await
     }
 
     async fn rename(&self, from: &RemotePath, to: &RemotePath, replace: bool) -> FsResult<()> {
-        self.limit(self.inner.rename(from, to, replace)).await
+        self.limit("rename", self.inner.rename(from, to, replace))
+            .await
     }
 
     async fn statfs(&self) -> FsResult<FsStats> {
-        self.limit(self.inner.statfs()).await
+        self.limit("statfs", self.inner.statfs()).await
     }
 
     fn capabilities(&self) -> Capabilities {

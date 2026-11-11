@@ -37,7 +37,9 @@ pub use error::{ChangedHostKey, ConnectError, FsError, FsResult, MountError, Rev
 #[cfg(feature = "testing")]
 pub use memfs::MemFs;
 pub use mount::{DriveLetter, Health, MountBackend};
-pub use names::{NameError, Resolved, remote_to_windows, resolve_name, windows_to_remote};
+pub use names::{
+    NameError, NameIndex, Resolved, remote_to_windows, resolve_name, windows_to_remote,
+};
 pub use path::{PathError, RemotePath};
 pub use prompt::{
     HostKeyDecision, HostKeyRequest, KbdIntPrompt, KbdIntRequest, LoginAnswer, LoginRequest,

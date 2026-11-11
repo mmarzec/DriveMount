@@ -472,7 +472,9 @@ fn a_handle_for_both_only_opens_what_it_uses() {
     let mut read = String::new();
     file.read_to_string(&mut read).unwrap();
     assert_eq!(read, "contents");
-    assert_eq!(code(file.write_all(b"x")), ERROR_ACCESS_DENIED);
+    // The write is refused after its call returned, and the next call hears of it (spec §5.6).
+    file.write_all(b"x").unwrap();
+    assert_eq!(code(file.sync_all()), ERROR_ACCESS_DENIED);
 }
 
 #[test]
@@ -730,6 +732,129 @@ fn allocation_only_ever_shortens_a_file() {
     assert!(drive.get("/file") == data[..4096]);
 }
 
+// ---------------------------------------------------------------- write-behind (spec §5.6, ADR-0002)
+
+/// Long enough to tell waiting from not, well under any limit.
+const SLOW_WRITE: Duration = Duration::from_millis(300);
+
+#[test]
+fn a_write_returns_before_the_server_has_it() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    let start = Instant::now();
+    file.write_all(b"contents").unwrap();
+    assert!(start.elapsed() < SLOW_WRITE, "{:?}", start.elapsed());
+    // Windows is told the size all the same.
+    assert_eq!(file.metadata().unwrap().len(), 8);
+    drop(file);
+}
+
+#[test]
+fn closing_a_file_waits_for_its_writes() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    file.write_all(b"contents").unwrap();
+    drop(file);
+    // Whoever looks next sees them, without waiting.
+    assert_eq!(drive.get("/file"), b"contents");
+    assert_eq!(fs::read(drive.path("file")).unwrap(), b"contents");
+}
+
+#[test]
+fn another_handle_reads_what_was_written_before() {
+    let drive = Drive::new();
+    drive.put("/file", b"before");
+    let mut reader = File::open(drive.path("file")).unwrap();
+    let mut writer = OpenOptions::new()
+        .write(true)
+        .share_mode(SHARE_ALL)
+        .open(drive.path("file"))
+        .unwrap();
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    writer.write_all(b"AFTER!").unwrap();
+    let mut read = Vec::new();
+    reader.read_to_end(&mut read).unwrap();
+    assert_eq!(read, b"AFTER!");
+    // And the handle that wrote, too.
+    let mut both = read_write(&drive.path("file"));
+    both.write_all(b"again").unwrap();
+    both.seek(SeekFrom::Start(0)).unwrap();
+    let mut read = Vec::new();
+    both.read_to_end(&mut read).unwrap();
+    assert_eq!(read, b"again!");
+}
+
+#[test]
+fn overlapping_writes_arrive_in_order() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    file.write_all(b"aaaa").unwrap();
+    drive.probe.delay(Op::Write, Duration::ZERO);
+    file.seek(SeekFrom::Start(1)).unwrap();
+    file.write_all(b"bb").unwrap();
+    drop(file);
+    assert_eq!(drive.get("/file"), b"abba");
+}
+
+/// Windows waits for a mapped view's paging writes, which can come after `Cleanup`, so these do not
+/// go behind (fsx found this).
+#[test]
+fn a_flushed_mapped_view_is_on_the_server() {
+    let drive = Drive::new();
+    fs::write(drive.path("file"), pattern(100_000, 3)).unwrap();
+    let file = read_write(&drive.path("file"));
+    let mut view = MappedFile::new(&file, 100_000);
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    view.bytes()[70_000..70_005].copy_from_slice(b"hello");
+    view.flush();
+    assert_eq!(&drive.get("/file")[70_000..70_005], b"hello");
+    drop(view);
+    drop(file);
+}
+
+#[test]
+fn a_size_set_after_writes_is_not_undone_by_them() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.delay(Op::Write, SLOW_WRITE);
+    file.write_all(&[7; 100]).unwrap();
+    file.set_len(10).unwrap();
+    assert_eq!(file.metadata().unwrap().len(), 10);
+    drop(file);
+    assert_eq!(drive.get("/file"), [7; 10]);
+}
+
+#[test]
+fn a_failed_write_is_heard_once() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.fail(Op::Write, FsError::NoSpace);
+    file.write_all(b"lost").unwrap();
+    assert_eq!(code(file.sync_all()), ERROR_DISK_FULL);
+    // Heard, so not again: a program that starts over can succeed.
+    drive.probe.heal(Op::Write);
+    file.seek(SeekFrom::Start(0)).unwrap();
+    file.write_all(b"kept").unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    assert_eq!(drive.get("/file"), b"kept");
+}
+
+/// What a program that never asks again cannot hear goes to the log, and the drive goes on.
+#[test]
+fn a_failed_write_nobody_heard_of_does_not_stop_the_close() {
+    let drive = Drive::new();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.fail(Op::Write, FsError::NoSpace);
+    file.write_all(b"lost").unwrap();
+    drop(file);
+    assert!(eventually(|| drive.probe.open_handles() == 0));
+    assert_eq!(drive.get("/file"), b"");
+}
+
 // ---------------------------------------------------------------- flushing
 
 #[test]
@@ -743,16 +868,17 @@ fn flushing_a_file_reaches_the_server() {
 }
 
 #[test]
-fn closing_a_written_file_flushes_it_and_a_file_only_read_is_not() {
+fn closing_a_file_does_not_flush_it() {
+    // As on Windows, only `FlushFileBuffers` asks for the disk; a close promises no more than the
+    // acknowledged writes (spec §5.6).
     let drive = Drive::new();
     drive.put("/read", b"x");
     let flushes = drive.probe.count(Op::Flush);
     fs::read(drive.path("read")).unwrap();
-    File::open(drive.path("read")).unwrap();
-    assert_eq!(drive.probe.count(Op::Flush), flushes);
-
     fs::write(drive.path("written"), b"x").unwrap();
-    assert!(eventually(|| drive.probe.count(Op::Flush) == flushes + 1));
+    assert!(eventually(|| drive.probe.open_handles() == 0));
+    assert_eq!(drive.probe.count(Op::Flush), flushes);
+    assert_eq!(drive.get("/written"), b"x");
 }
 
 #[test]
@@ -763,17 +889,6 @@ fn closing_a_new_file_that_was_never_written_does_not_flush_it() {
     assert!(eventually(|| drive.probe.count(Op::Close) >= 1));
     assert_eq!(drive.probe.count(Op::Flush), flushes);
     assert_eq!(drive.get("/empty"), b"");
-}
-
-/// A failed cleanup cannot tell Windows, but must not take the file with it either.
-#[test]
-fn a_failed_flush_on_close_loses_nothing_that_was_acknowledged() {
-    let drive = Drive::new();
-    drive
-        .probe
-        .fail(Op::Flush, FsError::Other("broken".to_owned()));
-    fs::write(drive.path("file"), b"contents").unwrap();
-    assert_eq!(drive.get("/file"), b"contents");
 }
 
 #[test]
@@ -1019,7 +1134,7 @@ fn delete_on_close_removes_the_file_when_the_handle_closes() {
         .open(drive.path("temp"))
         .unwrap();
     file.write_all(b"scratch").unwrap();
-    assert_eq!(drive.get("/temp"), b"scratch");
+    assert!(eventually(|| drive.get("/temp") == b"scratch"));
     drop(file);
     assert!(eventually(|| drive.attr("/temp").is_none()));
     assert!(sorted_names(&drive, "").is_empty());
@@ -1597,8 +1712,11 @@ fn a_full_disk_says_so_and_what_was_written_before_stays() {
     let drive = Drive::new();
     let mut file = File::create(drive.path("file")).unwrap();
     file.write_all(b"before").unwrap();
+    file.sync_all().unwrap();
     drive.probe.fail(Op::Write, FsError::NoSpace);
-    assert_eq!(code(file.write_all(b"x")), ERROR_DISK_FULL);
+    // Writes return before the server answers, so a later call is the one to hear (spec §5.6).
+    file.write_all(b"x").unwrap();
+    assert_eq!(code(file.sync_all()), ERROR_DISK_FULL);
     drop(file);
     assert_eq!(drive.get("/file"), b"before");
 }
@@ -1686,8 +1804,13 @@ fn a_hung_write_times_out_and_the_next_can_work() {
         .open(drive.path("file"))
         .unwrap();
     drive.probe.delay(Op::Write, HANG);
-    assert_times_out(&drive, || file.write_all(b"x"));
+    // The write returns at once; the flush waits for it, until the write's own limit.
+    file.write_all(b"x").unwrap();
+    assert_times_out(&drive, || file.sync_all());
     drive.probe.delay(Op::Write, Duration::ZERO);
+    // The flush's own limit may end it just before the write's: then the write's failure is still to
+    // be heard, once.
+    let _ = file.sync_all();
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write_all(b"after!").unwrap();
     drop(file);
@@ -1780,10 +1903,11 @@ fn closing_a_handle_is_bounded_when_the_server_hangs() {
 fn the_limit_is_for_the_whole_callback() {
     let drive = short_drive();
     let mut file = File::create(drive.path("file")).unwrap();
-    // Each call is under the limit, and a write makes one of each.
-    drive.probe.delay(Op::Write, Duration::from_millis(150));
+    file.write_all(b"x").unwrap();
+    // Each call is under the limit, and a flush makes one of each.
+    drive.probe.delay(Op::Flush, Duration::from_millis(150));
     drive.probe.delay(Op::Fstat, Duration::from_millis(150));
-    assert_times_out(&drive, || file.write_all(b"x"));
+    assert_times_out(&drive, || file.sync_all());
 }
 
 // ---------------------------------------------------------------- a read-only drive (FR-MNT-07)
@@ -1883,6 +2007,8 @@ fn a_written_file_shows_times_and_size_from_the_server() {
     let drive = Drive::new();
     let mut file = File::create(drive.path("file")).unwrap();
     file.write_all(&[1; 5000]).unwrap();
+    // Once the writes have arrived: until then the times are the server's last answer.
+    file.sync_all().unwrap();
     let metadata = file.metadata().unwrap();
     assert_eq!(metadata.len(), 5000);
     let attr: Attr = drive.attr("/file").unwrap();

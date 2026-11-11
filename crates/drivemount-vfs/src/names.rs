@@ -25,6 +25,8 @@
 //! long as no other entry looks the same.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::hash::{BuildHasher, Hasher, RandomState};
 
 use thiserror::Error;
 
@@ -162,6 +164,103 @@ pub fn resolve_name<'a>(
         (Matches::None, Matches::None) => Resolved::NotFound,
         _ => Resolved::Ambiguous,
     })
+}
+
+/// The names of one directory, arranged so that [`resolve`](Self::resolve) looks only at the few
+/// that can match, rather than going through the whole listing as [`resolve_name`] does.
+///
+/// Names are kept under a hash of how they compare on Windows, ignoring case, so a lookup costs the
+/// same in a directory of 10 or 10,000 names, and names can be added and removed one at a time.
+#[derive(Debug, Clone, Default)]
+pub struct NameIndex {
+    /// Names whose Windows form, ignoring case, hashes to the key. Usually just one.
+    buckets: HashMap<u64, Vec<Box<str>>>,
+    hasher: RandomState,
+    len: usize,
+}
+
+impl NameIndex {
+    /// An index of `names`, which are those of one directory, so each appears only once.
+    #[must_use]
+    pub fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut index = Self::default();
+        for name in names {
+            index.insert(name);
+        }
+        index
+    }
+
+    /// How many names it holds.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Whether it holds no names.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Adds a remote name, unless it is there already.
+    pub fn insert(&mut self, name: &str) {
+        let bucket = self.buckets.entry(self.key_of_remote(name)).or_default();
+        if !bucket.iter().any(|known| known.as_ref() == name) {
+            bucket.push(name.into());
+            self.len += 1;
+        }
+    }
+
+    /// Removes a remote name, if it is there.
+    pub fn remove(&mut self, name: &str) {
+        let key = self.key_of_remote(name);
+        let Some(bucket) = self.buckets.get_mut(&key) else {
+            return;
+        };
+        if let Some(at) = bucket.iter().position(|known| known.as_ref() == name) {
+            bucket.swap_remove(at);
+            self.len -= 1;
+            if bucket.is_empty() {
+                self.buckets.remove(&key);
+            }
+        }
+    }
+
+    /// What [`resolve_name`] would find in a listing of these names.
+    ///
+    /// # Errors
+    ///
+    /// A [`NameError`] if `windows_name` has no remote form.
+    pub fn resolve(&self, windows_name: &str) -> Result<Resolved<'_>, NameError> {
+        let wanted = windows_to_remote(windows_name)?;
+        // Every name that can match looks the same as `windows_name` once case is ignored, except the
+        // exact remote name, which a name Windows itself would never send can lead elsewhere.
+        let exact = self
+            .bucket(self.key_of_remote(&wanted))
+            .iter()
+            .find(|name| name.as_ref() == wanted.as_ref());
+        let alike = self.bucket(self.key_of_shown(windows_name));
+        resolve_name(
+            windows_name,
+            exact.into_iter().chain(alike).map(AsRef::as_ref),
+        )
+    }
+
+    fn bucket(&self, key: u64) -> &[Box<str>] {
+        self.buckets.get(&key).map_or(&[], Vec::as_slice)
+    }
+
+    fn key_of_remote(&self, name: &str) -> u64 {
+        self.key_of_shown(&remote_to_windows(name))
+    }
+
+    fn key_of_shown(&self, shown: &str) -> u64 {
+        let mut hasher = self.hasher.build_hasher();
+        for c in shown.chars() {
+            hasher.write_u32(u32::from(fold_case(c)));
+        }
+        hasher.finish()
+    }
 }
 
 /// How many entries of a listing matched, and the entry if there was just one.
@@ -560,6 +659,48 @@ mod tests {
                     }
                 };
                 prop_assert_eq!(find(&shown, &names), expected);
+            }
+        }
+
+        #[test]
+        fn an_index_finds_what_a_listing_does(
+            listing in prop::collection::btree_set(awkward_name(), 0..12),
+            wanted in prop::collection::vec(awkward_name(), 1..8),
+        ) {
+            let names: Vec<&str> = listing.iter().map(String::as_str).collect();
+            let index = NameIndex::new(names.iter().copied());
+            prop_assert_eq!(index.len(), names.len());
+            // Names a listing holds, as Windows shows them, and names it may not hold, sent as they
+            // are, which may be no name Windows would ever send.
+            let shown = listing.iter().map(|name| remote_to_windows(name).into_owned());
+            for name in shown.chain(wanted) {
+                prop_assert_eq!(index.resolve(&name), resolve_name(&name, names.iter().copied()));
+            }
+        }
+
+        #[test]
+        fn an_index_kept_up_to_date_finds_what_a_fresh_one_does(
+            listing in crowded_listing(),
+            changes in prop::collection::vec((any::<bool>(), crowded_listing()), 0..6),
+        ) {
+            let mut kept = NameIndex::new(listing.iter().map(String::as_str));
+            let mut model = listing;
+            for (add, names) in changes {
+                for name in names {
+                    if add {
+                        kept.insert(&name);
+                        kept.insert(&name);
+                        model.insert(name);
+                    } else {
+                        kept.remove(&name);
+                        model.remove(&name);
+                    }
+                }
+            }
+            let fresh = NameIndex::new(model.iter().map(String::as_str));
+            prop_assert_eq!(kept.len(), model.len());
+            for name in ["a", "A", "b", "B", "ab", "AB", "a\u{F03A}", ":", "Ab.b"] {
+                prop_assert_eq!(kept.resolve(name), fresh.resolve(name), "{}", name);
             }
         }
 

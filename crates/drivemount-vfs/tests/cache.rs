@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use drivemount_vfs::{
     Attr, AttrChanges, AttrTarget, Bytes, CachedFs, Capabilities, DirEntry, Disposition, FsError,
-    FsResult, FsStats, MemFs, OpenMode, RemoteFs, RemoteHandle, RemotePath, async_trait, contract,
+    FsResult, FsStats, MemFs, OpenMode, RemoteFs, RemoteHandle, RemotePath, Resolved, async_trait,
+    contract, resolve_name,
 };
 use proptest::prelude::*;
 use tokio::sync::Notify;
@@ -740,6 +741,111 @@ async fn set_attr_by_handle_invalidates_the_file_and_the_listing() {
     fs.close(handle).await.unwrap();
 }
 
+/// What `set_attr` answers is the file after the change, so the next lookup need not ask.
+#[tokio::test(start_paused = true)]
+async fn set_attr_keeps_its_answer() {
+    let (fs, server) = primed().await;
+    let changes = AttrChanges {
+        size: Some(2),
+        ..AttrChanges::default()
+    };
+    fs.set_attr(AttrTarget::Path(&path("/d/f")), changes)
+        .await
+        .unwrap();
+    assert!(!stat_reaches_server(&*fs, &server, "/d/f").await);
+    assert_eq!(size(&*fs, "/d/f").await, Ok(2));
+
+    let handle = fs
+        .open(&path("/d/f"), OpenMode::write(Disposition::OpenExisting))
+        .await
+        .unwrap();
+    let changes = AttrChanges {
+        size: Some(1),
+        ..AttrChanges::default()
+    };
+    fs.set_attr(AttrTarget::Handle(&handle), changes)
+        .await
+        .unwrap();
+    assert!(!stat_reaches_server(&*fs, &server, "/d/f").await);
+    assert_eq!(size(&*fs, "/d/f").await, Ok(1));
+    fs.close(handle).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn fstat_answers_for_the_path_of_its_handle() {
+    let (fs, server) = primed().await;
+    let handle = fs
+        .open(&path("/d/f"), OpenMode::write(Disposition::OpenExisting))
+        .await
+        .unwrap();
+    fs.write(&handle, 5, Bytes::from_static(b"678"))
+        .await
+        .unwrap();
+    assert_eq!(fs.fstat(&handle).await.unwrap().size, 8);
+    assert!(!stat_reaches_server(&*fs, &server, "/d/f").await);
+    assert_eq!(size(&*fs, "/d/f").await, Ok(8));
+
+    // Closing a written file drops it again, as servers can change the times then.
+    fs.close(handle).await.unwrap();
+    assert!(stat_reaches_server(&*fs, &server, "/d/f").await);
+}
+
+/// An open file outlives its name: after the name is removed or replaced, the handle's answers are
+/// about a file the path no longer names.
+#[tokio::test(start_paused = true)]
+async fn a_handle_whose_name_went_does_not_answer_for_the_path() {
+    for replace in [false, true] {
+        let (fs, _server) = primed().await;
+        let handle = fs.open(&path("/d/f"), OpenMode::read()).await.unwrap();
+        if replace {
+            create(&*fs, "/d/other", b"12").await;
+            fs.rename(&path("/d/other"), &path("/d/f"), true)
+                .await
+                .unwrap();
+        } else {
+            fs.remove_file(&path("/d/f")).await.unwrap();
+            create(&*fs, "/d/f", b"12").await;
+        }
+        assert_eq!(
+            fs.fstat(&handle).await.unwrap().size,
+            5,
+            "replace {replace}"
+        );
+        assert_eq!(size(&*fs, "/d/f").await, Ok(2), "replace {replace}");
+        fs.close(handle).await.unwrap();
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_set_attr_overtaken_by_a_write_is_not_kept() {
+    let (fs, server) = primed().await;
+    let writer = fs
+        .open(&path("/d/f"), OpenMode::write(Disposition::OpenExisting))
+        .await
+        .unwrap();
+    let hold = server.hold("set_attr");
+    let setting = {
+        let fs = fs.clone();
+        tokio::spawn(async move {
+            let changes = AttrChanges {
+                size: Some(2),
+                ..AttrChanges::default()
+            };
+            fs.set_attr(AttrTarget::Path(&path("/d/f")), changes)
+                .await
+                .unwrap()
+        })
+    };
+    hold.reached.notified().await;
+    fs.write(&writer, 0, Bytes::from_static(b"1234567"))
+        .await
+        .unwrap();
+    hold.go_on.notify_one();
+    assert_eq!(setting.await.unwrap().size, 2);
+    assert_eq!(size(&*fs, "/d/f").await, Ok(7));
+    fs.close(writer).await.unwrap();
+}
+
 #[tokio::test(start_paused = true)]
 async fn the_read_only_attribute_shows_at_once() {
     let (fs, _server) = primed().await;
@@ -1175,6 +1281,167 @@ async fn a_listing_too_big_for_the_cache_still_works_and_pushes_nothing_out() {
     assert!(!listing_reaches_server(&*fs, &server, "/small").await);
 }
 
+// -- Finding a name in any case ----------------------------------------------------------------
+
+async fn find(fs: &CachedFs<Server>, dir: &str, name: &str) -> Option<String> {
+    fs.find_name(&path(dir), name).await.unwrap().unwrap()
+}
+
+#[tokio::test(start_paused = true)]
+async fn find_name_ignores_case_only_when_one_name_matches() {
+    let (fs, server) = cached(TTL);
+    mkdir(&server, "/d").await;
+    create(&server, "/d/Report.txt", b"").await;
+    create(&server, "/d/notes", b"").await;
+    create(&server, "/d/NOTES", b"").await;
+
+    assert_eq!(
+        find(&fs, "/d", "REPORT.TXT").await.as_deref(),
+        Some("Report.txt")
+    );
+    assert_eq!(find(&fs, "/d", "NOTES").await.as_deref(), Some("NOTES"));
+    assert_eq!(find(&fs, "/d", "Notes").await, None, "ambiguous");
+    assert_eq!(find(&fs, "/d", "other").await, None);
+    assert_eq!(
+        fs.find_name(&path("/d"), "..").await.unwrap(),
+        Err(drivemount_vfs::NameError::DotName)
+    );
+    assert_eq!(server.calls("read_dir"), 1);
+}
+
+/// NFR-PERF-07: each new file used to cost a listing of its whole folder (M1-19's finding).
+#[tokio::test(start_paused = true)]
+async fn filling_a_folder_lists_it_once() {
+    let (fs, server) = cached(TTL);
+    mkdir(&server, "/d").await;
+    for i in 0..100 {
+        let name = format!("File{i}");
+        assert_eq!(find(&fs, "/d", &name.to_lowercase()).await, None);
+        create(&*fs, &format!("/d/{name}"), b"data").await;
+        assert_eq!(
+            find(&fs, "/d", &name.to_uppercase()).await,
+            Some(name),
+            "the new name is found at once, in any case"
+        );
+    }
+    assert_eq!(server.calls("read_dir"), 1);
+
+    fs.remove_file(&path("/d/File7")).await.unwrap();
+    assert_eq!(find(&fs, "/d", "file7").await, None);
+    fs.rename(&path("/d/File8"), &path("/d/Moved"), false)
+        .await
+        .unwrap();
+    assert_eq!(find(&fs, "/d", "file8").await, None);
+    assert_eq!(find(&fs, "/d", "MOVED").await.as_deref(), Some("Moved"));
+    fs.mkdir(&path("/d/Sub")).await.unwrap();
+    assert_eq!(find(&fs, "/d", "sub").await.as_deref(), Some("Sub"));
+    fs.remove_dir(&path("/d/Sub")).await.unwrap();
+    assert_eq!(find(&fs, "/d", "sub").await, None);
+    assert_eq!(server.calls("read_dir"), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn names_last_as_long_as_the_listing_they_came_from() {
+    let (fs, server) = cached(TTL);
+    mkdir(&server, "/d").await;
+    names(&*fs, "/d").await;
+    advance(TTL - MS).await;
+    create(&server, "/d/behind-the-back", b"").await;
+
+    assert_eq!(find(&fs, "/d", "BEHIND-THE-BACK").await, None);
+    advance(MS).await;
+    assert_eq!(
+        find(&fs, "/d", "BEHIND-THE-BACK").await.as_deref(),
+        Some("behind-the-back")
+    );
+    assert_eq!(server.calls("read_dir"), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_change_with_an_unknown_outcome_drops_the_names() {
+    let (fs, server) = primed().await;
+    assert_eq!(find(&fs, "/d", "F").await.as_deref(), Some("f"));
+    server.lose_replies.store(true, Ordering::SeqCst);
+
+    fs.remove_file(&path("/d/f")).await.unwrap_err();
+    let listed = server.calls("read_dir");
+    assert_eq!(find(&fs, "/d", "F").await, None, "it was removed after all");
+    assert_eq!(server.calls("read_dir"), listed + 1);
+
+    fs.mkdir(&path("/d/new")).await.unwrap_err();
+    assert_eq!(find(&fs, "/d", "NEW").await.as_deref(), Some("new"));
+
+    fs.rename(&path("/d/new"), &path("/d/renamed"), false)
+        .await
+        .unwrap_err();
+    assert_eq!(find(&fs, "/d", "NEW").await, None);
+    assert_eq!(find(&fs, "/d", "RENAMED").await.as_deref(), Some("renamed"));
+    server.lose_replies.store(false, Ordering::SeqCst);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_dropped_create_drops_the_names() {
+    let (fs, server) = primed().await;
+    assert_eq!(find(&fs, "/d", "G").await, None);
+    let hold = server.hold("open");
+    let creating = {
+        let fs = fs.clone();
+        tokio::spawn(async move {
+            fs.open(&path("/d/g"), OpenMode::write(Disposition::CreateNew))
+                .await
+        })
+    };
+    hold.reached.notified().await;
+    creating.abort();
+    assert!(creating.await.unwrap_err().is_cancelled());
+
+    assert_eq!(find(&fs, "/d", "G").await.as_deref(), Some("g"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn names_overtaken_by_a_create_are_not_kept() {
+    let (fs, server) = cached(TTL);
+    mkdir(&server, "/d").await;
+    let hold = server.hold("read_dir");
+    let looking = {
+        let fs = fs.clone();
+        tokio::spawn(async move { fs.find_name(&path("/d"), "NEW").await })
+    };
+    hold.reached.notified().await;
+    create(&*fs, "/d/new", b"").await;
+    hold.go_on.notify_one();
+    assert_eq!(
+        looking.await.unwrap(),
+        Ok(Ok(None)),
+        "asked before the create"
+    );
+
+    assert_eq!(find(&fs, "/d", "NEW").await.as_deref(), Some("new"));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_zero_ttl_keeps_no_names() {
+    let (fs, server) = cached(Duration::ZERO);
+    mkdir(&server, "/d").await;
+    create(&server, "/d/f", b"").await;
+    assert_eq!(find(&fs, "/d", "F").await.as_deref(), Some("f"));
+    assert_eq!(find(&fs, "/d", "F").await.as_deref(), Some("f"));
+    assert_eq!(server.calls("read_dir"), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_names_of_a_folder_too_big_to_list_from_memory_are_kept() {
+    let (fs, server) = cached(TTL);
+    mkdir(&server, "/huge").await;
+    for i in 0..10_000 {
+        create(&server, &format!("/huge/{i}"), b"").await;
+    }
+    assert_eq!(find(&fs, "/huge", "9999").await.as_deref(), Some("9999"));
+    create(&*fs, "/huge/New", b"").await;
+    assert_eq!(find(&fs, "/huge", "NEW").await.as_deref(), Some("New"));
+    assert_eq!(server.calls("read_dir"), 1);
+}
+
 // -- The requirement and the contract ----------------------------------------------------------
 
 /// NFR-REL-02: what happens through the drive shows in the very next listing. The first listing of
@@ -1233,7 +1500,10 @@ async fn passes_the_contract_on_worker_threads_behind_dyn() {
 
 // -- Any sequence of local changes -------------------------------------------------------------
 
-const MODEL_PATHS: [&str; 7] = ["/a", "/b", "/a/a", "/a/b", "/b/a", "/b/b", "/a/a/a"];
+/// Upper-case names too, so that finding a name has cases to tell apart.
+const MODEL_PATHS: [&str; 9] = [
+    "/a", "/b", "/A", "/a/a", "/a/b", "/a/B", "/b/a", "/b/b", "/a/a/a",
+];
 
 #[derive(Debug, Clone)]
 enum Op {
@@ -1246,6 +1516,8 @@ enum Op {
     Open(usize),
     Write(usize),
     SetSize(usize),
+    SetSizeByPath(usize),
+    Fstat(usize),
     Flush(usize),
     Close(usize),
 }
@@ -1260,9 +1532,11 @@ fn op() -> impl Strategy<Value = Op> {
         at.clone().prop_map(Op::RemoveFile),
         at.clone().prop_map(Op::RemoveDir),
         (at.clone(), at.clone(), any::<bool>()).prop_map(|(a, b, r)| Op::Rename(a, b, r)),
-        at.prop_map(Op::Open),
+        at.clone().prop_map(Op::Open),
         handle.clone().prop_map(Op::Write),
         handle.clone().prop_map(Op::SetSize),
+        at.clone().prop_map(Op::SetSizeByPath),
+        handle.clone().prop_map(Op::Fstat),
         handle.clone().prop_map(Op::Flush),
         handle.prop_map(Op::Close),
     ]
@@ -1310,6 +1584,12 @@ async fn apply(fs: &impl RemoteFs, op: Op, handles: &mut Vec<RemoteHandle>) {
                 drop(fs.set_attr(AttrTarget::Handle(handle), resize).await);
             }
         }
+        Op::SetSizeByPath(i) => drop(fs.set_attr(AttrTarget::Path(&at(i)), resize).await),
+        Op::Fstat(i) => {
+            if let Some(handle) = handles.get(i) {
+                drop(fs.fstat(handle).await);
+            }
+        }
         Op::Flush(i) => {
             if let Some(handle) = handles.get(i) {
                 drop(fs.flush(handle).await);
@@ -1353,6 +1633,23 @@ proptest! {
                 apply(&fs, op, &mut handles).await;
                 for at in MODEL_PATHS.iter().chain(&["/"]).map(|at| path(at)) {
                     assert_eq!(fs.stat(&at).await, server.fs.stat(&at).await, "stat {at} after {step}");
+                    // Before the listing, which would fill the names afresh.
+                    for name in ["a", "A", "b", "B"] {
+                        let expected = server.fs.read_dir(&at).await.map(|entries| {
+                            let names = entries.iter().map(|entry| entry.name.as_str());
+                            match resolve_name(name, names).unwrap() {
+                                Resolved::Exact(found) | Resolved::CaseInsensitive(found) => {
+                                    Some(found.to_owned())
+                                }
+                                Resolved::Ambiguous | Resolved::NotFound => None,
+                            }
+                        });
+                        assert_eq!(
+                            fs.find_name(&at, name).await.map(Result::unwrap),
+                            expected,
+                            "finding {name} in {at} after {step}"
+                        );
+                    }
                     assert_eq!(
                         sorted(fs.read_dir(&at).await),
                         sorted(server.fs.read_dir(&at).await),

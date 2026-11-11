@@ -247,7 +247,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-PERF-04 | Idle working set after 60 s: no mounts / each additional idle mount | < 40 MB / < 8 MB |
 | NFR-PERF-05 | CPU while idle with 5 mounts | < 0.1% average over 10 min; no periodic wake-ups apart from keep-alives |
 | NFR-PERF-06 | Sequential read and write of a 1 GB file through Explorer copy, compared with OpenSSH `sftp` get/put on the same link | ≥ 90% (LAN and WAN) |
-| NFR-PERF-07 | Copying 10,000 × 4 KB files to the drive (robocopy) | ≤ 1.3× the time of `scp -r` |
+| NFR-PERF-07 | Copying 10,000 × 4 KB files to the drive (robocopy) on LAN | ≤ 3× the time of `scp -r` (relaxed from 1.3× in M2-08: robocopy needs about 10 round trips a file where `scp` streams, docs/perf/v1.md) |
 | NFR-PERF-08 | Listing a directory of 1,000 entries: first listing on LAN / repeated within cache TTL | < 300 ms / < 20 ms |
 | NFR-PERF-09 | Opening a mounted drive root in Explorer on LAN | < 500 ms until contents are shown |
 | NFR-PERF-10 | UI responsiveness: no UI-thread work > 16 ms. All network and file system work runs off the UI thread. | Verified with tracing spans |
@@ -503,11 +503,12 @@ What the table leaves open (`drivemount_core::manager`):
 | Negative lookups (path not found) | 1 s; 60 s for Explorer "noise" names | Local create or rename onto the path; also a listing that shows the name, or opening the file |
 
 - **Explorer noise names** get the longer negative TTL: `desktop.ini`, `Desktop.ini`, `thumbs.db`, `Thumbs.db`, `autorun.inf`, `AutoRun.inf`, `folder.jpg`, `folder.gif`, `$RECYCLE.BIN`, `System Volume Information`. They are looked up normally first, so real files with these names still work.
-- **What is cached.** `stat` and `read_dir` only; `lstat` always reaches the server. A listing also fills the attributes of its entries, except symbolic links, whose entries do not describe the target. A TTL of 0 turns attributes and listings off; the negative TTLs stay.
+- **What is cached.** `stat` and `read_dir` only; `lstat` always reaches the server. What `set_attr` and `fstat` answer is kept as a `stat`'s answer for the path (M2-08), as it is the file after the change; `fstat`'s only while the handle's path still names its file, so not after a local remove or a rename over it, nor after a rename whose outcome is unknown. A write still drops the file's attributes, as the write itself returns none. A listing also fills the attributes of its entries, except symbolic links, whose entries do not describe the target. A TTL of 0 turns attributes and listings off; the negative TTLs stay.
 - **Whole subtrees.** Rename, `remove_dir` and `mkdir` invalidate everything cached below the path as well as the path itself. Open handles follow local renames, so a later write invalidates the file's new path.
 - **Invalidation cannot be skipped.** It runs when the call ends, even if the call failed or was dropped by a layer above, because the server may have acted anyway. An answer that was on its way while a change to its path finished is returned but not stored.
 - **Age.** A TTL counts from when the question was asked, not from when the answer arrived.
 - **Size.** Each of the three caches holds at most 10,000 entries, least recently used going first. A listing counts as one plus one per directory entry, so a directory of 10,000 or more entries is not cached.
+- **Names, for case-insensitive lookups** (M2-08). Each listing also keeps the directory's names, indexed by how they compare on Windows ignoring case, with the listing's TTL. Unlike the listing, the names are updated in place by this mount's own creates, `mkdir`s, removes and renames that succeed, and dropped by one whose outcome is unknown, so filling a folder lists it once rather than once per new file (NFR-PERF-07). They have their own limit of 20,000, counted the same way, so a folder of 10,000 files still has its names kept. Changes by other clients show when the TTL runs out, as for listings.
 - **Other clients.** Changes made by others, and local changes that reach a path through a symbolic link, show up when the TTL runs out.
 - **Kernel-side caches.** WinFsp's own caches are configured **short and never infinite**: `FileInfoTimeout` = 1000 ms. This fixes NEO's NUL-byte bug class. Final values are confirmed in spike M0-1.
 
@@ -518,10 +519,13 @@ What the table leaves open (`drivemount_core::manager`):
 - **Growth.** The window doubles each time the caller has consumed a window's worth, not on every read, so what is fetched stays in proportion to what is used. Beyond the range a read needs, requests wait until a chunk's worth or half a window is due, so small reads do not become small requests.
 - **Freshness.** Data and errors fetched ahead are kept for at most 5 s from when they were asked for, the default `cache_ttl_secs`. A reader that takes longer goes back to a 128 KiB window, since its window was larger than it could use. A change through the drive drops what the reader holds. A speculative request that fails matters only if a read reaches it.
 
-**Writes (v1).**
-- Each WinFsp `Write` call is split into chunks of the maximum write size, sent in parallel, and **acknowledged before the call returns**. There is no write-back cache.
-- `Flush` and `Cleanup` call `fsync@openssh.com` when the server supports it.
-- Spike M0-2 showed this misses NFR-PERF-06 on WAN (49% of OpenSSH with a 50 ms delay), so a **bounded write-behind is added in M2-08** (OD-4): at most 4 MiB unacknowledged per handle, the same limit as reads; the first error is latched and returned on the next Write/Flush/Cleanup. The spike measured a free-running pipeline with that bound (102% of OpenSSH); the design itself is still to be built and tested.
+**Writes: bounded write-behind** (OD-4, M2-08, [ADR-0002](adr/0002-write-behind.md)).
+- Each WinFsp `Write` call is split into chunks of the maximum write size, sent in parallel, and **returns once its data is on its way**, as long as no more than **4 MiB** is unacknowledged on that Windows handle (the same limit as reads). Acknowledging each call first ran at 49% of OpenSSH on a 50 ms link (spike M0-2).
+- **Order.** A write waits for writes on their way that it overlaps, and for those of other handles on the same path. A read on any handle of the path, a size or attribute change, `Flush` and `Cleanup` wait for all of them first. So data read back is never stale, and nothing is unacknowledged once `CloseHandle` returns.
+- **Paging I/O waits for its own arrival** (`ConstrainedIo`: the cache manager writing back, or a mapped view being flushed), as Windows waits for it and it can come after `Cleanup`.
+- **Errors.** The first failure is kept and returned once, by the handle's next `Write` or `Flush`, then cleared, as Linux reports a failed write-back once. `Cleanup` cannot fail, so it logs a failure nobody heard of at Warn.
+- **What Windows is told.** The size follows from the handle's last answer and its own writes; it is asked again only if something else on the drive changed the file, or for an append. The times stay the server's last answer until the writes arrive. Other handles, and listings, see a size up to 4 MiB behind while a file is being written.
+- `Flush` calls `fsync@openssh.com` when the server supports it. Closing a file does not (M2-08): as on Windows, a closed file is promised only its writes, and `FlushFileBuffers` is what asks for the disk. The fsync at `Cleanup` cost ~5 ms a file, a third of a small file's time.
 
 **Operation deadlines.** Every remote call runs under `op_timeout_secs`. On timeout:
 - the call returns `STATUS_IO_TIMEOUT`;
@@ -541,7 +545,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 - All the dots and spaces at the end of a name are mapped, not just the last: `a..` is shown as `a` + U+F02E + U+F02E.
 - The mapping is reversed when sending names to the server. A Windows name that would reach the server as `.` or `..`, or that contains `/` or NUL, is refused, so it cannot address a different directory.
 - A remote name that really contains one of these private-use characters is shown as it is, so `a` + U+F03A and `a:` look the same on Windows; the scheme cannot escape them. The resolver below still finds such a name. If both exist, the Windows name means `a:`.
-- Name matching is **case-preserving**: an exact-case lookup first, then a case-insensitive match against the cached listing, used only when exactly one entry matches.
+- Name matching is **case-preserving**: an exact-case lookup first, then a case-insensitive match against the directory's cached names (§5.6), used only when exactly one entry matches.
 - Names that differ only by case are all listed.
 
 **Permission and attribute mapping.**
@@ -643,13 +647,13 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 | `Create` | `open(create, exclusive)` or `mkdir`, after looking for the name in any case |
 | `Open` | `stat`; the remote handles are opened on first read and on first write |
 | `Overwrite` | `set_attr(size = 0)` |
-| `Read` / `Write` | `read` / `write` (§5.6), then `fstat` after a write for the size Windows is told |
-| `Flush` | `flush` (fsync), if this handle has a remote handle for writes; nothing for the whole volume |
+| `Read` / `Write` | `read` / `write` (§5.6); a write returns before it is acknowledged (write-behind, §5.6) |
+| `Flush` | waits for this handle's writes, then `flush` (fsync) if it has a remote handle for writes; nothing for the whole volume |
 | `GetFileInfo` | `fstat` once the remote handle is open, otherwise cached `stat` |
 | `SetBasicInfo` | `set_attr(times, read-only bit)`; the creation and change times are ignored, as SFTP v3 has neither |
 | `SetFileSize` | `set_attr(size)`. Allocation only cuts a file shorter, as no server has any to set. |
 | `SetDelete` | check that a directory is empty. The `winfsp` crate offers this rather than `CanDelete`. The driver refuses a read-only file before this. |
-| `Cleanup` | With the delete flag: `close`, then `remove_file` / `remove_dir`. Otherwise `flush`, if this handle has a remote handle for writes. |
+| `Cleanup` | Waits for this handle's writes. With the delete flag: `close`, then `remove_file` / `remove_dir`. |
 | `Close` | `close` |
 | `Rename` | `rename(replace = flag)`, after looking for the new name in any case |
 | `SetSecurity` | `STATUS_NOT_SUPPORTED` (§5.6) |
@@ -665,12 +669,12 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **Remote handles.** A Windows handle has up to two: a read-only one with the read-ahead state, and a write-only one. A program can open a file for both and use only what the server allows it, with nothing to retry. A file both read and written through one handle costs two of the server's open files. They close with `Close`, or before the removal in `Cleanup`, as some servers will not remove an open file.
 - **Open files follow renames** through the drive, those of a directory above them included. Handles that have opened nothing remotely yet use the new path too.
 - **A change reaches every reader of the path.** Writes, size changes and `Overwrite` mark all handles on that path, and each drops what it fetched ahead before its next read (§5.6). So a change never waits for a read. Marking is by path, so a change through a symbolic link does not reach readers of its target until the 5 s limit.
-- **`Write`.** Asks `fstat` once for an append (`WriteToEndOfFile`) and once for paging I/O (`ConstrainedIo`), which does not change a file's size. Every write then asks `fstat` for the size Windows is told: guessing it is how a size goes wrong. That costs a round trip per write, which M2-08's write-behind has to deal with.
+- **`Write`.** An append (`WriteToEndOfFile`) asks `fstat` for where the end is, as another client may have added to the file. Paging I/O (`ConstrainedIo`), which does not change a file's size, and every other write use the size this handle last told Windows, kept up to date by its own writes; `fstat` is asked only if another handle on the drive changed the file since (§5.6, write-behind).
 - **New names.** A name that exists in another case counts as taken, for `Create` and for `Rename`. Replacing it keeps the name already there rather than making a second that Windows would take for the first, so moving `a` over `Taken` as `TAKEN` leaves `Taken`. A rename that only changes the case uses the new spelling.
 - **`Rename` refuses what a server would allow,** with `STATUS_ACCESS_DENIED` as on Windows: replacing a directory or replacing with one. The driver does the same for a read-only target.
-- **`Cleanup` cannot report failure,** as Windows has already closed the handle: a failed flush or removal goes to the log. So a failed `DeleteFile` reads as success, and the file is still there in the next listing. The removal never reaches a server on a read-only drive, where `FILE_DELETE_ON_CLOSE` would otherwise get this far unasked.
+- **`Cleanup` cannot report failure,** as Windows has already closed the handle: a failed removal, or a write that failed after its call returned and was not yet reported, goes to the log. So a failed `DeleteFile` reads as success, and the file is still there in the next listing. The removal never reaches a server on a read-only drive, where `FILE_DELETE_ON_CLOSE` would otherwise get this far unasked.
 - **Mounting.** `MountBackend::mount` connects, writes the Explorer label, starts the drive and tells Explorer. Dropping the future cancels it at any point, and what was set up by then goes with it (FR-MNT-11). A letter in use gives `LetterTaken`. Each mount makes its own connection, and `unmount` drops it.
-- **Unmounting.** `unmount` stops the host, tells Explorer, removes the label, then flushes and closes on the server what programs still had open, in one `op_timeout_secs` at most. WinFsp calls no `Close` for those. Failures go to the log, and unmounting never fails over them (FR-MNT-10). The programs get an error at their next use of the handle.
+- **Unmounting.** `unmount` stops the host, tells Explorer, removes the label, then waits for their writes, flushes and closes on the server what programs still had open, in one `op_timeout_secs` at most. WinFsp calls no `Close` for those. Failures go to the log, and unmounting never fails over them (FR-MNT-10). The programs get an error at their next use of the handle.
 - **Health.** `Lost` on the first of FR-REC-01's three triggers for the current session: the connection ending by itself (`Connector::session_ended`, which keep-alives drive), a call finding it gone (§5.6, sessions), or a rise of the suspect signal followed by a `Connector::probe` that fails. Timeouts while there was no session do not count for the next one. It stays `Lost` until `reconnect` puts a new session in, which sets `Ok`.
 - **Reconnecting.** `reconnect` connects again through the same connector and hands the session to the drive (§5.6), which stays on its letter throughout. A failed attempt leaves the drive as it was, and dropping the call gives it up. `unmount` while there is no session first ends the calls waiting for one, so that stopping the drive is not held up by them.
 - **Creating a file can take longer than one timeout while the connection hangs.** WinFsp's `FineGuard` lets a `Create` in only once no other callback runs on the drive, and each of those may take a timeout. Each callback still keeps to NFR-REL-03, and browsing (lookups and listings) does not wait like this.
