@@ -194,9 +194,13 @@ export component ProfileRow {
                 }
             }
 
+            // The letter it is on, else the one it asks for, dimmed while not on it; Auto when it
+            // asks for none.
             Text {
-                text: root.entry.letter;
-                width: 28px;
+                text: root.entry.letter != "" ? root.entry.letter
+                    : root.entry.kind == EntryKind.profile ? @tr("Auto")
+                    : "";
+                width: 36px;
                 vertical-alignment: center;
                 horizontal-alignment: right;
                 font-weight: 600;
