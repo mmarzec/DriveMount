@@ -6,8 +6,8 @@
 #
 #     python scripts/make-tray-icons.py
 #
-# A drive, grey when nothing is mounted and in the accent otherwise, with a badge at the bottom
-# right for the state: a tick (mounted), a ring (reconnecting) or "!" (error). Shapes, not only
+# DriveMount's app icon (ui/app-icon.svg), grey when nothing is mounted and in the accent otherwise,
+# with a badge at the bottom right for the state: a tick (mounted), a ring (reconnecting) or "!" (error). Shapes, not only
 # colours, tell the states apart.
 
 import math
@@ -21,17 +21,27 @@ UNITS = 32.0  # The shapes are in a 32 x 32 box.
 
 GREY = (0x8C, 0x93, 0x9D)
 ACCENT = (0x5B, 0x83, 0xB0)
+METAL = (0x8A, 0x97, 0xA6)  # Stand and base, as in ui/app-icon.svg.
+NODE = (0x44, 0x67, 0x8C)
 WHITE = (0xFF, 0xFF, 0xFF)
 GREEN = (0x2E, 0x9E, 0x4F)
 AMBER = (0xE0, 0x9A, 0x1F)
 RED = (0xD9, 0x44, 0x3B)
 
-BADGE = (24.0, 24.0, 7.5)  # Centre and radius.
-BADGE_GAP = 1.5  # Cleared around the badge, so it stands off the drive.
+BADGE = (25.0, 25.0, 6.5)  # Centre and radius.
+BADGE_GAP = 1.3  # Cleared around the badge, so it stands off the drive.
 
 
 def lighter(colour, amount):
     return tuple(round(c + (255 - c) * amount) for c in colour)
+
+
+def darker(colour, amount):
+    return tuple(round(c * (1 - amount)) for c in colour)
+
+
+def mix(a, b, t):
+    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
 
 
 def in_rounded_rect(x, y, left, top, right, bottom, radius):
@@ -49,28 +59,39 @@ def near_segment(x, y, a, b, width):
 
 
 def tick(x, y):
-    points = [(20.4, 24.2), (23.0, 26.8), (27.6, 21.4)]
-    return any(near_segment(x, y, points[i], points[i + 1], 2.3) for i in range(2))
+    cx, cy = BADGE[0], BADGE[1]
+    points = [(cx - 3.2, cy + 0.2), (cx - 1.0, cy + 2.4), (cx + 3.0, cy - 2.4)]
+    return any(near_segment(x, y, points[i], points[i + 1], 2.1) for i in range(2))
 
 
 def ring(x, y):
     distance = math.hypot(x - BADGE[0], y - BADGE[1])
-    return abs(distance - 3.3) <= 0.95
+    return abs(distance - 2.9) <= 0.85
 
 
 def exclamation(x, y):
-    return near_segment(x, y, (24.0, 19.9), (24.0, 24.9), 2.4) or math.hypot(x - 24.0, y - 28.0) <= 1.35
+    cx, cy = BADGE[0], BADGE[1]
+    return near_segment(x, y, (cx, cy - 4.0), (cx, cy + 0.4), 2.2) or math.hypot(x - cx, y - (cy + 3.1)) <= 1.25
 
 
 def colour_at(x, y, body, badge):
-    """The colour at one point, painted back to front, or None where it is clear."""
+    """The colour at one point, painted back to front, or None where it is clear.
+
+    The shapes of ui/app-icon.svg (256 units) at 1/8: a drive, its stand and base, and a node."""
     colour = None
-    if in_rounded_rect(x, y, 2.0, 8.0, 28.0, 22.0, 3.5):
-        colour = lighter(body, 0.18) if y < 14.6 else body
-        if 14.6 <= y < 15.6:
-            colour = lighter(body, 0.45)
-        if math.hypot(x - 7.0, y - 18.6) <= 1.35 or math.hypot(x - 11.0, y - 18.6) <= 1.35:
-            colour = WHITE
+    if 14.25 <= x <= 17.75 and 18.75 <= y <= 25.75:
+        colour = METAL
+    if in_rounded_rect(x, y, 3.0, 24.25, 29.0, 27.25, 1.5):
+        colour = METAL
+    if in_rounded_rect(x, y, 3.0, 5.0, 29.0, 20.5, 3.25):
+        colour = mix(lighter(body, 0.12), darker(body, 0.30), (y - 5.0) / 15.5)
+        if y < 12.25:
+            colour = lighter(colour, 0.14)
+        if in_rounded_rect(x, y, 6.25, 14.75, 18.25, 16.75, 1.0):
+            colour = lighter(colour, 0.55)
+    distance = math.hypot(x - 16.0, y - 25.75)
+    if distance <= 3.25:
+        colour = WHITE if distance > 2.35 else NODE
     if badge is not None:
         fill, glyph = badge
         distance = math.hypot(x - BADGE[0], y - BADGE[1])

@@ -1041,7 +1041,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
    Quit
 ```
 
-- **Icon** (FR-TRAY-01): a drive, grey when idle and grey-blue otherwise, with a badge: a green tick (*mounted*), an amber ring (*reconnecting*), a red "!" (*error*). Error outranks reconnecting, which outranks mounted. Each is an `.ico` at 16, 20, 24 and 32 px, drawn by `scripts/make-tray-icons.py`; the size nearest the system's small-icon size is used.
+- **Icon** (FR-TRAY-01): the app icon (a drive on a network), grey when idle and grey-blue otherwise, with a badge: a green tick (*mounted*), an amber ring (*reconnecting*), a red "!" (*error*). Error outranks reconnecting, which outranks mounted. Each is an `.ico` at 16, 20, 24 and 32 px, drawn by `scripts/make-tray-icons.py`; the size nearest the system's small-icon size is used.
 - **Tooltip** (FR-TRAY-02): "DriveMount: " and the status bar's counts joined by commas, or "DriveMount" alone when there is nothing to count.
 - **Profiles:** in the list's order, with the letter the row shows. A check mark when *Mounted* or *Reconnecting*. On the right: *Connecting…*, *Reconnecting…*, *Unmounting…* or *Failed*. Choosing one does what the row's button does (mount, retry, cancel or unmount), and is greyed when that button is. Unreadable entries are not listed.
 - **Unmount all** is greyed when nothing is up. **Open DriveMount** is the default item, in bold.
