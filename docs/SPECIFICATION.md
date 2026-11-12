@@ -197,7 +197,7 @@ A single settings page (§7.5). The settings are stored in `config.toml` (§6.1)
 | FR-SET-03 | M | Theme: System / Light / Dark | System |
 | FR-SET-04 | M | When a drive letter is in use: Use another free letter / Don't mount | Use another free letter |
 | FR-SET-05 | M | Show notifications | On |
-| FR-SET-08 | M | Notification sound (under *Show notifications*, off while it is off). Off adds `<audio silent="true"/>` to the toast. A hint says that Windows' own *Settings → System → Notifications → DriveMount* has more | Off |
+| FR-SET-08 | M | Notification sound (under *Show notifications*, off while it is off). Off adds `<audio silent="true"/>` to the toast | Off |
 | FR-SET-06 | M | Log level: Error / Warning / Info / Debug, plus an *Open logs folder* button | Info |
 | FR-SET-07 | M | WinFsp status (read-only line): "WinFsp 2.1.25156 installed", or the missing banner | n/a |
 

@@ -132,6 +132,7 @@ component CheckRow {
         VerticalLayout {
             padding-top: 4px;
             padding-bottom: 4px;
+            spacing: 8px;
 
             @children
         }
@@ -282,28 +283,12 @@ export component SettingsPage {
                                 }
                             }
 
-                            HorizontalLayout {
-                                padding-left: 28px;
-
-                                CheckBox {
-                                    text: @tr("Notification sound");
-                                    checked <=> root.form.notification-sound;
-                                    enabled: root.editable && root.form.notifications;
-                                    toggled => {
-                                        root.changed();
-                                    }
-                                }
-                            }
-
-                            HorizontalLayout {
-                                padding-left: 28px;
-                                padding-bottom: 4px;
-
-                                Text {
-                                    text: @tr("Windows' Settings → System → Notifications → DriveMount has more.");
-                                    font-size: Theme.small-size;
-                                    color: Theme.text-muted;
-                                    wrap: word-wrap;
+                            CheckBox {
+                                text: @tr("Notification sound");
+                                checked <=> root.form.notification-sound;
+                                enabled: root.editable && root.form.notifications;
+                                toggled => {
+                                    root.changed();
                                 }
                             }
                         }
