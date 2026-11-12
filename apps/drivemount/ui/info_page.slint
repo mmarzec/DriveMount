@@ -1,0 +1,488 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+// The information page (spec 7.5.1): About, the keys, and the licences, in place of the list.
+// `drivemount_app::ui` fills in what it cannot know itself; this file only draws it.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme, Icons, AppButton, Card, Field, Heading, Icon, Link } from "theme.slint";
+
+// What the page shows of this build.
+export struct InfoView {
+    // "0.1.0".
+    version: string,
+    // "2026-11-12", the day the exe was built (UTC).
+    build-date: string,
+    // The repository, as shown: "github.com/…". Empty when there is none to link to.
+    source: string,
+}
+
+// One component of someone else's: what it is, its licence, and what it asks to be shown.
+component Credit {
+    in property <string> name;
+    in property <string> licence;
+    in property <string> note;
+    in property <string> link;
+    in property <bool> interactive: true;
+    in property <bool> last;
+
+    callback open-link();
+
+    VerticalLayout {
+        VerticalLayout {
+            padding-top: 8px;
+            padding-bottom: 8px;
+            spacing: 2px;
+
+            HorizontalLayout {
+                spacing: 12px;
+
+                Text {
+                    text: root.name;
+                    font-size: Theme.page-size;
+                    font-weight: 600;
+                    color: Theme.text;
+                    horizontal-stretch: 1;
+                    wrap: word-wrap;
+                }
+
+                Text {
+                    text: root.licence;
+                    font-size: Theme.small-size;
+                    color: Theme.text-muted;
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    horizontal-stretch: 0;
+                }
+            }
+
+            if root.note != "": Text {
+                text: root.note;
+                font-size: Theme.small-size;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+
+            if root.link != "": HorizontalLayout {
+
+                Link {
+                    text: root.link;
+                    enabled: root.interactive;
+                    clicked => {
+                        root.open-link();
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+
+        if !root.last: Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
+
+// A key, drawn as a key cap.
+component KeyCap {
+    in property <string> text;
+
+    Rectangle {
+        background: Theme.sunken;
+        border-radius: 5px;
+        border-width: 1px;
+        border-color: Theme.border;
+
+        HorizontalLayout {
+            padding-left: 7px;
+            padding-right: 7px;
+            padding-top: 2px;
+            padding-bottom: 2px;
+
+            Text {
+                text: root.text;
+                font-size: Theme.small-size;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+                accessible-role: none;
+            }
+        }
+    }
+}
+
+// A line of the keyboard guide: the keys that do one thing, and what it is.
+component KeyRow {
+    // Each a key or a combination; any of them does it.
+    in property <[string]> keys;
+    in property <string> action;
+    in property <bool> last;
+
+    accessible-role: text;
+    accessible-label: root.action;
+
+    VerticalLayout {
+        HorizontalLayout {
+            padding-top: 6px;
+            padding-bottom: 6px;
+            spacing: 12px;
+
+            HorizontalLayout {
+                width: 170px;
+                spacing: 4px;
+                alignment: start;
+
+                for key in root.keys: KeyCap {
+                    text: key;
+                }
+            }
+
+            Text {
+                text: root.action;
+                horizontal-stretch: 1;
+                font-size: Theme.page-size;
+                color: Theme.text;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                accessible-role: none;
+            }
+        }
+
+        if !root.last: Rectangle {
+            height: 1px;
+            background: Theme.border;
+        }
+    }
+}
+
+export component InfoPage {
+    in property <InfoView> view;
+    in property <bool> interactive: true;
+
+    callback back();
+    callback open-source();
+    callback open-gpl();
+    callback open-licences();
+    callback open-winfsp-site();
+    callback open-slint-site();
+
+    VerticalLayout {
+        padding: 16px;
+        padding-top: 8px;
+        padding-bottom: 12px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 12px;
+
+            VerticalLayout {
+                alignment: center;
+
+                AppButton {
+                    icon: Icons.arrow-left;
+                    icon-only: true;
+                    icon-size: 20px;
+                    text: @tr("Back");
+                    enabled: root.interactive;
+                    clicked => {
+                        root.back();
+                    }
+                }
+            }
+
+            Text {
+                text: @tr("Information");
+                font-size: 18px;
+                font-weight: 600;
+                color: Theme.text;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+        }
+
+        ScrollView {
+            vertical-stretch: 1;
+            content-width: self.visible-width;
+            content-height: content.preferred-height;
+
+            content := VerticalLayout {
+                width: parent.width;
+                height: self.preferred-height;
+                spacing: 8px;
+
+                Heading {
+                    text: @tr("About");
+                }
+
+                Card {
+                    height: self.preferred-height;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        padding-top: 14px;
+                        padding-bottom: 10px;
+                        spacing: 10px;
+
+                        HorizontalLayout {
+                            spacing: 12px;
+
+                            VerticalLayout {
+                                alignment: start;
+
+                                Icon {
+                                    source: Icons.hard-drive;
+                                    size: 36px;
+                                    colour: Theme.accent;
+                                }
+                            }
+
+                            VerticalLayout {
+                                spacing: 3px;
+
+                                Text {
+                                    text: "DriveMount";
+                                    font-size: Theme.title-size;
+                                    font-weight: 600;
+                                    color: Theme.text;
+                                }
+
+                                Text {
+                                    text: @tr("Mounts folders on remote servers as Windows drive letters, over SSH (SFTP).");
+                                    font-size: Theme.page-size;
+                                    color: Theme.text-muted;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            Field {
+                                label: @tr("Version");
+                                value: root.view.version;
+                            }
+
+                            Field {
+                                label: @tr("Build date");
+                                value: root.view.build-date;
+                                last: root.view.source == "";
+                            }
+
+                            if root.view.source != "": HorizontalLayout {
+                                padding-top: 5px;
+                                padding-bottom: 5px;
+                                spacing: 12px;
+
+                                Text {
+                                    text: @tr("Source code");
+                                    width: 130px;
+                                    font-size: Theme.page-size;
+                                    color: Theme.text-muted;
+                                    vertical-alignment: center;
+                                    accessible-role: none;
+                                }
+
+                                HorizontalLayout {
+                                    horizontal-stretch: 1;
+
+                                    Link {
+                                        text: root.view.source;
+                                        enabled: root.interactive;
+                                        clicked => {
+                                            root.open-source();
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        horizontal-stretch: 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Heading {
+                    text: @tr("Keyboard");
+                }
+
+                Card {
+                    height: self.preferred-height;
+
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 4px;
+                        padding-bottom: 4px;
+
+                        KeyRow {
+                            keys: ["Ctrl+N"];
+                            action: @tr("Add a connection");
+                        }
+
+                        KeyRow {
+                            keys: ["↑", "↓"];
+                            action: @tr("Move the selection");
+                        }
+
+                        KeyRow {
+                            keys: ["Enter"];
+                            action: @tr("Mount or unmount the selected connection");
+                        }
+
+                        KeyRow {
+                            keys: ["Ctrl+Enter"];
+                            action: @tr("Open the selected drive in Explorer");
+                        }
+
+                        KeyRow {
+                            keys: ["Space", "Ctrl+I"];
+                            action: @tr("Open the selected connection's page");
+                        }
+
+                        KeyRow {
+                            keys: ["Ctrl+E"];
+                            action: @tr("Edit the selected connection");
+                        }
+
+                        KeyRow {
+                            keys: ["Del"];
+                            action: @tr("Delete the selected connection (asks first)");
+                        }
+
+                        KeyRow {
+                            keys: ["Tab", "Shift+Tab"];
+                            action: @tr("Move between buttons and boxes");
+                        }
+
+                        KeyRow {
+                            keys: ["F1"];
+                            action: @tr("Show this page");
+                        }
+
+                        KeyRow {
+                            keys: ["Esc"];
+                            action: @tr("Go back, close a dialog, or hide the window to the tray");
+                            last: true;
+                        }
+                    }
+                }
+
+                Heading {
+                    text: @tr("Licence");
+                }
+
+                Card {
+                    height: self.preferred-height;
+
+                    VerticalLayout {
+                        padding: 16px;
+                        padding-top: 12px;
+                        padding-bottom: 12px;
+                        spacing: 6px;
+
+                        Text {
+                            text: @tr("Licensed under the GNU GPL v3");
+                            font-size: Theme.page-size;
+                            font-weight: 600;
+                            color: Theme.text;
+                        }
+
+                        Text {
+                            text: @tr("DriveMount is free software: you can share and change it under the terms of the GNU General Public License, version 3 or later. It comes with no warranty.");
+                            font-size: Theme.page-size;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+
+                            Link {
+                                text: @tr("Read the GNU GPL v3");
+                                enabled: root.interactive;
+                                clicked => {
+                                    root.open-gpl();
+                                }
+                            }
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                            }
+                        }
+                    }
+                }
+
+                Heading {
+                    text: @tr("Third-party components");
+                }
+
+                Card {
+                    height: self.preferred-height;
+
+                    VerticalLayout {
+                        padding-left: 16px;
+                        padding-right: 16px;
+                        padding-top: 4px;
+                        padding-bottom: 12px;
+
+                        Credit {
+                            // NFR-LIC-02: WinFsp's FLOSS exception asks for these words, and the link.
+                            name: "WinFsp";
+                            licence: @tr("GPL v3 with FLOSS exception");
+                            note: "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos";
+                            link: "https://github.com/winfsp/winfsp";
+                            interactive: root.interactive;
+                            open-link => {
+                                root.open-winfsp-site();
+                            }
+                        }
+
+                        Credit {
+                            name: "Slint";
+                            licence: "GPL v3";
+                            note: @tr("The user interface toolkit, used under its GPL v3 option.");
+                            link: "https://slint.dev";
+                            interactive: root.interactive;
+                            open-link => {
+                                root.open-slint-site();
+                            }
+                        }
+
+                        Credit {
+                            name: "Inter";
+                            licence: "SIL OFL 1.1";
+                            note: @tr("The typeface, by Rasmus Andersson.");
+                        }
+
+                        Credit {
+                            name: "Lucide";
+                            licence: "ISC";
+                            note: @tr("The icons, by Lucide Contributors and Feather (MIT).");
+                        }
+
+                        Credit {
+                            name: @tr("Rust crates");
+                            licence: @tr("MIT, Apache-2.0 and others");
+                            note: @tr("russh, tokio, windows-rs, serde, tracing and the other libraries DriveMount is built from.");
+                            last: true;
+                        }
+
+                        HorizontalLayout {
+                            padding-top: 6px;
+                            alignment: start;
+
+                            AppButton {
+                                text: @tr("Third-party licences");
+                                enabled: root.interactive;
+                                clicked => {
+                                    root.open-licences();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

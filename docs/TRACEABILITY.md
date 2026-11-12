@@ -204,7 +204,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | NFR-LIC-01 | M1-01 | `scripts/check-spdx.sh` in CI; negative test: fails on a missing header | 0.1.0 (local) |
-| NFR-LIC-02 | M2-05, M2-12 | The About section's text is fixed in `ui/settings_page.slint`. By eye: H-08. The user guide: M2-12 | – |
+| NFR-LIC-02 | M2-05, M2-12 | The About section's text is fixed in `ui/info_page.slint`. By eye: H-08. The user guide: M2-12 | – |
 | NFR-LIC-03 | M2-05 | `the_licence_file_that_is_not_there_says_so`; `open_html_file` takes only `.html`. The source link waits for a public repository (`repository` in `Cargo.toml`). Opening the real file: after M2-10 | – |
 | NFR-LIC-04 | M2-10 | – | – |
 | NFR-LIC-05 | M1-01 | CI `cargo deny check`; negative test: a `GPL-2.0-only` crate fails | 0.1.0 (local) |

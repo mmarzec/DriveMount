@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// The settings page (spec 7.5): the settings of spec 3.8, one per row, and About, in place of the list.
+// The settings page (spec 7.5): the settings of spec 3.8, one per row, in place of the list. About is on the
+// information page.
 // `drivemount_app::ui` fills it in and saves each change at once; this file only draws it.
 
 import { CheckBox, ComboBox, ScrollView } from "std-widgets.slint";
@@ -29,68 +30,7 @@ export struct SettingsView {
     winfsp: WinFspState,
     // "2.1.25156", or empty when missing.
     winfsp-version: string,
-    // DriveMount's own.
-    version: string,
     has-logs: bool,
-    // Whether there is a public repository to link to.
-    has-source: bool,
-}
-
-// Text that opens something, in the accent colour, reachable with Tab.
-component Link {
-    in property <string> text;
-    in property <bool> enabled: true;
-
-    callback clicked();
-
-    forward-focus: scope;
-    accessible-role: button;
-    accessible-label: root.text;
-    accessible-enabled: root.enabled;
-    accessible-action-default => {
-        if (root.enabled) {
-            root.clicked();
-        }
-    }
-
-    scope := FocusScope {
-        enabled: root.enabled;
-        key-pressed(event) => {
-            if (event.text == " " || event.text == Key.Return) {
-                root.clicked();
-                return accept;
-            }
-            return reject;
-        }
-
-        Rectangle {
-            border-radius: 4px;
-            border-width: scope.has-focus ? 2px : 0;
-            border-color: Theme.accent;
-        }
-
-        touch := TouchArea {
-            enabled: root.enabled;
-            mouse-cursor: pointer;
-            clicked => {
-                root.clicked();
-            }
-        }
-
-        HorizontalLayout {
-            padding: 2px;
-            padding-left: 3px;
-            padding-right: 3px;
-
-            Text {
-                text: root.text;
-                font-size: Theme.page-size;
-                color: !root.enabled ? Theme.text-disabled : touch.has-hover ? Theme.accent-hover : Theme.accent;
-                wrap: word-wrap;
-                accessible-role: none;
-            }
-        }
-    }
 }
 
 // A row of the card: a label on the left and a control on the right.
@@ -144,12 +84,6 @@ component CheckRow {
     }
 }
 
-component Heading inherits Text {
-    font-size: Theme.small-size;
-    font-weight: 600;
-    color: Theme.text-muted;
-}
-
 export component SettingsPage {
     in-out property <SettingsForm> form;
     in property <SettingsView> view;
@@ -160,9 +94,6 @@ export component SettingsPage {
     callback changed();
     callback open-logs();
     callback download-winfsp();
-    callback open-licences();
-    callback open-source();
-    callback open-winfsp-site();
 
     property <bool> editable: root.interactive && root.view.editable;
 
@@ -332,99 +263,6 @@ export component SettingsPage {
                                     enabled: root.interactive;
                                     clicked => {
                                         root.download-winfsp();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Heading {
-                    text: @tr("About");
-                }
-
-                Card {
-                    height: self.preferred-height;
-
-                    VerticalLayout {
-                        padding: 16px;
-                        padding-top: 12px;
-                        padding-bottom: 12px;
-                        spacing: 6px;
-
-                        Text {
-                            text: @tr("DriveMount {}", root.view.version);
-                            font-size: Theme.page-size;
-                            font-weight: 600;
-                            color: Theme.text;
-                        }
-
-                        HorizontalLayout {
-                            spacing: 6px;
-
-                            Text {
-                                text: @tr("Licensed under the GNU GPL v3");
-                                font-size: Theme.page-size;
-                                color: Theme.text;
-                                vertical-alignment: center;
-                            }
-
-                            if root.view.has-source: Link {
-                                text: @tr("Source code");
-                                enabled: root.interactive;
-                                clicked => {
-                                    root.open-source();
-                                }
-                            }
-
-                            Rectangle {
-                                horizontal-stretch: 1;
-                            }
-                        }
-
-                        Text {
-                            // NFR-LIC-02: WinFsp's FLOSS exception asks for these words.
-                            text: "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos";
-                            font-size: Theme.page-size;
-                            color: Theme.text;
-                            wrap: word-wrap;
-                        }
-
-                        HorizontalLayout {
-                            Link {
-                                text: "https://github.com/winfsp/winfsp";
-                                enabled: root.interactive;
-                                clicked => {
-                                    root.open-winfsp-site();
-                                }
-                            }
-
-                            Rectangle {
-                                horizontal-stretch: 1;
-                            }
-                        }
-
-                        HorizontalLayout {
-                            padding-top: 6px;
-                            spacing: 8px;
-                            alignment: start;
-
-                            AppButton {
-                                text: @tr("Third-party licences");
-                                enabled: root.interactive;
-                                clicked => {
-                                    root.open-licences();
-                                }
-                            }
-
-                            VerticalLayout {
-                                alignment: center;
-
-                                Link {
-                                    text: @tr("Logs folder");
-                                    enabled: root.interactive && root.view.has-logs;
-                                    clicked => {
-                                        root.open-logs();
                                     }
                                 }
                             }

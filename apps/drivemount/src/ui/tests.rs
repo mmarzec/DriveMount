@@ -671,6 +671,55 @@ fn space_and_ctrl_i_open_the_page_of_the_selection() {
 }
 
 #[test]
+fn the_information_page_opens_from_its_button_and_f1() {
+    let fixture = Fixture::new(profiles(&["a"]));
+    let window = fixture.ui.window();
+    assert!(fixture.labelled("Third-party licences").is_none());
+
+    fixture.press("Information");
+    assert!(window.get_info_open());
+    assert_eq!(window.get_info_view().version, env!("CARGO_PKG_VERSION"));
+    // Tall enough to show the whole page, as what is scrolled out of view cannot be found.
+    window.window().set_size(LogicalSize::new(640.0, 1600.0));
+    assert!(
+        fixture.labelled("Esc").is_none(),
+        "a key row reads out what it does"
+    );
+    assert!(
+        fixture
+            .labelled("Go back, close a dialog, or hide the window to the tray")
+            .is_some()
+    );
+    fixture.press("Third-party licences");
+    fixture.press("Read the GNU GPL v3");
+    assert_eq!(
+        fixture.take_sent(),
+        [
+            UiCommand::OpenLicences,
+            UiCommand::OpenWebPage(super::GPL_URL)
+        ]
+    );
+    // The list's keys are not the page's.
+    fixture.key(Key::Delete);
+    assert!(fixture.take_sent().is_empty());
+
+    fixture.key(Key::Escape);
+    assert!(!window.get_info_open());
+
+    fixture.key(Key::F1);
+    assert!(window.get_info_open());
+    // Settings takes its place, and the other way round.
+    fixture.press("Settings");
+    assert!(window.get_settings_open());
+    assert!(!window.get_info_open());
+    fixture.key(Key::F1);
+    assert!(window.get_info_open());
+    assert!(!window.get_settings_open());
+    fixture.press("Back");
+    assert!(!window.get_info_open());
+}
+
+#[test]
 fn the_page_shows_the_settings_and_follows_the_state() {
     let mut saved = profile("Prod");
     saved.drive = DriveChoice::Letter(letter('X'));
@@ -774,8 +823,8 @@ fn a_click_on_a_row_takes_the_focus_from_a_button() {
     let ids: Vec<Uuid> = list.iter().map(|p| p.id).collect();
     let fixture = Fixture::new(list);
 
-    // Add, Mount all, Settings (Unmount all is disabled), then the first row's button.
-    for _ in 0..4 {
+    // Add, Mount all, Information, Settings (Unmount all is disabled), then the first row's button.
+    for _ in 0..5 {
         fixture.key(Key::Tab);
     }
     fixture.click_at(&fixture.row("b"), 1);
@@ -789,8 +838,8 @@ fn a_status_event_leaves_the_focus_on_the_row_button() {
     let ids: Vec<Uuid> = list.iter().map(|p| p.id).collect();
     let fixture = Fixture::new(list);
 
-    // Add, Mount all, Settings (Unmount all is disabled), then the first row's button.
-    for _ in 0..4 {
+    // Add, Mount all, Information, Settings (Unmount all is disabled), then the first row's button.
+    for _ in 0..5 {
         fixture.key(Key::Tab);
     }
     fixture.key(Key::Return);

@@ -12,8 +12,8 @@ edition = "2024"
 rust-version = "1.99"
 license = "GPL-3.0-or-later"
 publish = false
-# Once the repository is public (NFR-LIC-06), set `repository = "https://…"` here and
-# `repository.workspace = true` in apps/drivemount: the About section links to it (NFR-LIC-03).
+# The About section links to it (NFR-LIC-03). Every release's source must be public there (NFR-LIC-06).
+repository = "https://github.com/mmarzec/DriveMount"
 
 # Exact versions: a change is a deliberate edit, checked by `cargo deny` in CI.
 # A crate takes what it needs with `foo = { workspace = true }`, adding per-crate features there.

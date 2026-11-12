@@ -1011,20 +1011,21 @@ Buttons: *Open file location*, *Close*.
 
 ### 7.5 Settings page
 
-This page replaces the list area inside the main window; a ← back arrow returns to the list. It holds the items in §3.8, one per row, with an **About** footer showing:
-- the version;
-- "Licensed under the GNU GPL v3" and a link to the source repository (NFR-LIC-03);
-- "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos" with a link to https://github.com/winfsp/winfsp (NFR-LIC-02);
-- a *Third-party licences* button;
-- a link to the logs folder. Changes apply immediately. Only "Start with Windows" touches the registry.
+This page replaces the list area inside the main window; a ← back arrow returns to the list. It holds the items in §3.8, one per row; the log level row has *Open logs folder*. About is on the information page (§7.5.1). Changes apply immediately. Only "Start with Windows" touches the registry.
 
 - **How a change is saved:** each change is in use in the window at once (theme, close button, toasts) and is then saved in the background, one after another, so a later change is never overtaken; changes made while one is saving count only as the latest. The log level changes once the file has it.
 - **Start with Windows** writes or removes the Run value before the file is saved. If the registry refuses, the box goes back to off and a banner says why. If the file then cannot be saved, the Run value is put back. At start, with the setting on, the value is written again, as the exe may have moved; with it off, nothing is touched, so a value written by someone else (the installer) stays.
 - **A failed save** shows a banner, and the page goes back to what is in use.
 - **Read-only file:** the controls are disabled; the banner above says why.
 - **WinFsp line** (FR-SET-07): "WinFsp 2.1.25156 installed"; too old: "WinFsp 2.0.x is installed, but 2.1 or later is required to mount SSH drives"; missing: the banner's text. The last two have *Download WinFsp*.
-- **Source link:** the package's `repository`. Until the repository is public it is not set, and the About section has no link.
-- **Third-party licences** opens `THIRD-PARTY-LICENSES.html` beside the exe in the browser; if it is not there (a development build), a banner says so.
+
+### 7.5.1 Information page
+
+The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of the list, as Settings does; the two never show together. A ← back button or Esc returns to the list. It has four sections:
+- **About:** the name, one sentence on what DriveMount is for, the version, the build date (UTC, from `SOURCE_DATE_EPOCH` when set), and a link to the source repository: the package's `repository` (NFR-LIC-03). When that is empty, the line is not shown.
+- **Keyboard:** the keys of §7.7.
+- **Licence:** "Licensed under the GNU GPL v3", a sentence on what that means, and a link to the licence text.
+- **Third-party components:** WinFsp with "WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos" and a link to https://github.com/winfsp/winfsp (NFR-LIC-02); Slint (GPLv3 option); Inter (SIL OFL 1.1); Lucide (ISC); the Rust crates (MIT, Apache-2.0 and others); and a *Third-party licences* button, which opens `THIRD-PARTY-LICENSES.html` beside the exe in the browser. If it is not there (a development build), a banner says so.
 
 ### 7.6 Tray menu
 
@@ -1057,7 +1058,9 @@ This page replaces the list area inside the main window; a ← back arrow return
 | Ctrl+Enter | Open selected in Explorer |
 | Space, Ctrl+I | Open the selected connection's page (§7.1.1) |
 | Del | Delete selected (asks first) |
-| Esc | Close dialog / leave the connection page / hide window to tray |
+| Tab, Shift+Tab | Move between buttons and boxes |
+| F1 | Open the information page (§7.5.1) |
+| Esc | Close dialog / leave the connection, settings or information page / hide window to tray |
 | Del, in the question it asks | Focus starts on *Cancel*, so Enter keeps the profile; Esc does too |
 | ↑ ↓ | Move selection |
 

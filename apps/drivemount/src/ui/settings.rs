@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! The settings page (spec §7.5): what its controls mean as [`Settings`], and back.
+//! The settings page (spec §7.5): what its controls mean as [`Settings`], and back; and what the
+//! information page (spec §7.5.1) says of this build.
 
 use drivemount_core::config::{LetterConflict, LogLevel, Settings, Theme};
 use drivemount_win::winfsp::WinFspStatus;
 
-use super::generated::{SettingsForm, SettingsView, WinFspState};
+use super::generated::{InfoView, SettingsForm, SettingsView, WinFspState};
 
 const THEMES: [Theme; 3] = [Theme::System, Theme::Light, Theme::Dark];
 const CONFLICTS: [LetterConflict; 2] = [LetterConflict::Auto, LetterConflict::Fail];
@@ -71,10 +72,26 @@ pub(super) fn view(editable: bool, winfsp: WinFspStatus, has_logs: bool) -> Sett
         editable,
         winfsp: state,
         winfsp_version: version.into(),
-        version: env!("CARGO_PKG_VERSION").into(),
         has_logs,
-        has_source: !super::SOURCE_URL.is_empty(),
     }
+}
+
+/// What the information page says of this build.
+pub(super) fn info_view() -> InfoView {
+    InfoView {
+        version: env!("CARGO_PKG_VERSION").into(),
+        build_date: env!("DRIVEMOUNT_BUILD_DATE").into(),
+        source: shown_url(super::SOURCE_URL).into(),
+    }
+}
+
+/// A web address as the page shows it: without the scheme or a closing slash.
+fn shown_url(url: &str) -> &str {
+    let bare = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    bare.trim_end_matches('/')
 }
 
 #[cfg(test)]
@@ -154,7 +171,6 @@ mod tests {
         let ready = view(true, WinFspStatus::Ready(version), true);
         assert_eq!(ready.winfsp, WinFspState::Ready);
         assert_eq!(ready.winfsp_version, "2.1.25156");
-        assert_eq!(ready.version, env!("CARGO_PKG_VERSION"));
 
         let old = WinFspVersion {
             minor: 0,
@@ -168,5 +184,32 @@ mod tests {
         assert_eq!(missing.winfsp, WinFspState::Missing);
         assert_eq!(missing.winfsp_version, "");
         assert!(!missing.editable);
+    }
+
+    #[test]
+    fn the_information_page_has_the_version_and_the_day_of_the_build() {
+        let info = info_view();
+        assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
+        let date = info.build_date.as_str();
+        assert_eq!(date.len(), 10, "{date}");
+        let shaped = date.char_indices().all(|(at, c)| {
+            if at == 4 || at == 7 {
+                c == '-'
+            } else {
+                c.is_ascii_digit()
+            }
+        });
+        assert!(shaped, "{date}");
+        assert!(date >= "2026-01-01", "{date}");
+    }
+
+    #[test]
+    fn a_web_address_is_shown_without_its_scheme() {
+        assert_eq!(
+            shown_url("https://github.com/mmarzec/DriveMount/"),
+            "github.com/mmarzec/DriveMount"
+        );
+        assert_eq!(shown_url("http://example.org"), "example.org");
+        assert_eq!(shown_url(""), "");
     }
 }

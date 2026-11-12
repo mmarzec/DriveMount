@@ -14,8 +14,9 @@ import { Texts } from "texts.slint";
 import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog } from "dialog.slint";
 import { PromptInput, PromptKind, PromptPanel, PromptView } from "prompts.slint";
 import { SettingsForm, SettingsPage, SettingsView, WinFspState } from "settings_page.slint";
+import { InfoPage, InfoView } from "info_page.slint";
 
-export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, SettingsForm, SettingsView, Texts, WinFspState }
+export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, InfoView, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, SettingsForm, SettingsView, Texts, WinFspState }
 
 export enum ThemeChoice { system, light, dark }
 
@@ -176,6 +177,10 @@ export component MainWindow inherits Window {
     in-out property <SettingsForm> settings-form;
     in property <SettingsView> settings-view;
 
+    // The information page, in place of the list.
+    in property <bool> info-open;
+    in property <InfoView> info-view;
+
     // What is allowed.
     in property <bool> can-add: true;
     in property <bool> can-mount-all;
@@ -214,6 +219,7 @@ export component MainWindow inherits Window {
     callback mount-all-pressed();
     callback unmount-all-pressed();
     callback settings-pressed();
+    callback info-pressed();
     callback download-winfsp-pressed();
     callback crash-logs-pressed();
     callback crash-close-pressed();
@@ -233,9 +239,13 @@ export component MainWindow inherits Window {
     callback settings-back();
     callback settings-changed();
     callback open-logs-pressed();
+
+    callback info-back();
     callback licences-pressed();
     callback source-pressed();
+    callback gpl-pressed();
     callback winfsp-site-pressed();
+    callback slint-site-pressed();
 
     callback move-selection(delta: int);
     callback activate-selected();
@@ -300,7 +310,7 @@ export component MainWindow inherits Window {
     property <bool> asking: root.question != "";
     property <bool> interactive: !root.asking && !root.dialog-open && !root.prompt-open;
     // No page is in the list's place.
-    property <bool> showing-list: !root.page-open && !root.dialog-open && !root.settings-open;
+    property <bool> showing-list: !root.page-open && !root.dialog-open && !root.settings-open && !root.info-open;
     out property <bool> is-dark: Theme.dark;
 
     // The tooltip of the row under the mouse. Its timer runs only while a row is hovered and the tip
@@ -353,10 +363,18 @@ export component MainWindow inherits Window {
                 }
                 return reject;
             }
+            if (event.text == Key.F1) {
+                root.info-pressed();
+                return accept;
+            }
             // The page's own controls have every other key.
-            if (root.settings-open) {
+            if (root.settings-open || root.info-open) {
                 if (event.text == Key.Escape) {
-                    root.settings-back();
+                    if (root.info-open) {
+                        root.info-back();
+                    } else {
+                        root.settings-back();
+                    }
                     keys.focus();
                     return accept;
                 }
@@ -409,7 +427,7 @@ export component MainWindow inherits Window {
 
         // What the focused control did not want, so that Enter and Space stay a focused button's.
         key-pressed(event) => {
-            if (!root.interactive || root.settings-open) {
+            if (!root.interactive || root.settings-open || root.info-open) {
                 return reject;
             }
             if (event.text == Key.Return) {
@@ -471,6 +489,17 @@ export component MainWindow inherits Window {
                     enabled: root.interactive && root.can-unmount-all;
                     clicked => {
                         root.unmount-all-pressed();
+                    }
+                }
+
+                AppButton {
+                    icon: Icons.info;
+                    icon-only: true;
+                    icon-size: 20px;
+                    text: @tr("Information");
+                    enabled: root.interactive;
+                    clicked => {
+                        root.info-pressed();
                     }
                 }
 
@@ -653,14 +682,31 @@ export component MainWindow inherits Window {
                     download-winfsp => {
                         root.download-winfsp-pressed();
                     }
-                    open-licences => {
-                        root.licences-pressed();
+                }
+
+                if root.info-open && !root.dialog-open: InfoPage {
+                    width: parent.width;
+                    height: parent.height;
+                    view: root.info-view;
+                    interactive: root.interactive;
+                    back => {
+                        root.info-back();
+                        keys.focus();
                     }
                     open-source => {
                         root.source-pressed();
                     }
+                    open-gpl => {
+                        root.gpl-pressed();
+                    }
+                    open-licences => {
+                        root.licences-pressed();
+                    }
                     open-winfsp-site => {
                         root.winfsp-site-pressed();
+                    }
+                    open-slint-site => {
+                        root.slint-site-pressed();
                     }
                 }
 

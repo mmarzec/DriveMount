@@ -76,8 +76,12 @@ pub use self::generated::{KeyFileBox, MainWindow, SettingsForm, Texts};
 pub const WINFSP_DOWNLOAD_URL: &str = "https://winfsp.dev/rel/";
 /// WinFsp's source, which its attribution links to (NFR-LIC-02).
 pub const WINFSP_SOURCE_URL: &str = "https://github.com/winfsp/winfsp";
-/// DriveMount's source (NFR-LIC-03): the package's `repository`. Empty until the repository is
-/// public, and then the About section has no link.
+/// Slint's site, which its line on the information page links to.
+pub const SLINT_URL: &str = "https://slint.dev";
+/// The text of DriveMount's licence.
+pub const GPL_URL: &str = "https://www.gnu.org/licenses/gpl-3.0.html";
+/// DriveMount's source (NFR-LIC-03): the package's `repository`. When it is empty the About section
+/// has no link.
 pub const SOURCE_URL: &str = env!("CARGO_PKG_REPOSITORY");
 
 /// The dialog's password boxes, as `MountManager::save` and `test` take them. Secrets have no
@@ -223,8 +227,11 @@ struct Inner {
     placed: Cell<bool>,
     /// What the connection page is showing, while it is up.
     page: RefCell<Option<Key>>,
-    /// Whether the settings page is up. It and the connection page are never up together.
+    /// Whether the settings page is up. It, the information page and the connection page are never
+    /// up together.
     settings_open: Cell<bool>,
+    /// Whether the information page is up.
+    info_open: Cell<bool>,
     winfsp: Cell<WinFspStatus>,
     has_logs: Cell<bool>,
     /// The profile dialog, while it is open.
@@ -304,6 +311,7 @@ impl MainUi {
             placed: Cell::new(false),
             page: RefCell::new(None),
             settings_open: Cell::new(false),
+            info_open: Cell::new(false),
             winfsp: Cell::new(WinFspStatus::Missing),
             has_logs: Cell::new(false),
             dialog: RefCell::new(None),
@@ -542,6 +550,7 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_mount_all_pressed(on(Inner::mount_all));
     window.on_unmount_all_pressed(on(Inner::unmount_all));
     window.on_settings_pressed(on(Inner::open_settings));
+    window.on_info_pressed(on(Inner::open_info));
     window.on_download_winfsp_pressed(on(|inner| inner.send(UiCommand::DownloadWinFsp)));
     window.on_crash_logs_pressed(on(|inner| {
         if let Some(window) = inner.window.upgrade() {
@@ -571,11 +580,15 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_settings_back(on(Inner::close_settings));
     window.on_settings_changed(on(Inner::settings_changed));
     window.on_open_logs_pressed(on(|inner| inner.send(UiCommand::OpenLogsFolder)));
+
+    window.on_info_back(on(Inner::close_info));
     window.on_licences_pressed(on(|inner| inner.send(UiCommand::OpenLicences)));
     window.on_source_pressed(on(|inner| inner.send(UiCommand::OpenWebPage(SOURCE_URL))));
+    window.on_gpl_pressed(on(|inner| inner.send(UiCommand::OpenWebPage(GPL_URL))));
     window.on_winfsp_site_pressed(on(|inner| {
         inner.send(UiCommand::OpenWebPage(WINFSP_SOURCE_URL));
     }));
+    window.on_slint_site_pressed(on(|inner| inner.send(UiCommand::OpenWebPage(SLINT_URL))));
 
     window.on_activate_selected(on(Inner::activate_selected));
     window.on_open_selected(on(Inner::open_selected));
@@ -813,6 +826,7 @@ impl Inner {
             return;
         }
         self.page.borrow_mut().take();
+        self.info_open.set(false);
         self.settings_open.set(true);
         self.settings_follow_list();
         self.make_room();
@@ -821,6 +835,26 @@ impl Inner {
 
     fn close_settings(&self) {
         if self.settings_open.replace(false) {
+            self.room_follows_pages();
+            self.refresh();
+            self.keep_selection_in_view();
+        }
+    }
+
+    /// The toolbar's Information button, or F1: the page takes the list's place, as settings does.
+    fn open_info(&self) {
+        if self.info_open.get() {
+            return;
+        }
+        self.page.borrow_mut().take();
+        self.settings_open.set(false);
+        self.info_open.set(true);
+        self.make_room();
+        self.refresh();
+    }
+
+    fn close_info(&self) {
+        if self.info_open.replace(false) {
             self.room_follows_pages();
             self.refresh();
             self.keep_selection_in_view();
@@ -1146,6 +1180,8 @@ impl Inner {
         }
         let gone = shown.is_none();
         window.set_settings_open(self.settings_open.get());
+        window.set_info_open(self.info_open.get());
+        window.set_info_view(settings::info_view());
         window.set_settings_view(settings::view(
             !list.is_read_only(),
             self.winfsp.get(),

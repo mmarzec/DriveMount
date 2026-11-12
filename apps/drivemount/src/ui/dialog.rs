@@ -614,9 +614,10 @@ impl Inner {
         }
     }
 
-    /// Gives the room back once neither page is up.
+    /// Gives the room back once no page is up.
     pub(super) fn room_follows_pages(&self) {
-        let no_page = self.page.borrow().is_none() && !self.settings_open.get();
+        let no_page =
+            self.page.borrow().is_none() && !self.settings_open.get() && !self.info_open.get();
         if self.dialog.borrow().is_none() && no_page {
             self.give_room_back();
         }
