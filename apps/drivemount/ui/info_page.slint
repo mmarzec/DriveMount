@@ -4,7 +4,7 @@
 // `drivemount_app::ui` fills in what it cannot know itself; this file only draws it.
 
 import { ScrollView } from "std-widgets.slint";
-import { Theme, Icons, AppButton, Card, Field, Heading, Icon, Link } from "theme.slint";
+import { Theme, Icons, AppButton, Card, Field, Heading, Icon, AppIcon, Link } from "theme.slint";
 
 // What the page shows of this build.
 export struct InfoView {
@@ -231,10 +231,8 @@ export component InfoPage {
                             VerticalLayout {
                                 alignment: start;
 
-                                Icon {
-                                    source: Icons.hard-drive;
-                                    size: 36px;
-                                    colour: Theme.accent;
+                                AppIcon {
+                                    size: 40px;
                                 }
                             }
 

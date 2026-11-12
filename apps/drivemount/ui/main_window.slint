@@ -7,7 +7,7 @@ import "fonts/Inter-Regular.ttf";
 import "fonts/Inter-SemiBold.ttf";
 
 import { Palette, ScrollView } from "std-widgets.slint";
-import { Theme, Icons, Icon, AppButton, Card } from "theme.slint";
+import { Theme, Icons, Icon, AppIcon, AppButton, Card } from "theme.slint";
 import { EntryKind, ListEntry, PrimaryAction, ProfileRow, RowStatus } from "rows.slint";
 import { LoginKind, PageView, ConnectionPage } from "connection_page.slint";
 import { Texts } from "texts.slint";
@@ -150,6 +150,8 @@ component Banner {
 
 export component MainWindow inherits Window {
     title: "DriveMount";
+    // The title bar and the taskbar. Slint draws the SVG at the size Windows asks for.
+    icon: @image-url("app-icon.svg");
     preferred-width: 640px;
     preferred-height: 420px;
     min-width: 480px;
@@ -452,14 +454,23 @@ export component MainWindow inherits Window {
                 padding-left: 16px;
                 spacing: 8px;
 
-                Text {
-                    text: "DriveMount";
-                    font-size: 17px;
-                    font-weight: 600;
-                    color: Theme.text;
-                    vertical-alignment: center;
+                HorizontalLayout {
+                    spacing: 8px;
                     horizontal-stretch: 1;
-                    accessible-role: none;
+
+                    AppIcon {
+                        size: 24px;
+                    }
+
+                    Text {
+                        text: "DriveMount";
+                        font-size: 17px;
+                        font-weight: 600;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        accessible-role: none;
+                    }
                 }
 
                 AppButton {

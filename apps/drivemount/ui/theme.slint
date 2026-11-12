@@ -87,6 +87,18 @@ export component Icon inherits Image {
     accessible-role: none;
 }
 
+// The app's own icon, the same on the toolbar and the information page. Ours, not Lucide's, and in
+// its own colours, which read on both themes.
+export component AppIcon inherits Image {
+    in property <length> size: 18px;
+
+    source: @image-url("app-icon.svg");
+    width: root.size;
+    height: root.size;
+    image-fit: contain;
+    accessible-role: none;
+}
+
 // A button in the theme's colours. Space and Enter press it when it has the focus (NFR-UX-04), and
 // its label is its text unless the user of it says otherwise.
 export component AppButton {
