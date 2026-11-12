@@ -549,6 +549,11 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
         }
         inner.send(UiCommand::OpenLogsFolder);
     }));
+    window.on_crash_close_pressed(on(|inner| {
+        if let Some(window) = inner.window.upgrade() {
+            window.set_crash_text(SharedString::new());
+        }
+    }));
     window.on_hide_pressed(on(Inner::hide));
 
     window.on_row_pressed(on_row(Inner::open_page_at));

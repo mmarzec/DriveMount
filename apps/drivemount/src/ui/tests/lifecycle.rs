@@ -138,6 +138,18 @@ fn a_crash_report_is_noticed_until_the_logs_are_opened() {
     assert_eq!(fixture.ui.window().get_crash_text(), "");
 }
 
+/// FR-APP-07: the × puts the crash notice away without opening anything.
+#[test]
+fn a_crash_report_can_be_closed() {
+    let fixture = Fixture::new(Vec::new());
+    fixture
+        .ui
+        .set_crash_report(Some("crash-2026-11-09T171153.042Z.txt"));
+    fixture.press("Close");
+    assert_eq!(fixture.take_sent(), []);
+    assert_eq!(fixture.ui.window().get_crash_text(), "");
+}
+
 /// FR-APP-01: another start brings the window up, from hidden or minimized.
 #[test]
 fn another_start_brings_the_window_up() {

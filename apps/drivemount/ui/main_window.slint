@@ -19,12 +19,66 @@ export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, KeyFileBox,
 
 export enum ThemeChoice { system, light, dark }
 
+// The banner's small × button: keyboard-reachable like any other button (NFR-UX-04).
+component BannerClose {
+    in property <bool> enabled: true;
+
+    callback clicked();
+
+    width: 22px;
+    height: 22px;
+    forward-focus: scope;
+    accessible-role: button;
+    accessible-label: @tr("Close");
+    accessible-enabled: root.enabled;
+    accessible-action-default => {
+        if (root.enabled) {
+            root.clicked();
+        }
+    }
+
+    scope := FocusScope {
+        enabled: root.enabled;
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            border-radius: 4px;
+            background: touch.pressed ? Theme.button-pressed : touch.has-hover ? Theme.button-hover : transparent;
+            border-width: scope.has-focus ? 2px : 0;
+            border-color: Theme.accent;
+        }
+
+        touch := TouchArea {
+            enabled: root.enabled;
+            mouse-cursor: pointer;
+            clicked => {
+                root.clicked();
+            }
+        }
+
+        Icon {
+            source: Icons.x;
+            size: 14px;
+            colour: root.enabled ? Theme.text-muted : Theme.text-disabled;
+        }
+    }
+}
+
 component Banner {
     in property <string> text;
     in property <string> button-text;
     in property <bool> interactive: true;
+    // A small × in the top-right corner that puts the banner away.
+    in property <bool> closable;
 
     callback clicked();
+    callback close-pressed();
 
     accessible-role: groupbox;
     accessible-label: text;
@@ -41,6 +95,8 @@ component Banner {
             HorizontalLayout {
                 padding: 10px;
                 padding-left: 12px;
+                padding-right: root.closable ? 4px : 10px;
+                padding-top: root.closable ? 4px : 10px;
                 spacing: 10px;
 
                 VerticalLayout {
@@ -71,6 +127,18 @@ component Banner {
                         enabled: root.interactive;
                         clicked => {
                             root.clicked();
+                        }
+                    }
+                }
+
+                if root.closable: VerticalLayout {
+                    alignment: start;
+                    horizontal-stretch: 0;
+
+                    BannerClose {
+                        enabled: root.interactive;
+                        clicked => {
+                            root.close-pressed();
                         }
                     }
                 }
@@ -148,6 +216,7 @@ export component MainWindow inherits Window {
     callback settings-pressed();
     callback download-winfsp-pressed();
     callback crash-logs-pressed();
+    callback crash-close-pressed();
 
     // A click on a row, which opens its page.
     callback row-pressed(index: int);
@@ -442,8 +511,12 @@ export component MainWindow inherits Window {
                 text: root.crash-text;
                 button-text: @tr("Open logs folder");
                 interactive: root.interactive;
+                closable: true;
                 clicked => {
                     root.crash-logs-pressed();
+                }
+                close-pressed => {
+                    root.crash-close-pressed();
                 }
             }
 
