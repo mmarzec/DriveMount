@@ -5,8 +5,10 @@
 //! which need a real connection, see `examples/connect.rs`.
 //!
 //! ```text
-//! cargo run -p drivemount --example main_window -- [--empty] [--no-winfsp] [--read-only] [--light|--dark] [--many]
+//! cargo run -p drivemount --example main_window -- [--empty] [--no-winfsp] [--read-only] [--light|--dark] [--many] [--showcase]
 //! ```
+//!
+//! `--showcase` swaps the edge cases for a tidy set of connections, as in the README's screenshot.
 //!
 //! Set `SLINT_SCALE_FACTOR=1.5` to see it at 150% without changing the display's settings. Esc and the
 //! close button end it, as there is no tray yet. Its size and place are kept in a file in the temp
@@ -105,6 +107,69 @@ username = "me"
 auth = "agent"
 "#;
 
+    /// A tidy set, for the README's screenshot.
+    const SHOWCASE: &str = r#"
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000001"
+name = "Web server"
+protocol = "sftp"
+host = "web01.example.com"
+username = "deploy"
+auth = "agent"
+remote_path = "/var/www"
+drive_letter = "W"
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000002"
+name = "Home NAS"
+protocol = "sftp"
+host = "nas.local"
+username = "alex"
+auth = "agent"
+remote_path = "/volume1/share"
+drive_letter = "N"
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000003"
+name = "Build machine"
+protocol = "sftp"
+host = "build.example.com"
+port = 2222
+username = "ci"
+auth = "agent"
+remote_path = "/srv/artifacts"
+drive_letter = "R"
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000004"
+name = "Dev box"
+protocol = "sftp"
+host = "devbox"
+username = "alex"
+auth = "agent"
+remote_path = "~"
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000005"
+name = "Backups"
+protocol = "sftp"
+host = "backup.example.com"
+username = "alex"
+auth = "password"
+remote_path = "/backups"
+drive_letter = "K"
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000006"
+name = "Media library"
+protocol = "sftp"
+host = "media.local"
+username = "alex"
+auth = "agent"
+remote_path = "/mnt/media"
+drive_letter = "M"
+"#;
+
     fn id(last: u128) -> Uuid {
         Uuid::from_u128(0x0000_0000_0000_4000_8000_0000_0000_0000 | last)
     }
@@ -125,7 +190,9 @@ auth = "agent"
         let path = folder.path().join("config.toml");
         let schema = if has("--read-only") { 99 } else { 1 };
         let mut text = format!("schema_version = {schema}\n");
-        if !has("--empty") {
+        if has("--showcase") {
+            text.push_str(SHOWCASE);
+        } else if !has("--empty") {
             text.push_str(CONFIG);
         }
         if has("--many") {
@@ -247,7 +314,12 @@ auth = "agent"
         } else if has("--dark") {
             ui.set_theme(Theme::Dark);
         }
-        if !has("--empty") && !has("--read-only") {
+        if has("--showcase") {
+            ui.apply_event(&event(id(1), MountState::Mounted, Some('W')));
+            ui.apply_event(&event(id(2), MountState::Mounted, Some('N')));
+            ui.apply_event(&event(id(3), MountState::Reconnecting, Some('R')));
+            ui.apply_event(&event(id(6), MountState::Mounted, Some('M')));
+        } else if !has("--empty") && !has("--read-only") {
             // As in the mock-up of spec 7.1.
             ui.apply_event(&event(id(1), MountState::Mounted, Some('Z')));
             ui.apply_event(&event(id(2), MountState::Connecting, None));

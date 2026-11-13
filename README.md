@@ -4,6 +4,8 @@ DriveMount (working title; executable `drivemount.exe`) is a Windows desktop app
 
 It is a native Rust program built on [WinFsp](https://winfsp.dev). It needs no external SSHFS tooling and runs as a normal, unelevated user process.
 
+![The DriveMount main window, with six connections: three mounted, one reconnecting and two not mounted](docs/images/main-window.png)
+
 | Release | Content |
 |---|---|
 | **v1** (milestones M0–M2) | SSH/SFTP connections as drive letters, tray, auto-mount, auto-reconnect, Windows Credential Manager, host-key verification, settings, MSI installer |
