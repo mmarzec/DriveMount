@@ -18,7 +18,16 @@ It targets Windows 10 22H2 and Windows 11 23H2 or later, on x64.
 
 ## User guide
 
-*To be written.*
+In short:
+
+1. **Install** DriveMount with its MSI. It needs [WinFsp](https://winfsp.dev/rel/) 2.1 or later, which the installer offers if it is missing.
+2. **Add a connection:** choose **Add** (Ctrl+N) and fill in a name, the host, your user name, how you log in (*Key file*, *Password*, *SSH agent* or *Ask each time*), the remote path (`~` for your home folder) and a drive letter, or *Auto*. You can paste `user@host:port/path` into **Host**. **Test connection** checks it without mounting; then **Save**.
+3. **Mount:** choose **Mount** on the row, or press Enter. The first time, check the server's key fingerprint and choose **Trust and save**. The drive appears in Explorer under *Network locations*.
+4. **Unmount** from the same button, or use **Mount all** and **Unmount all** on the toolbar. The tray icon's right-click menu has the same actions.
+
+Closing the window keeps DriveMount in the tray with the drives mounted. After sleep or a network drop, drives reconnect by themselves. Passwords you choose to remember go to Windows Credential Manager, never to a file.
+
+The full guide, [docs/USER_GUIDE.md](docs/USER_GUIDE.md), covers each field and login method, server keys, the tray, settings, keyboard shortcuts, what to do about every error message, and where DriveMount keeps its data.
 
 ## Development
 
@@ -166,6 +175,7 @@ cargo test -p drivemount-winfsp --test explorer -- --ignored --test-threads=1
 
 | Document | Contents |
 |---|---|
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | How to install and use DriveMount |
 | [docs/SPECIFICATION.md](docs/SPECIFICATION.md) | Requirements and design |
 | [docs/ANALYSIS.md](docs/ANALYSIS.md) | Reference program, problems, technology rationale |
 | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Milestones and tasks |

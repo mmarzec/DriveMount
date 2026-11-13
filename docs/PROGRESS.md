@@ -2,6 +2,15 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-13: M2-12 User guide
+
+**Status: done, not committed.** [USER_GUIDE.md](USER_GUIDE.md): installing, adding a connection, ways to log in, server keys, mounting, the tray, settings, keys, troubleshooting, data locations, licence and the WinFsp attribution (NFR-LIC-02, §11). README links it.
+
+- **Reviewed against the UI and the catalogue:** every v1 code of spec §7.8 (17; the M3/M4 ones left out) has an entry, by its shown text from `ui/texts.slint` with the code in brackets. Every label the guide puts in bold is a string of `ui/*.slint`, apart from the guide's own headings and the installer's *Remove my settings*.
+- **The code differs from spec §7.8 in one place:** E-KEY-FORMAT's hint is "Convert a PuTTY key to OpenSSH format with PuTTYgen." in `texts.slint`; the spec says only "PuTTY conversion hint". The guide follows the code.
+- **Written from the spec, not yet checkable:** the installer and portable zip (§1, from spec §9), as M2-10 is not built. Check §1 and §10's *Removing everything by hand* against the real MSI at M2-10 (the MSI's name, the WinFsp offer, *Remove my settings*).
+- **Next:** M2-10.
+
 ## 2026-11-13: H-08 owner's check of M2-02 to M2-07
 
 **Status: done; the owner accepted it 2026-11-13.** M2-02 to M2-06 are ticked in the plan. Two issues found and fixed; workspace clippy, `drivemount`'s lib tests (230) and `drivemount-win`'s tray tests, the 2 that need a desktop included, pass. The owner confirmed both fixes on the release exe.
