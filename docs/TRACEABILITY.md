@@ -10,7 +10,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
 | PLAT-01 | M2-09, M2-13 | – | – |
-| PLAT-02 | M1-11, M2-10 | Detection: `drivemount-win` `winfsp::tests`, with the installed 2.2 in `the_installed_winfsp_is_ready` (`#[ignore]`). Installer: M2-10 | – |
+| PLAT-02 | M1-11, M2-10 | Detection: `drivemount-win` `winfsp::tests`, with the installed 2.2 in `the_installed_winfsp_is_ready` (`#[ignore]`). Installer: the setup exe finds WinFsp 2.2 and leaves it (`scripts/test-installer.ps1`, Burn's plan in its log); installing WinFsp on a PC without it: H-11 | – |
 | PLAT-03 | M0-1, M1-12c | Mounted unelevated by every test in `crates/drivemount-winfsp/tests`, on this Windows 10 Home. M2-09, M2-13 for the rest | – |
 | PLAT-04 | M1-16, M1-17 | All sizes are logical pixels. The owner checked 100% and 150% (H-06). Two monitors with different scaling: not tried | – |
 
@@ -205,7 +205,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | NFR-LIC-01 | M1-01 | `scripts/check-spdx.sh` in CI; negative test: fails on a missing header | 0.1.0 (local) |
 | NFR-LIC-02 | M2-05, M2-12 | The About section's text is fixed in `ui/info_page.slint`. By eye: H-08, passed 2026-11-13. The user guide: M2-12 | – |
-| NFR-LIC-03 | M2-05 | `the_licence_file_that_is_not_there_says_so`; `open_html_file` takes only `.html`. The source link: `repository` in `Cargo.toml` is the public GitHub repository; the owner saw the link, 2026-11-13. Opening the real file: after M2-10 | – |
-| NFR-LIC-04 | M2-10 | – | – |
+| NFR-LIC-03 | M2-05 | `the_licence_file_that_is_not_there_says_so`; `open_html_file` takes only `.html`. The source link: `repository` in `Cargo.toml` is the public GitHub repository; the owner saw the link, 2026-11-13. Opening the real file: the MSI puts it beside the exe (`scripts/test-installer.ps1`); clicking the button in the installed app: H-11 | – |
+| NFR-LIC-04 | M2-10 | `scripts/package.ps1` makes `THIRD-PARTY-LICENSES.html` with `cargo-about` (a licence outside the allow-list fails it) and puts it and `LICENSE.txt` in the MSI and the zip; `scripts/test-installer.ps1` checks both are installed | – |
 | NFR-LIC-05 | M1-01 | CI `cargo deny check`; negative test: a `GPL-2.0-only` crate fails | 0.1.0 (local) |
 | NFR-LIC-06 | M2-13 | – | – |

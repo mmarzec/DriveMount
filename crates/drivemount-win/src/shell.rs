@@ -27,8 +27,9 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DBT_DEVICEARRIVAL, DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME, DEV_BROADCAST_VOLUME,
-    DEV_BROADCAST_VOLUME_FLAGS, FindWindowW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT, SW_SHOWNORMAL,
-    SendMessageTimeoutW, WM_DEVICECHANGE,
+    DEV_BROADCAST_VOLUME_FLAGS, FindWindowW, IDYES, MB_DEFBUTTON2, MB_ICONQUESTION,
+    MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MessageBoxW, SMTO_ABORTIFHUNG, SMTO_ERRORONEXIT,
+    SW_SHOWNORMAL, SendMessageTimeoutW, WM_DEVICECHANGE,
 };
 use windows::core::{PCWSTR, PWSTR, w};
 
@@ -352,6 +353,24 @@ pub fn open_html_file(file: &Path) -> io::Result<()> {
 /// What Explorer takes to select a file.
 fn select_argument(file: &Path) -> String {
     format!("/select,\"{}\"", file.display())
+}
+
+/// Asks a yes-or-no question in a message box of its own, with *No* as the default, and blocks until
+/// it is answered. For a program with no window, such as the uninstaller's step. `false` for *No*, and
+/// if the box could not be shown.
+#[must_use]
+pub fn ask_yes_no(title: &str, question: &str) -> bool {
+    let (title, question) = (wide(title), wide(question));
+    // SAFETY: both strings are nul-terminated and outlive the call.
+    let answer = unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(question.as_ptr()),
+            PCWSTR(title.as_ptr()),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2 | MB_SETFOREGROUND | MB_TOPMOST,
+        )
+    };
+    answer == IDYES
 }
 
 /// Whether Caps Lock is on, for the hint in a password prompt (spec §7.4.1).

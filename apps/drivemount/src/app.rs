@@ -274,11 +274,38 @@ impl StartWithWindows for RunValue {
     }
 }
 
+impl RunValue {
+    /// Whether the value is there and starts this very exe.
+    fn starts_this_exe(&self) -> io::Result<bool> {
+        let Some(name) = &self.name else {
+            return Ok(false);
+        };
+        let exe = std::env::current_exe()?;
+        Ok(startup::command(name)?.is_some_and(|command| startup::starts(&command, &exe)))
+    }
+}
+
 /// With the setting on, the Run value is written again, as the exe may have moved since. With it
-/// off, nothing is touched.
-fn refresh_run_value(run_value: &RunValue, on: bool) {
-    if on && let Err(error) = run_value.set(true) {
-        tracing::warn!(%error, "the Run value could not be written");
+/// off, a value that starts this exe, as the installer's *Start with Windows* writes it, turns the
+/// setting on, so the page shows what Windows will do (spec §7.5). Any other value is left alone.
+fn refresh_run_value(run_value: &RunValue, store: &mut ConfigStore) {
+    if store.config().settings.start_with_windows {
+        if let Err(error) = run_value.set(true) {
+            tracing::warn!(%error, "the Run value could not be written");
+        }
+        return;
+    }
+    match run_value.starts_this_exe() {
+        Ok(true) => {
+            let mut config = store.config().clone();
+            config.settings.start_with_windows = true;
+            match store.save(&config) {
+                Ok(()) => tracing::info!("the Run value starts this exe, so the setting is on"),
+                Err(error) => tracing::warn!(%error, "the setting could not follow the Run value"),
+            }
+        }
+        Ok(false) => {}
+        Err(error) => tracing::warn!(%error, "the Run value could not be read"),
     }
 }
 
@@ -328,7 +355,7 @@ fn hand_over(name: &str) -> Result<()> {
 
 fn run_logged(
     setup: Setup,
-    store: ConfigStore,
+    mut store: ConfigStore,
     log_level: LogLevelControl,
     instance: Option<&Instance>,
 ) -> Result<()> {
@@ -381,7 +408,7 @@ fn run_logged(
     let run_value = RunValue {
         name: setup.run_value.clone(),
     };
-    refresh_run_value(&run_value, store.config().settings.start_with_windows);
+    refresh_run_value(&run_value, &mut store);
     ui.set_config(store.config().clone());
     ui.set_read_only(store.read_only());
     ui.set_setting_problems(store.setting_problems());

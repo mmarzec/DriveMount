@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- The setup exe's texts (theme.xml), in English only, as the app is. -->
+<WixLocalization Culture="en-us" Language="1033" xmlns="http://schemas.microsoft.com/wix/2006/localization">
+  <String Id="Caption">[WixBundleName] Setup</String>
+  <String Id="Title">[WixBundleName]</String>
+  <String Id="Subtitle">Mount remote file systems as Windows drives</String>
+  <String Id="InstallVersion">Version [WixBundleVersion]</String>
+  <String Id="InstallText">DriveMount will be installed in Program Files for everyone on this PC. WinFsp, which DriveMount needs to make drives, is installed too if it is not here yet.
+
+DriveMount is free software under the GNU GPL version 3 or later. WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.</String>
+  <String Id="StartWithWindows">&amp;Start DriveMount when I sign in to Windows</String>
+  <String Id="InstallButton">&amp;Install</String>
+  <String Id="CloseButton">&amp;Close</String>
+  <String Id="CancelButton">&amp;Cancel</String>
+  <String Id="HelpHeader">Setup help</String>
+  <String Id="HelpText">/install | /repair | /uninstall | /layout [folder] - installs, repairs, uninstalls or
+   makes a complete local copy of the bundle in the folder. Install is the default.
+
+/passive | /quiet - shows a minimal UI with no prompts, or no UI and
+   no prompts. By default the UI and all prompts are shown.
+
+/norestart - suppresses any attempt to restart. By default the UI will prompt before restart.
+/log log.txt - logs to a file. By default a log file is created in %TEMP%.</String>
+  <String Id="ProgressHeader">Installing</String>
+  <String Id="ProgressLabel">Working on:</String>
+  <String Id="OverallProgressPackageText">Starting...</String>
+  <String Id="ModifyHeader">Change DriveMount</String>
+  <String Id="ModifyText">You can remove DriveMount from this PC. WinFsp stays, as other programs may use it.</String>
+  <String Id="UninstallButton">&amp;Uninstall</String>
+  <String Id="SuccessHeader">Done</String>
+  <String Id="SuccessInstallHeader">DriveMount is installed</String>
+  <String Id="SuccessUninstallHeader">DriveMount is removed</String>
+  <String Id="SuccessRepairHeader">DriveMount is repaired</String>
+  <String Id="LaunchButton">&amp;Start DriveMount</String>
+  <String Id="RestartText">Windows must restart before the change is complete.</String>
+  <String Id="RestartButton">&amp;Restart</String>
+  <String Id="FailureHeader">Setup failed</String>
+  <String Id="FailureInstallHeader">DriveMount could not be installed</String>
+  <String Id="FailureUninstallHeader">DriveMount could not be removed</String>
+  <String Id="FailureRepairHeader">DriveMount could not be repaired</String>
+  <String Id="FailureLogText">Something stopped setup. The &lt;a href="#"&gt;log file&lt;/a&gt; says what.</String>
+  <String Id="FilesInUseHeader">Programs are using files that must change</String>
+  <String Id="FilesInUseLabel">Close these programs and try again:</String>
+  <String Id="FilesInUseCloseRadio">Close the programs and try to restart them.</String>
+  <String Id="FilesInUseDontCloseRadio">Do not close them. A restart will be needed.</String>
+  <String Id="OkButton">&amp;OK</String>
+</WixLocalization>

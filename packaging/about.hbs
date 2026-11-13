@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- cargo-about's template for THIRD-PARTY-LICENSES.html (NFR-LIC-04). scripts/package.ps1 runs it. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DriveMount: third-party licences</title>
+<style>
+  :root { color-scheme: light dark; --muted: #5f6368; --rule: #d0d4d9; --code: #f3f4f6; }
+  @media (prefers-color-scheme: dark) { :root { --muted: #a8adb3; --rule: #3a3f45; --code: #202428; } }
+  body { font: 15px/1.5 "Segoe UI", system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 1.6em; margin-bottom: 0.2em; }
+  h2 { font-size: 1.25em; margin-top: 2em; border-top: 1px solid var(--rule); padding-top: 1em; }
+  p.lead, .used-by { color: var(--muted); }
+  ul.overview { columns: 2; padding-left: 1.2em; }
+  ul.used-by { padding-left: 1.2em; margin: 0.4em 0 0.8em; font-size: 0.92em; }
+  pre { background: var(--code); padding: 12px; overflow-x: auto; white-space: pre-wrap; font-size: 0.85em; border-radius: 6px; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<h1>Third-party licences</h1>
+<p class="lead">DriveMount is free software under the GNU General Public License, version 3 or later
+(<code>LICENSE.txt</code>, beside this file). It is built from the open-source components below, each
+under its own licence. The source of DriveMount is at
+<a href="https://github.com/mmarzec/DriveMount">github.com/mmarzec/DriveMount</a>.</p>
+
+<h2>WinFsp</h2>
+<p>WinFsp - Windows File System Proxy, Copyright (C) Bill Zissimopoulos.
+<a href="https://github.com/winfsp/winfsp">github.com/winfsp/winfsp</a>.
+DriveMount loads WinFsp's DLL and its setup may install WinFsp's own unmodified installer. WinFsp is
+licensed under the GNU GPL version 3 with a FLOSS exception; its licence is in <code>License.txt</code> in
+WinFsp's install folder.</p>
+
+<h2>Licences used</h2>
+<ul class="overview">
+{{#each overview}}
+  <li><a href="#{{id}}">{{name}}</a> ({{count}})</li>
+{{/each}}
+</ul>
+
+{{#each licenses}}
+<h2 id="{{id}}">{{name}}</h2>
+<p>Used by:</p>
+<ul class="used-by">
+{{#each used_by}}
+  <li><a href="{{#if crate.repository}}{{crate.repository}}{{else}}https://crates.io/crates/{{crate.name}}{{/if}}">{{crate.name}} {{crate.version}}</a></li>
+{{/each}}
+</ul>
+<pre>{{text}}</pre>
+{{/each}}
+</body>
+</html>

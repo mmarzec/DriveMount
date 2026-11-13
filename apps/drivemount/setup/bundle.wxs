@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  DriveMount's setup exe (spec §9, plan M2-10, OD-5): a WiX Burn bundle that installs WinFsp first if
+  it is missing or older than 2.1, then DriveMount's MSI. Built by scripts/package.ps1 with candle and
+  light, as cargo-wix builds only MSIs.
+
+  Variables from the script: Version, Msi (DriveMount's MSI), WinFspMsi (the unmodified MSI from
+  winfsp.dev, redistributed under WinFsp's FLOSS exception, ADR-0003), Icon, and SetupDir (this folder).
+
+  WinFsp is permanent: uninstalling DriveMount leaves it, as other programs may use it. A WinFsp at
+  2.1 or later is left as it is.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+  <Bundle Name="DriveMount"
+          Version="$(var.Version)"
+          Manufacturer="DriveMount contributors"
+          UpgradeCode="8213EE5D-0F06-4920-9091-91AF90701CBE"
+          IconSourceFile="$(var.Icon)"
+          AboutUrl="https://github.com/mmarzec/DriveMount"
+          HelpUrl="https://github.com/mmarzec/DriveMount"
+          DisableModify="yes">
+
+    <!-- No licence to accept: the GPL asks for none. The theme adds the Start with Windows box. -->
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication LicenseUrl=""
+                                              ThemeFile="$(var.SetupDir)\theme.xml"
+                                              LocalizationFile="$(var.SetupDir)\theme.wxl"
+                                              SuppressOptionsUI="yes"
+                                              SuppressRepair="yes"
+                                              LaunchTarget="[ProgramFiles64Folder]DriveMount\drivemount.exe" />
+    </BootstrapperApplicationRef>
+
+    <!-- The theme's checkbox of the same name sets it. It starts ticked when this user's Run value is
+         there, so an upgrade keeps it. Searches run as the user, so HKCU is theirs. -->
+    <util:RegistrySearch Id="RunValueSearch" Root="HKCU"
+                         Key="Software\Microsoft\Windows\CurrentVersion\Run" Value="DriveMount"
+                         Result="exists" Variable="StartWithWindows" />
+
+    <!-- Spec §9: InstallDir under HKLM\SOFTWARE\WOW6432Node\WinFsp, then the DLL's version. -->
+    <util:RegistrySearch Id="WinFspDirSearch" Root="HKLM" Key="SOFTWARE\WinFsp" Value="InstallDir"
+                         Win64="no" Result="value" Variable="WinFspDir" />
+    <util:FileSearch Id="WinFspVersionSearch" After="WinFspDirSearch" Condition="WinFspDir"
+                     Path="[WinFspDir]bin\winfsp-x64.dll" Result="version" Variable="WinFspVersion" />
+
+    <bal:Condition Message="DriveMount needs 64-bit Windows 10 or later.">
+      VersionNT64 &gt;= v10.0
+    </bal:Condition>
+
+    <Chain>
+      <MsiPackage Id="WinFsp"
+                  SourceFile="$(var.WinFspMsi)"
+                  Compressed="yes"
+                  Permanent="yes"
+                  Visible="yes"
+                  Vital="yes"
+                  DisplayName="WinFsp"
+                  InstallCondition="NOT WinFspVersion OR WinFspVersion &lt; v2.1" />
+      <MsiPackage Id="DriveMount"
+                  SourceFile="$(var.Msi)"
+                  Compressed="yes"
+                  Vital="yes"
+                  DisplayName="DriveMount">
+        <MsiProperty Name="STARTWITHWINDOWS" Value="[StartWithWindows]" />
+        <!-- For the uninstall step: whether someone is there to answer its question. -->
+        <MsiProperty Name="DMBUNDLEUI" Value="[WixBundleUILevel]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>
