@@ -13,6 +13,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::os::windows::fs::{FileTimesExt, MetadataExt, OpenOptionsExt};
 use std::os::windows::io::FromRawHandle;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use drivemount_vfs::{Attr, AttrChanges, AttrTarget, FsError, OpenMode, RemoteFs};
@@ -852,6 +853,182 @@ fn a_failed_write_nobody_heard_of_does_not_stop_the_close() {
     file.write_all(b"lost").unwrap();
     drop(file);
     assert!(eventually(|| drive.probe.open_handles() == 0));
+    assert_eq!(drive.get("/file"), b"");
+}
+
+// ---------------------------------------------------------------- when the connection goes
+
+/// A new session over the same server, as a reconnect gives.
+fn connect_again(drive: &Drive) {
+    let probe = Arc::clone(&drive.probe) as Arc<dyn RemoteFs>;
+    drive.backend.sessions().replace(probe).unwrap();
+}
+
+/// What the M2-09 soak found: a program copies a file, its last write is on its way when the
+/// network drops or the PC sleeps, and it closes the file. It was told the write worked, so the write
+/// arrives once the connection is back, rather than going to the log alone.
+#[test]
+fn writes_on_their_way_when_the_connection_goes_arrive_once_it_is_back() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.fail(Op::Write, FsError::ConnectionLost);
+    file.write_all(b"contents").unwrap();
+    let start = Instant::now();
+    drop(file);
+    // Closing does not wait for a server that is away.
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "{:?}",
+        start.elapsed()
+    );
+    assert!(drive.backend.sessions().current().is_none());
+    assert_eq!(drive.get("/file"), b"");
+
+    drive.probe.heal(Op::Write);
+    let closes = drive.probe.count(Op::Close);
+    connect_again(&drive);
+    assert!(eventually(|| drive.get("/file") == b"contents"));
+    // The handle opened again on the new session is closed once they have. (The old session's went
+    // with it: here it is the same probe, so its count does not go down.)
+    assert!(eventually(|| drive.probe.count(Op::Close) > closes));
+}
+
+/// The program's next `Flush` hears that the server is away; the data still arrives after.
+#[test]
+fn a_flush_while_the_connection_is_away_fails_and_the_writes_still_arrive() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.fail(Op::Write, FsError::ConnectionLost);
+    file.write_all(b"contents").unwrap();
+    file.sync_all().unwrap_err();
+
+    drive.probe.heal(Op::Write);
+    connect_again(&drive);
+    assert!(eventually(|| drive.get("/file") == b"contents"));
+    file.sync_all().unwrap();
+    drop(file);
+    assert_eq!(fs::read(drive.path("file")).unwrap(), b"contents");
+}
+
+/// A file renamed after its close, while its last write waits for the connection, gets that write
+/// under its new name, as the soak's worker renames each copy.
+#[test]
+fn writes_owed_after_a_close_follow_a_rename() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    let mut file = File::create(drive.path("file.part")).unwrap();
+    file.write_all(b"head ").unwrap();
+    file.sync_all().unwrap();
+    drive.probe.fail(Op::Write, FsError::ConnectionLost);
+    file.write_all(b"tail").unwrap();
+    drop(file);
+
+    drive.probe.heal(Op::Write);
+    connect_again(&drive);
+    fs::rename(drive.path("file.part"), drive.path("file.bin")).unwrap();
+    assert_eq!(fs::read(drive.path("file.bin")).unwrap(), b"head tail");
+    assert_eq!(drive.get("/file.bin"), b"head tail");
+}
+
+/// The soak's other finding: `DeleteFile` succeeded while the connection was away, and the file
+/// stayed. It goes once the connection is back, and no listing shows it in between.
+#[test]
+fn a_file_deleted_while_the_connection_is_away_goes_once_it_is_back() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    drive.put("/gone", b"x");
+    drive.put("/kept", b"x");
+    drive.probe.fail(Op::RemoveFile, FsError::ConnectionLost);
+    delete(&drive.path("gone")).unwrap();
+    assert!(drive.probe.has("/gone"));
+    // Nothing can look while the removal waits.
+    fs::read_dir(drive.path("")).unwrap_err();
+
+    drive.probe.heal(Op::RemoveFile);
+    connect_again(&drive);
+    assert_eq!(sorted_names(&drive, ""), ["kept"]);
+    assert!(!drive.probe.has("/gone"));
+    assert_eq!(code(fs::metadata(drive.path("gone"))), ERROR_NOT_FOUND);
+}
+
+/// A removal the server did not answer in time goes again, on the same session.
+#[test]
+fn a_removal_that_timed_out_goes_again() {
+    if support::not_over_sftp("a hung request stays at the head of the server's queue") {
+        return;
+    }
+    let drive = short_drive();
+    drive.put("/gone", b"x");
+    drive
+        .probe
+        .delay(Op::RemoveFile, Duration::from_millis(400));
+    delete(&drive.path("gone")).unwrap();
+    drive.probe.delay(Op::RemoveFile, Duration::ZERO);
+    assert!(eventually(|| !drive.probe.has("/gone")));
+    assert_eq!(sorted_names(&drive, ""), Vec::<String>::new());
+}
+
+/// A removal that reached the server before the answer was lost: the second try finds nothing to
+/// remove, and that counts as done.
+#[test]
+fn a_file_already_gone_once_the_connection_is_back_counts_as_removed() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    drive.put("/gone", b"x");
+    drive.probe.fail(Op::RemoveFile, FsError::ConnectionLost);
+    delete(&drive.path("gone")).unwrap();
+    drive
+        .server(drive.probe.inner.remove_file(&remote("/gone")))
+        .unwrap();
+
+    drive.probe.heal(Op::RemoveFile);
+    connect_again(&drive);
+    assert_eq!(sorted_names(&drive, ""), Vec::<String>::new());
+    drive.put("/gone", b"new");
+    assert_eq!(fs::read(drive.path("gone")).unwrap(), b"new");
+}
+
+/// A drive stopping ends what waits for the connection: it goes to the log.
+#[test]
+fn unmounting_ends_what_waits_for_the_connection() {
+    if support::not_over_sftp("the server's failures reach the drive as SFTP statuses") {
+        return;
+    }
+    let drive = short_drive();
+    drive.put("/gone", b"x");
+    let mut file = File::create(drive.path("file")).unwrap();
+    drive.probe.fail(Op::Write, FsError::ConnectionLost);
+    file.write_all(b"contents").unwrap();
+    drop(file);
+    drive.probe.fail(Op::RemoveFile, FsError::ConnectionLost);
+    delete(&drive.path("gone")).unwrap();
+
+    let start = Instant::now();
+    drive.backend.stop();
+    drive.server(drive.backend.close_left_open());
+    drive.backend.sessions().shut_down();
+    assert!(
+        start.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        start.elapsed()
+    );
+    // Nothing goes again after the drive has stopped.
+    drive.probe.heal(Op::Write);
+    drive.probe.heal(Op::RemoveFile);
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(drive.probe.has("/gone"));
     assert_eq!(drive.get("/file"), b"");
 }
 
@@ -1793,7 +1970,7 @@ fn a_hung_mkdir_times_out() {
 }
 
 #[test]
-fn a_hung_write_times_out_and_the_next_can_work() {
+fn a_hung_write_times_out_for_the_flush_and_goes_again() {
     if support::not_over_sftp("a hung request stays at the head of the server's queue") {
         return;
     }
@@ -1804,13 +1981,13 @@ fn a_hung_write_times_out_and_the_next_can_work() {
         .open(drive.path("file"))
         .unwrap();
     drive.probe.delay(Op::Write, HANG);
-    // The write returns at once; the flush waits for it, until the write's own limit.
+    // The write returns at once; the flush waits for it, until the flush's own limit.
     file.write_all(b"x").unwrap();
     assert_times_out(&drive, || file.sync_all());
     drive.probe.delay(Op::Write, Duration::ZERO);
-    // The flush's own limit may end it just before the write's: then the write's failure is still to
-    // be heard, once.
-    let _ = file.sync_all();
+    // The program was told the write worked, so a timeout does not drop it: it goes again.
+    assert!(eventually(|| drive.get("/file") == b"xefore"));
+    file.sync_all().unwrap();
     file.seek(SeekFrom::Start(0)).unwrap();
     file.write_all(b"after!").unwrap();
     drop(file);

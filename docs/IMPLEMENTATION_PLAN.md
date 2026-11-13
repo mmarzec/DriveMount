@@ -75,7 +75,7 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | H-06 | M1-16/17 | Look at the main window and dialogs (100% and 150% scaling) and report anything wrong | ~20 min per round |
 | H-07 | M1-19 | Manual items of the M1 exit checklist (§9.2) | ~45 min |
 | H-08 | M2-02/03/04/06 | Sleep/resume, Wi-Fi switch, sign-out with mounts, tray and toast behaviour | ~45 min |
-| H-09 | M2-09 | Start the 72 h soak; keep the PC on, and don't use it for anything else during the run | 3 days of wall clock |
+| H-09 | M2-09 | Start the 4 h soak (shortened from 72 h by the owner, 2026-11-13); keep the PC on, and don't use it for anything else during the run | 4 h of wall clock. Done 2026-11-13 (failed, fixed; not repeated by the owner's decision) |
 | H-10 | M2-11 | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup |
 | H-11 | M2-10/13 | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min |
 | H-12 | M3-05 | SMB tests against your real servers (NAS, Windows share) | ~30 min |
@@ -126,7 +126,7 @@ Setup ─▶ M0 spikes ─▶ G1 ─▶ M1 core mount ─▶ G2 ─▶ M2 v1 rel
 | Setup | hours | Your installs (H-01, H-02) |
 | M0 spikes | 1–3 days | The Explorer and tray checks (H-04, H-05) |
 | M1 core mount | ~1½–2½ weeks | Rust compile/test loops, WinFsp debugging, UI review rounds (H-06) |
-| M2 v1 release | ~1½–2 weeks | 72 h soak (H-09), signing certificate (H-10), installer check (H-11) |
+| M2 v1 release | ~1½–2 weeks | 4 h soak (H-09), signing certificate (H-10), installer check (H-11) |
 | **v1.0.0 (SSH)** | **≈ 4–6 weeks** | |
 | M3 SMB + M4 NFS | ~1½–2 weeks | Tests on your real servers (H-12, H-13) |
 
@@ -313,7 +313,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M2-06 | **Lifecycle** (FR-APP):<br>• single instance: named mutex plus a registered "show" message to the existing window;<br>• `--tray` start; close to tray; quit confirmation;<br>• crash hook: panic hook writes `crash-*.txt`, then `panic = "abort"`; notice on next start. | Scripted tests (second instance exits, crash file written); owner confirms close-to-tray and quit dialog | H-08 | ☐ |
 | M2-07 | **Bulk and start-up mounting**: mount on start (parallel, prompts queued); Mount all and Unmount all; letter-conflict auto-pick with row note and toast (FR-MNT-04). | FR-MNT-04/08/09 acceptance criteria pass | – | ☑ |
 | M2-08 | **Performance pass**: measure every NFR-PERF budget on the spec §4.1 environment (the local machine + WSL/Docker server, with netem for WAN); profile with `tracing` spans and Windows Performance Recorder; tune cache TTLs, chunk sizes and thread count; implement write-behind if OD-4 says so (ADR-0002). | `docs/perf/v1.md` shows all budgets met | – | ☑ |
-| M2-09 | **Reliability campaign**:<br>• `fsx` 100k operations on SFTP mounts;<br>• full `winfsp-tests` subset;<br>• NEO regressions (spec §10.3);<br>• kill test;<br>• **72 h soak:** 5 mounts; a PowerShell driver copies files in a loop while a WSL/Docker script toggles iptables DROP every 20 min and a wake-timer script sleeps and resumes the PC;<br>• working set logged. | No data mismatch; no stuck state; working-set growth < 10% (NFR-REL-06) | H-09 | ☐ |
+| M2-09 | **Reliability campaign**:<br>• `fsx` 100k operations on SFTP mounts;<br>• full `winfsp-tests` subset;<br>• NEO regressions (spec §10.3);<br>• kill test;<br>• **4 h soak** (72 h until the owner shortened it, 2026-11-13): 5 mounts; a PowerShell driver copies files in a loop while a WSL/Docker script toggles iptables DROP every 20 min and a wake-timer script sleeps and resumes the PC (`scripts/soak/`);<br>• working set logged. | No data mismatch; no stuck state; working-set growth < 10% (NFR-REL-06) | H-09 | ☑ Accepted by the owner, 2026-11-13: the 4 h soak failed on 3 files and +10.8% working set; the cause was fixed and a 20-minute soak with drops and sleeps passed on data. The 4 h soak was not repeated (too costly). [reliability/v1.md](reliability/v1.md) |
 | M2-10 | **Installer** (`cargo-wix`, WiX):<br>• per-machine install;<br>• Start-menu shortcut with the AppUserModelID `DriveMount` (toasts rely on the HKCU keys from M2-04, not on this);<br>• uninstall removes those HKCU keys (spec §9) for the installing user;<br>• optional Start with Windows;<br>• WinFsp ≥ 2.1 check, then chain-install of the unmodified WinFsp MSI or a link (OD-5);<br>• uninstall with "Remove my settings";<br>• portable zip;<br>• `LICENSE` and `THIRD-PARTY-LICENSES.html` (generated with `cargo-about`) in both artefacts (NFR-LIC-04). | Install, upgrade and uninstall scripted on the dev machine; owner verifies on a clean Windows 11 Pro machine | H-11 | ☐ |
 | M2-11 | **Signing and release workflow**: GitHub Actions on tag builds, signs (OD-3), builds the MSI and zip, writes `sha256sums.txt` and drafts the release. | A signed test tag produces the artefacts; SmartScreen does not block | H-10 | ☐ |
 | M2-12 | **User guide** `docs/USER_GUIDE.md`: install, add a connection, auth methods, host keys, tray, troubleshooting (one entry per §7.8 error), data locations, licence and WinFsp attribution (NFR-LIC-02). | Reviewed against the UI and the error catalogue | – | ☐ |
@@ -383,7 +383,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 - [ ] All FR-PROF, FR-SSH, FR-MNT, FR-REC, FR-TRAY, FR-NOT, FR-APP and FR-SET acceptance criteria verified and ticked in `docs/TRACEABILITY.md`.
 - [ ] All NFR-PERF budgets met (`docs/perf/v1.md`).
-- [ ] 72 h soak passed (NFR-REL-06).
+- [x] Soak (NFR-REL-06): accepted by the owner, 2026-11-13, on the fix and a 20-minute run with drops and sleeps; the 4 h run failed before the fix and was not repeated ([reliability/v1.md](reliability/v1.md)).
 - [ ] Manual matrix (spec §10.4, SSH rows) passed on Windows 10 Home 22H2 and Windows 11 Pro.
 - [ ] MSI installs, upgrades and uninstalls cleanly; binaries signed.
 - [ ] Licence obligations met (NFR-LIC-01 to NFR-LIC-06): `cargo deny` clean, About shows the GPLv3 notice and WinFsp attribution, licence files shipped, release tag public with source link.

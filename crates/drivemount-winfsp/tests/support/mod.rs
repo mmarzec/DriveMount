@@ -10,6 +10,7 @@
 // Each test binary uses its own part of this.
 #![allow(dead_code)]
 
+pub mod exerciser;
 pub mod proxy;
 pub mod sftp_server;
 
@@ -29,15 +30,13 @@ use drivemount_vfs::{
 };
 use drivemount_win::drives::is_letter_free;
 use drivemount_winfsp::{Volume, VolumeConfig};
+#[allow(unused_imports)] // Each test binary uses its own part of this.
+pub use exerciser::MappedFile;
 use sftp_server::SftpServer;
 use tokio::runtime::Runtime;
-use windows::Win32::Foundation::{CloseHandle, ERROR_NO_MORE_FILES, HANDLE};
+use windows::Win32::Foundation::{ERROR_NO_MORE_FILES, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     FindClose, FindFirstFileW, FindNextFileW, WIN32_FIND_DATAW,
-};
-use windows::Win32::System::Memory::{
-    CreateFileMappingW, FILE_MAP_WRITE, FlushViewOfFile, MEMORY_MAPPED_VIEW_ADDRESS, MapViewOfFile,
-    PAGE_READWRITE, UnmapViewOfFile,
 };
 use windows::core::PCWSTR;
 
@@ -703,49 +702,6 @@ fn found_entry(data: &WIN32_FIND_DATAW) -> Found {
         name: String::from_utf16(&data.cFileName[..len]).unwrap(),
         attributes: data.dwFileAttributes,
         size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
-    }
-}
-
-/// A view of an open file in memory, as far as the size given.
-pub struct MappedFile {
-    mapping: HANDLE,
-    view: MEMORY_MAPPED_VIEW_ADDRESS,
-    len: usize,
-}
-
-impl MappedFile {
-    /// `file` needs to be open for reading and writing, and at least `len` bytes long.
-    pub fn new(file: &std::fs::File, len: usize) -> Self {
-        // SAFETY: the file's handle is open. A mapping keeps what it needs of it.
-        let mapping = unsafe {
-            CreateFileMappingW(raw_handle(file), None, PAGE_READWRITE, 0, 0, PCWSTR::null())
-        }
-        .unwrap();
-        // SAFETY: the mapping was just made, and is for at least `len` bytes.
-        let view = unsafe { MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len) };
-        assert!(!view.Value.is_null());
-        Self { mapping, view, len }
-    }
-
-    pub fn bytes(&mut self) -> &mut [u8] {
-        // SAFETY: the view is `len` bytes, readable and writable, until drop, and borrowed from here.
-        unsafe { std::slice::from_raw_parts_mut(self.view.Value.cast(), self.len) }
-    }
-
-    /// Sends what was changed to the file. Windows only promises it for "soon" otherwise.
-    pub fn flush(&self) {
-        // SAFETY: the view is `len` bytes.
-        unsafe { FlushViewOfFile(self.view.Value, self.len) }.unwrap();
-    }
-}
-
-impl Drop for MappedFile {
-    fn drop(&mut self) {
-        // SAFETY: both are open, and `bytes` cannot be borrowed any more.
-        unsafe {
-            UnmapViewOfFile(self.view).unwrap();
-            CloseHandle(self.mapping).unwrap();
-        }
     }
 }
 

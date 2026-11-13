@@ -17,7 +17,7 @@ use futures::{StreamExt, TryStreamExt, stream};
 use tokio::runtime::Handle;
 use tokio::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::time::timeout;
-use tracing::{debug, debug_span, warn};
+use tracing::{debug, debug_span, info, warn};
 use windows::Win32::Foundation::{
     NTSTATUS, STATUS_ACCESS_DENIED, STATUS_DIRECTORY_NOT_EMPTY, STATUS_END_OF_FILE,
     STATUS_INVALID_DEVICE_REQUEST, STATUS_IO_TIMEOUT, STATUS_MEDIA_WRITE_PROTECTED,
@@ -35,6 +35,7 @@ use winfsp::{FspError, U16CStr};
 use winfsp_sys::{FILE_ACCESS_RIGHTS, FILE_FLAGS_AND_ATTRIBUTES};
 
 use crate::behind::{self, Behind};
+use crate::owed::{Removals, connection_failed, through_outages};
 use crate::status::fail;
 use crate::{attrs, paths, security};
 
@@ -135,6 +136,17 @@ pub(crate) struct Adapter {
     /// so going through all of them is cheap next to the remote call behind each change. Shared with
     /// the volume, as WinFsp does not call `Close` for what is still open when a drive stops.
     pub(crate) open_files: Arc<Mutex<Vec<Arc<OpenFile>>>>,
+    /// Files deleted on close whose removal waits for the connection (spec §5.6).
+    pub(crate) removals: Arc<Removals>,
+}
+
+/// Removes what a handle deleted on close.
+async fn remove_entry(fs: &Stack, path: &RemotePath, is_dir: bool) -> FsResult<()> {
+    if is_dir && fs.lstat(path).await?.kind != FileKind::Symlink {
+        fs.remove_dir(path).await
+    } else {
+        fs.remove_file(path).await
+    }
 }
 
 /// Closes a file's remote handles, once its writes have arrived. Both go even if closing one fails.
@@ -343,13 +355,23 @@ impl Adapter {
         }
         let permit = file.behind.begin(range.clone()).await?;
         let fs = Arc::clone(&self.fs);
+        let sessions = Arc::clone(&self.sessions);
         let file = Arc::clone(file);
         self.runtime.spawn(async move {
-            // `release` waits for this before it takes the handle.
-            let result = match file.writer.read().await.as_ref() {
-                Some(handle) => write_all(&fs, handle, offset, data).await,
-                None => Err(FsError::Other("the file's handle went away".to_owned())),
-            };
+            // The program was told this worked, so a lost connection only delays it: the same bytes
+            // at the same place again leave the file as one write would. Its room stays taken
+            // meanwhile, so the program's next `Write` or `Flush` hears that the server is away.
+            let result = through_outages(&sessions, "write", || {
+                let (fs, file, data) = (&fs, &file, data.clone());
+                async move {
+                    // `release` waits for this before it takes the handle.
+                    match file.writer.read().await.as_ref() {
+                        Some(handle) => write_all(fs, handle, offset, data).await,
+                        None => Err(FsError::Other("the file's handle went away".to_owned())),
+                    }
+                }
+            })
+            .await;
             if let Err(error) = &result {
                 debug!(%error, path = %file.path().as_str(), "a write behind failed");
             }
@@ -396,6 +418,36 @@ impl Adapter {
         Ok(attr)
     }
 
+    /// Removes a file deleted on close once the connection is back: the program was told it is gone.
+    /// Lookups and listings wait for it meanwhile. A try that finds it gone counts, as an earlier try
+    /// may have reached the server; nothing can take its name meanwhile, as creating waits too.
+    fn remove_later(&self, context: &Arc<OpenFile>) {
+        let path = context.path();
+        info!(path = %path.as_str(), "removing once the connection is back");
+        let removal = self.removals.begin();
+        let (fs, sessions, file) = (
+            Arc::clone(&self.fs),
+            Arc::clone(&self.sessions),
+            Arc::clone(context),
+        );
+        self.runtime.spawn(async move {
+            let _ = through_outages(&sessions, "close", || release(&fs, &file)).await;
+            let removed = through_outages(&sessions, "remove", || {
+                remove_entry(&fs, &path, file.is_dir)
+            })
+            .await;
+            match removed {
+                Ok(()) | Err(FsError::NotFound) => {
+                    info!(path = %path.as_str(), "removed after the connection came back");
+                }
+                Err(error) => {
+                    warn!(%error, path = %path.as_str(), "removing failed after the program was told it worked");
+                }
+            }
+            drop(removal);
+        });
+    }
+
     /// Whether `path` is a link: `stat` shows a link as its target, and a link to a directory is
     /// removed as a file, however full that directory is.
     async fn is_link(&self, path: &RemotePath) -> FsResult<bool> {
@@ -431,6 +483,7 @@ impl Adapter {
     /// entry that differs by case, or that Windows shows differently (spec §5.6). Any symbolic link
     /// is followed.
     async fn find(&self, components: &[String]) -> winfsp::Result<Found> {
+        self.removals.settle().await;
         let exact = paths::exact_path(components)?;
         match self.fs.stat(&exact).await {
             Ok(attr) => return Ok(Found { path: exact, attr }),
@@ -499,6 +552,7 @@ impl Adapter {
     /// is no reason to find nothing, as it is for an open: `notes` and `Notes` would both read as
     /// missing. Windows would show either, so this always shows the same one.
     async fn find_listed(&self, directory: &RemotePath, name: &str) -> winfsp::Result<DirInfo> {
+        self.removals.settle().await;
         let entries = self.fs.read_dir(directory).await.map_err(fail)?;
         let invalid = |_| status(STATUS_OBJECT_NAME_INVALID);
         let names = entries.iter().map(|entry| entry.name.as_str());
@@ -526,6 +580,8 @@ impl Adapter {
 
     /// A directory's entries as Windows shows them, each link as its target (spec §5.6).
     async fn listing(&self, directory: &RemotePath) -> winfsp::Result<Vec<DirInfo>> {
+        // A file deleted through the drive does not come back while its removal waits.
+        self.removals.settle().await;
         let entries = self.fs.read_dir(directory).await.map_err(fail)?;
         let mut shown = Vec::with_capacity(entries.len() + 2);
         if !directory.is_root() {
@@ -844,12 +900,26 @@ impl FileSystemContext for Adapter {
         }
         let path = context.path();
         // The writes still on their way arrive before the program's `CloseHandle` returns, so that
-        // whoever opens the file next sees them. A failure can only go to the log.
-        if context.behind.is_pending() || context.behind.has_failed() {
+        // whoever opens the file next sees them. While the connection is away they arrive once it
+        // is back, and the file stays among the open ones until then (`close`). A failure of the
+        // server can only go to the log.
+        let owed = if context.behind.is_pending() && self.sessions.current().is_none() {
+            true
+        } else if context.behind.is_pending() || context.behind.has_failed() {
             let written = self.run("cleanup", async { settle(context).await.map_err(fail) });
-            if let Err(error) = written {
-                warn!(status = error.to_ntstatus(), path = %path.as_str(), "writing failed after the program was told it worked");
+            match written {
+                Err(_) if context.behind.is_pending() => true,
+                Err(error) => {
+                    warn!(status = error.to_ntstatus(), path = %path.as_str(), "writing failed after the program was told it worked");
+                    false
+                }
+                Ok(()) => false,
             }
+        } else {
+            false
+        };
+        if owed {
+            info!(path = %path.as_str(), "the last writes will arrive once the connection is back");
         }
         // Without the delete flag there is nothing more to do. Closing a file promises no more than
         // its writes, as on Windows: `FlushFileBuffers` is what asks for the disk (spec §5.6). An
@@ -857,20 +927,27 @@ impl FileSystemContext for Adapter {
         if !FspCleanupFlags::FspCleanupDelete.is_flagged(flags) {
             return;
         }
-        // Handles go first: some servers will not remove an open file.
-        let done = self.run("cleanup", async {
-            if let Err(error) = release(&self.fs, context).await {
-                debug!(%error, path = %path.as_str(), "closing failed");
+        // Handles go first: some servers will not remove an open file. With writes still owed, the
+        // removal waits for them as well.
+        let done = if owed {
+            Err(FsError::ConnectionLost)
+        } else {
+            self.run("cleanup", async {
+                if let Err(error) = release(&self.fs, context).await {
+                    debug!(%error, path = %path.as_str(), "closing failed");
+                }
+                Ok(remove_entry(&self.fs, &path, context.is_dir).await)
+            })
+            .unwrap_or(Err(FsError::Timeout))
+        };
+        match done {
+            Ok(()) => {}
+            // The program was told the file is gone: it goes once the connection is back.
+            Err(error) if connection_failed(&error) => self.remove_later(context),
+            // Windows has no way to hear about a failed cleanup: the handle is already closed.
+            Err(error) => {
+                warn!(%error, path = %path.as_str(), "cleanup failed");
             }
-            if context.is_dir && !self.is_link(&path).await.map_err(fail)? {
-                self.fs.remove_dir(&path).await.map_err(fail)
-            } else {
-                self.fs.remove_file(&path).await.map_err(fail)
-            }
-        });
-        // Windows has no way to hear about a failed cleanup: the handle is already closed.
-        if let Err(error) = done {
-            warn!(status = error.to_ntstatus(), path = %path.as_str(), "cleanup failed");
         }
     }
 
@@ -1020,6 +1097,27 @@ impl FileSystemContext for Adapter {
     }
 
     fn close(&self, context: Arc<OpenFile>) {
+        // Writes still owed after the connection went: the file stays among the open ones, so that
+        // readers of the path wait for them and renames reach them, until they arrive.
+        if context.behind.is_pending() {
+            let (fs, open_files) = (Arc::clone(&self.fs), Arc::clone(&self.open_files));
+            self.runtime.spawn(async move {
+                let path = context.path();
+                let closed = release(&fs, &context).await;
+                match context.behind.take_failed() {
+                    None => info!(path = %path.as_str(), "the last writes arrived after the connection came back"),
+                    Some(error) => warn!(%error, path = %path.as_str(), "writing failed after the program was told it worked"),
+                }
+                if let Err(error) = closed {
+                    debug!(%error, path = %path.as_str(), "closing failed");
+                }
+                open_files
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .retain(|file| !Arc::ptr_eq(file, &context));
+            });
+            return;
+        }
         self.open_files()
             .retain(|file| !Arc::ptr_eq(file, &context));
         let closed = self.run("close", async {

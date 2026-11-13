@@ -126,6 +126,7 @@ impl Volume {
             descriptor: security::current_user_descriptor().map_err(other("security"))?,
             volume: Mutex::new(None),
             open_files: Arc::clone(&self.open_files),
+            removals: Arc::default(),
         };
         let options = FileSystemParams {
             use_dir_info_by_name: true,

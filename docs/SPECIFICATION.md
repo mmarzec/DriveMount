@@ -261,7 +261,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | NFR-REL-03 | **Bounded waits**: no WinFsp callback blocks longer than `op_timeout_secs`. |
 | NFR-REL-04 | **No orphans**: after the process exits for any reason, including a crash or a kill from Task Manager, no DriveMount drive letter remains. |
 | NFR-REL-05 | **Config safety**: config writes are atomic (write a temp file in the same folder, flush it, then replace the file with `MoveFileExW`, through `tempfile`'s `persist`). The previous good file is kept as `config.toml.bak`. A config that cannot be parsed is never overwritten; the app starts read-only and shows an error. |
-| NFR-REL-06 | **Soak**: 72 h with 5 mounts, periodic network drops and sleep/resume cycles. There must be no leak (working set growth < 10%) and no stuck state. |
+| NFR-REL-06 | **Soak**: 4 h with 5 mounts, a network drop every 20 minutes and a sleep/resume cycle every 40 minutes. There must be no data mismatch, no leak (working set growth < 10%) and no stuck state. The owner shortened it from 72 h on 2026-11-13: the development PC cannot be given over for three days. `scripts/soak/soak.ps1` runs it, with `-Hours` for a longer run. For v1 the owner accepted it on 2026-11-13 without a second 4 h run: the first failed on three files lost across sleeps and working set +10.8%; the cause was fixed (§5.6, work owed after a close) and a 20-minute run with drops and sleeps had no data fault ([reliability/v1.md](reliability/v1.md)). |
 
 ### 4.3 Security (NFR-SEC)
 
@@ -521,9 +521,11 @@ What the table leaves open (`drivemount_core::manager`):
 
 **Writes: bounded write-behind** (OD-4, M2-08, [ADR-0002](adr/0002-write-behind.md)).
 - Each WinFsp `Write` call is split into chunks of the maximum write size, sent in parallel, and **returns once its data is on its way**, as long as no more than **4 MiB** is unacknowledged on that Windows handle (the same limit as reads). Acknowledging each call first ran at 49% of OpenSSH on a 50 ms link (spike M0-2).
-- **Order.** A write waits for writes on their way that it overlaps, and for those of other handles on the same path. A read on any handle of the path, a size or attribute change, `Flush` and `Cleanup` wait for all of them first. So data read back is never stale, and nothing is unacknowledged once `CloseHandle` returns.
+- **Order.** A write waits for writes on their way that it overlaps, and for those of other handles on the same path. A read on any handle of the path, a size or attribute change, `Flush` and `Cleanup` wait for all of them first. So data read back is never stale, and nothing is unacknowledged once `CloseHandle` returns, unless the connection is away (below).
 - **Paging I/O waits for its own arrival** (`ConstrainedIo`: the cache manager writing back, or a mapped view being flushed), as Windows waits for it and it can come after `Cleanup`.
 - **Errors.** The first failure is kept and returned once, by the handle's next `Write` or `Flush`, then cleared, as Linux reports a failed write-back once. `Cleanup` cannot fail, so it logs a failure nobody heard of at Warn.
+- **When the connection fails a write** (a timeout or a lost connection), the write is not dropped: the program was told it worked. It keeps its data and its room, waits for the next session, and goes again. The same bytes at the same place leave the file as one write would. Meanwhile a `Flush`, or a `Write` that finds no room, fails as any call does while the server is away, so a program that asks hears it.
+- **Work owed after a close** (M2-09). `Cleanup` waits for the writes only while there is a session, and at most `op_timeout_secs`. Writes still owed then arrive once the connection is back. Until then the file stays among the open ones, so that reads of the path wait for them and renames through the drive reach them; its remote handle is closed after. A file deleted on close whose removal the connection failed is removed once the connection is back; a try that finds it gone counts, as an earlier one may have reached the server. Lookups and listings on the drive wait for such removals, so the file never shows again, and nothing can take its name meanwhile. Stopping the drive ends what still waits, with a line in the log at Warn. Up to 4 MiB a handle is held for this. The 4 h soak found this work lost three times without it: a copy's last write and two deletes across a sleep.
 - **What Windows is told.** The size follows from the handle's last answer and its own writes; it is asked again only if something else on the drive changed the file, or for an append. The times stay the server's last answer until the writes arrive. Other handles, and listings, see a size up to 4 MiB behind while a file is being written.
 - `Flush` calls `fsync@openssh.com` when the server supports it. Closing a file does not (M2-08): as on Windows, a closed file is promised only its writes, and `FlushFileBuffers` is what asks for the disk. The fsync at `Cleanup` cost ~5 ms a file, a third of a small file's time.
 
@@ -1177,7 +1179,7 @@ Scenarios:
 - host key change;
 - drive letter taken by a USB stick;
 - sign-out with mounts;
-- 72 h soak (NFR-REL-06).
+- 4 h soak (NFR-REL-06).
 
 ### 10.5 Performance tests
 
@@ -1195,7 +1197,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 |---|---|---|
 | **M0 Spikes** | **M0-1:** `winfsp` crate mounts an in-memory FS as an unelevated network drive; Explorer copy/rename/delete/drag-drop work; volume flags settled. **M0-2:** `russh` + `russh-sftp` pipelined read/write throughput vs OpenSSH `sftp` on LAN and 50 ms WAN; decide write-behind (§5.6). **M0-3:** Slint + `tray-icon` on one event loop; close-to-tray; hidden message window receives power and session messages. | Each spike has a short report in `docs/spikes/` with numbers and a go/no-go. A no-go triggers the fallback in §12. |
 | **M1 Core mount** | Workspace, drivemount-core, drivemount-vfs, drivemount-sftp, drivemount-winfsp, main window, profile dialog, prompts, Credential Manager, known hosts | Mount an SFTP profile from the UI; NFR-REL-01/02 pass; FR-PROF, FR-SSH and FR-MNT acceptance criteria pass |
-| **M2 v1 release** | Reconnect (FR-REC), tray, notifications, settings, lifecycle (FR-APP), MSI, signing, user guide | All v1 requirements' acceptance criteria pass; NFR-PERF budgets met; 72 h soak passes |
+| **M2 v1 release** | Reconnect (FR-REC), tray, notifications, settings, lifecycle (FR-APP), MSI, signing, user guide | All v1 requirements' acceptance criteria pass; NFR-PERF budgets met; 4 h soak passes |
 | **M3 SMB** | drivemount-smb, SMB form fields, E-SMB errors | FR-SMB acceptance criteria pass on Windows 10 Home and 11 Pro against Samba and Windows Server |
 | **M4 NFS** | drivemount-nfs (NFSv3), NFS form fields | FR-NFS acceptance criteria pass against knfsd, Synology and TrueNAS on Windows 10 Home |
 

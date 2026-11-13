@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Accepted** |
+| Status | **Accepted**, amended for M2-09 (2026-11-13) |
 | Date | 2026-11-11 |
 | Decided by | Owner: write-behind on, 4 MiB (OD-4, spike M0-2). AI agent: where it lives and how errors and ordering work (plan task M2-08); the owner reviews it at merge |
 | Applies to | `drivemount-winfsp`: `behind.rs` and the adapter's `Write`, `Read`, `Flush`, `Cleanup`, `Close` and attribute changes |
@@ -37,6 +37,17 @@ Until M2-08 each WinFsp `Write` was acknowledged by the server before it returne
 - **An error comes one call late.** Most programs check `FlushFileBuffers` or the next `WriteFile`. One that checks neither (or only `CloseHandle`) loses the error to the log. Windows' own write-back cache has the same property: its "Delayed Write Failed" message has no program to go to either.
 - **Other handles see sizes up to 4 MiB behind** while a file is being written: an `Open` or a listing from another program asks the server, which has not got everything yet. Reads wait, so data is never stale; only the size and time shown can be, and only until the writing handle is closed.
 - **Closing waits for at most 4 MiB to arrive.** On a slow link `CloseHandle` takes longer, but that time was spent in the writes before.
+
+## Amendment, M2-09 (2026-11-13): work owed after a close finishes after the reconnect
+
+The 4 h soak lost a copy's last write and two deletes across sleeps. Each was told to the program as done, then failed at `Cleanup` because the connection was away. `Cleanup` waited at most `op_timeout_secs`, and on waking from sleep that deadline had already passed. The owner chose to finish such work once the connection is back (reliability/v1.md §2.2), over making `Cleanup` wait (it hangs Explorer), deleting in `SetDelete` (it fixes deletes only), or accepting it.
+
+- **A background write that the connection fails** (`Timeout`, `ConnectionLost`) goes again on the next session (`owed::through_outages`) rather than latching the failure. It keeps its data and its room until then, so a `Flush`, or a `Write` that finds no room, fails as any call does while the server is away. A failure of the server itself (`NoSpace`, `PermissionDenied`…) is latched as before.
+- **`Cleanup` without a session does not wait** for the writes. **`Close`** of a handle with writes still owed keeps the file among the open ones (reads of the path wait for it, renames reach it) and closes its remote handle once they arrive.
+- **A removal at `Cleanup` that the connection fails** goes again once it is back, and "not found" then counts as done. Lookups and listings wait for such removals (`owed::Removals`), so the file never shows again, and nothing can be created under its name meanwhile.
+- **Stopping the drive** ends what still waits; it goes to the log at Warn. So does anything still owed if the app ends.
+
+This replaces "nothing is unacknowledged once `CloseHandle` returns" by "unless the connection is away", and "an error comes one call late" holds only for the server's own failures: an outage now only delays the work.
 
 ## Alternatives considered
 

@@ -2,6 +2,25 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-13: M2-09 Reliability campaign (branch `feat/m2-09-reliability`)
+
+**Status: done (owner accepted it 2026-11-13 without a second 4 h soak), not committed.** Every automated item passes, `winfsp-tests` included. The 4 h soak (H-09) failed: a mismatch and two deletes that did not happen, all where a write-behind flush or delete-on-close failed at `Cleanup` during an outage, with no program to tell (reliability/v1.md §2.2). The owner chose to finish such work after the reconnect; built and tested (§2.3), and a 20-minute soak with drops and sleeps found no data fault. Working set was +10.8% against a 10% limit in the 4 h run, no leak shown.
+
+- **The owner shortened the soak from 72 h to 4 h** (the PC cannot be given over for three days). NFR-REL-06 (spec §4.2, §10.4, §11), the plan's M2-09 and H-09 rows and its v1 checklist say so. The schedule: a drop every 20 min for 120 s, a sleep every 40 min for 120 s.
+- **Added:**
+  - `crates/drivemount-winfsp/tests/support/exerciser.rs`: `fsx`'s loop and `MappedFile`, out of `fsx.rs` and `support/mod.rs`, on any path, with a callback for the server's file. Needs only `std` and `windows`, so `real_drive.rs` takes it in with `#[path]`; `drivemount`'s dev-dependencies gain `windows` (already in the tree).
+  - `fsx_over_openssh_loses_nothing` (`real_drive.rs`, ignored): 100,000 operations in 386 s, the file hashed in the container every 1,024.
+  - `scripts/soak/`: `soak.ps1`, `soak-worker.ps1`, `soak-net.sh`, `soak-report.ps1` (reliability/v1.md §2).
+- **Run and passing:** `fsx` 100k in-process and over OpenSSH; the NEO regressions; the kill tests; a 15-minute soak with 4 drops and no sleeps (no mismatch, drives back ~11 s after each drop, no letter after the kill).
+- **Also passing:** `winfsp-tests` on MemFs and SFTP (94 s; binary fetched again with the owner's go-ahead).
+- **4 h soak, 2026-11-13 14:52–18:52 UTC:** 11 drops, 6 sleeps, 126 reconnects, nothing given up, no STUCK, server files all matching. FAIL on 3 data events (all at a sleep) and the working set (+10.8%). Private bytes 62–102 MiB, falling back after peaks, fitted +7.3 MiB/h; handles and threads flat.
+- **Harness nit:** `net.log` records whole seconds, so a step started just before a drop counts as unexplained.
+- **Running anything long from an agent's background shell:** the first two soak runs died with the harness at its first error and left no trace; start it with `Start-Process` (or from a terminal) so it has its own console.
+- **The fix (owner's choice: finish after reconnect):** `crates/drivemount-winfsp/src/owed.rs` (`through_outages`, `Removals`); the adapter's write-behind task goes again after a `Timeout`/`ConnectionLost` instead of latching it; `Cleanup` without a session does not wait; `Close` with writes owed keeps the file in `open_files` and releases it in a task; a removal the connection failed goes to `remove_later`, and `find`, `find_listed` and `listing` wait for it. Spec §5.6 and an ADR-0002 amendment say so. 7 new tests in `write_path.rs` (5 fail without the fix); `a_hung_write_times_out_and_the_next_can_work` became `..._for_the_flush_and_goes_again`. Workspace tests and clippy pass; `drivemount-winfsp` over SFTP too.
+- **Behaviour change to know:** a write that timed out on a live session is no longer dropped and reported once; it goes again (50 ms apart, each try under its deadline) until it lands or the drive stops. The program hears the outage from a `Flush`, or a `Write` that finds no room.
+- **Owner's decision (2026-11-13):** M2-09 is done on the fix and the 20-minute soak; the 4 h soak is too costly to run again. Left open, then: 4 h of the fixed build, and the working set (+10.8% over the failed 4 h run, private bytes swinging 62–102 MiB, handles and threads flat). If a long run is ever done (e.g. before M2-13), `scripts\soak\soak.ps1` is ready.
+- **Next:** commit on `feat/m2-09-reliability` when the owner allows; then M2-10.
+
 ## 2026-11-11: M2-08 Performance pass, part 2: the app's own budgets
 
 **Status: done; all NFR-PERF budgets met (M2-08's exit).** The owner accepted NFR-PERF-10's one ~18 ms redraw a session (`perf/v1.md` §3, choice a; spec §4.1 says so). `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and the workspace's non-ignored tests pass (1100 passing, 180 ignored). Results in [perf/v1.md](perf/v1.md) §1.

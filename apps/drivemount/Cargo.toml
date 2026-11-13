@@ -55,3 +55,4 @@ i-slint-backend-testing = { workspace = true }
 i-slint-core = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
+windows = { workspace = true, features = ["Win32_Foundation", "Win32_System_Memory"] }

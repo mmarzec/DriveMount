@@ -1378,6 +1378,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "windows 0.61.3",
  "winfsp",
 ]
 
