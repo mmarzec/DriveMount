@@ -663,6 +663,32 @@ fn free_letters_are_marked_when_they_are_known() {
 }
 
 #[test]
+fn a_letter_another_profile_prefers_is_not_marked_free() {
+    let mut other = profile("NAS backup");
+    other.drive = DriveChoice::Letter(letter('X'));
+    let fixture = Fixture::new(vec![other]);
+    fixture.open_new();
+    let items = fixture.ui.window().get_drive_items();
+    assert_eq!(items.row_data(21).unwrap(), "X: (used by 'NAS backup')");
+
+    // Not mounted, so Windows says it is free; the profile wins.
+    fixture.ui.set_free_letters(vec![letter('X'), letter('Y')]);
+    assert_eq!(items.row_data(21).unwrap(), "X: (used by 'NAS backup')");
+    assert_eq!(items.row_data(22).unwrap(), "Y: (free)");
+}
+
+#[test]
+fn a_profile_s_own_letter_is_not_used_by_another() {
+    let mut own = profile("NAS backup");
+    own.drive = DriveChoice::Letter(letter('X'));
+    let fixture = Fixture::new(vec![own]);
+    fixture.open_selected();
+    fixture.ui.set_free_letters(vec![letter('X')]);
+    let items = fixture.ui.window().get_drive_items();
+    assert_eq!(items.row_data(21).unwrap(), "X: (free)");
+}
+
+#[test]
 fn a_letter_another_profile_uses_gets_a_warning_and_can_be_saved() {
     let mut other = profile("NAS backup");
     other.drive = DriveChoice::Letter(letter('X'));

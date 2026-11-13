@@ -292,7 +292,9 @@ impl Inner {
         }
     }
 
-    /// The dropdown's lines, with free letters marked once they are known.
+    /// The dropdown's lines: a letter another profile prefers names the first such profile, and
+    /// free letters are marked once they are known. Windows only knows what is mapped now, so a
+    /// letter of a profile that is not mounted would otherwise read as free.
     fn fill_drive_items(&self) {
         let Some(window) = self.window.upgrade() else {
             return;
@@ -300,6 +302,15 @@ impl Inner {
         let dialog = self.dialog.borrow();
         let Some(dialog) = dialog.as_ref() else {
             return;
+        };
+        let list = self.list.borrow();
+        let used_by = |letter: DriveLetter| {
+            list.profiles()
+                .iter()
+                .find(|other| {
+                    other.id != dialog.base.id && other.drive == DriveChoice::Letter(letter)
+                })
+                .map(|other| other.name.as_str())
         };
         let texts = window.global::<Texts>();
         let free = dialog.free_letters.as_deref().unwrap_or_default();
@@ -309,10 +320,15 @@ impl Inner {
             .iter()
             .map(|drive| match drive {
                 DriveChoice::Auto => texts.invoke_drive_auto(),
-                DriveChoice::Letter(letter) if free.contains(letter) => {
-                    texts.invoke_drive_letter_free(letter.to_string().into())
-                }
-                DriveChoice::Letter(letter) => letter.to_string().into(),
+                DriveChoice::Letter(letter) => match used_by(*letter) {
+                    Some(name) => {
+                        texts.invoke_drive_letter_used(letter.to_string().into(), name.into())
+                    }
+                    None if free.contains(letter) => {
+                        texts.invoke_drive_letter_free(letter.to_string().into())
+                    }
+                    None => letter.to_string().into(),
+                },
             })
             .collect();
         self.drive_items.set_vec(items);

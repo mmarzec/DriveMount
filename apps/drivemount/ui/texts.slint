@@ -207,6 +207,9 @@ export global Texts {
     public pure function drive-letter-free(letter: string) -> string {
         return @tr("{} (free)", letter);
     }
+    public pure function drive-letter-used(letter: string, name: string) -> string {
+        return @tr("{} (used by '{}')", letter, name);
+    }
     public pure function saved-password-placeholder() -> string {
         return @tr("Leave empty to keep the saved one");
     }

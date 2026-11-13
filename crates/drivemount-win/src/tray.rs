@@ -22,6 +22,7 @@ use std::thread::{self, JoinHandle};
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime;
 use windows::Win32::UI::Shell::{
@@ -30,13 +31,13 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
-    DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetMessageTime, GetMessageW,
-    GetSystemMetrics, HICON, HMENU, KillTimer, LR_DEFAULTCOLOR, MENU_ITEM_FLAGS, MF_CHECKED,
-    MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassExW,
-    RegisterWindowMessageW, SM_CXSMICON, SM_MENUDROPALIGNMENT, SetForegroundWindow,
-    SetMenuDefaultItem, SetTimer, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
-    TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TrackPopupMenuEx, TranslateMessage, WM_APP, WM_CLOSE,
-    WM_CONTEXTMENU, WM_DESTROY, WM_NULL, WM_TIMER, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
+    DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetMessageW, GetSystemMetrics,
+    HICON, HMENU, KillTimer, LR_DEFAULTCOLOR, MENU_ITEM_FLAGS, MF_CHECKED, MF_GRAYED, MF_SEPARATOR,
+    MF_STRING, MSG, PostMessageW, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW,
+    SM_CXSMICON, SM_MENUDROPALIGNMENT, SetForegroundWindow, SetMenuDefaultItem, SetTimer,
+    TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON,
+    TrackPopupMenuEx, TranslateMessage, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_NULL,
+    WM_TIMER, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_OVERLAPPED,
 };
 use windows::core::{PCWSTR, w};
 
@@ -211,7 +212,7 @@ struct State {
     icons: HashMap<usize, HICON>,
     /// Tries left on the timer.
     retries: u32,
-    /// When the last click came, by the message clock, to make a double click one.
+    /// When the last click came, by `GetTickCount`, to make a double click one.
     last_click: Option<u32>,
 }
 
@@ -425,7 +426,7 @@ const fn notice(wparam: usize, lparam: isize) -> Notice {
 }
 
 /// Whether a click at `now` is the second of a double click, or the second notice Windows sends
-/// for one Enter, both of which should do nothing. Times are the message clock's, which wraps.
+/// for one Enter, both of which should do nothing. Times are `GetTickCount`'s, which wraps.
 const fn is_repeat(last: Option<u32>, now: u32, limit: u32) -> bool {
     match last {
         Some(last) => now.wrapping_sub(last) < limit,
@@ -483,8 +484,11 @@ unsafe extern "system" fn window_procedure(
 }
 
 fn clicked() {
-    // SAFETY: plain reads of the message clock and a setting.
-    let (now, limit) = unsafe { (GetMessageTime().cast_unsigned(), GetDoubleClickTime()) };
+    // Not `GetMessageTime`: the shell sends its notices rather than posting them, and for a sent
+    // message that is the time of the last posted one, the same for every click until something
+    // else is posted. All clicks after the first then looked like double clicks and were dropped.
+    // SAFETY: plain reads of the clock and a setting.
+    let (now, limit) = unsafe { (GetTickCount(), GetDoubleClickTime()) };
     let shared = with_state(|state| {
         let repeat = is_repeat(state.last_click, now, limit);
         state.last_click = Some(now);

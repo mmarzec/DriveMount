@@ -2,6 +2,15 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-13: H-08 owner's check of M2-02 to M2-07
+
+**Status: done; the owner accepted it 2026-11-13.** M2-02 to M2-06 are ticked in the plan. Two issues found and fixed; workspace clippy, `drivemount`'s lib tests (230) and `drivemount-win`'s tray tests, the 2 that need a desktop included, pass. The owner confirmed both fixes on the release exe.
+
+- **Tray clicks after the first did nothing.** `tray::clicked` timed clicks with `GetMessageTime`, but the shell *sends* its notices, and for a sent message that is the time of the last *posted* one: the same for every click until something else was posted to the tray's thread, so each click looked like the second of a double click and was dropped. Now `GetTickCount`.
+- **The Drive list said "(free)" for a letter another profile prefers** but is not mounted, as Windows only knows what is mapped now. Such a letter now reads `X: (used by 'Name')` (first such profile) and is never marked free; the profile being edited does not count. Choosing it is still allowed, with the existing "Also used by" warning. Spec §7.4 says so. Tests: `a_letter_another_profile_prefers_is_not_marked_free`, `a_profile_s_own_letter_is_not_used_by_another`.
+- **The About section's source link (NFR-LIC-03, M2-05's open item):** the repository on GitHub is public now, and `repository` in the root `Cargo.toml` names it; the owner saw the link. The M2-05 note below that says the link is hidden is out of date.
+- **Next:** commit when the owner allows; then M2-10.
+
 ## 2026-11-13: M2-09 Reliability campaign (branch `feat/m2-09-reliability`)
 
 **Status: done (owner accepted it 2026-11-13 without a second 4 h soak), not committed.** Every automated item passes, `winfsp-tests` included. The 4 h soak (H-09) failed: a mismatch and two deletes that did not happen, all where a write-behind flush or delete-on-close failed at `Cleanup` during an outage, with no program to tell (reliability/v1.md §2.2). The owner chose to finish such work after the reconnect; built and tested (§2.3), and a 20-minute soak with drops and sleeps found no data fault. Working set was +10.8% against a 10% limit in the 4 h run, no leak shown.
