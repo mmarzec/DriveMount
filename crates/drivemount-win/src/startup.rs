@@ -21,6 +21,13 @@ pub fn command_for(exe: &Path) -> String {
     format!("\"{}\" --tray", exe.display())
 }
 
+/// Whether a Run value holding `command` starts `exe`, as [`command_for`] writes it. Windows paths
+/// ignore case.
+#[must_use]
+pub fn starts(command: &str, exe: &Path) -> bool {
+    command.eq_ignore_ascii_case(&command_for(exe))
+}
+
 /// Makes Windows start `exe --tray` at sign-in, under the value `name`.
 ///
 /// # Errors
@@ -56,6 +63,27 @@ mod tests {
             command_for(Path::new(r"C:\Program Files\DriveMount\drivemount.exe")),
             r#""C:\Program Files\DriveMount\drivemount.exe" --tray"#
         );
+    }
+
+    #[test]
+    fn a_command_starts_the_exe_it_names_whatever_the_case() {
+        let exe = Path::new(r"C:\Program Files\DriveMount\drivemount.exe");
+        assert!(starts(
+            r#""C:\Program Files\DriveMount\drivemount.exe" --tray"#,
+            exe
+        ));
+        assert!(starts(
+            r#""c:\program files\drivemount\DRIVEMOUNT.EXE" --tray"#,
+            exe
+        ));
+        assert!(!starts(
+            r#""D:\Tools\DriveMount\drivemount.exe" --tray"#,
+            exe
+        ));
+        assert!(!starts(
+            r#""C:\Program Files\DriveMount\drivemount.exe""#,
+            exe
+        ));
     }
 
     /// Touches this user's Run key for a moment, under a name of its own, which Windows would only

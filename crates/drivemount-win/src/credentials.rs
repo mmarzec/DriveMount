@@ -18,7 +18,7 @@ use uuid::Uuid;
 use windows::Win32::Foundation::ERROR_NOT_FOUND;
 use windows::Win32::Security::Credentials::{
     CRED_MAX_CREDENTIAL_BLOB_SIZE, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC, CREDENTIALW,
-    CredDeleteW, CredFree, CredReadW, CredWriteW,
+    CredDeleteW, CredEnumerateW, CredFree, CredReadW, CredWriteW,
 };
 use windows::core::{PCWSTR, PWSTR};
 use zeroize::Zeroize;
@@ -58,10 +58,13 @@ const fn slot_name(slot: SecretSlot) -> &'static str {
     }
 }
 
+/// How every entry's name starts.
+const PREFIX: &str = "DriveMount:";
+
 /// The entry's name in Credential Manager: `DriveMount:<uuid>:<slot>`.
 #[must_use]
 pub fn target(profile: Uuid, slot: SecretSlot) -> String {
-    format!("DriveMount:{profile}:{}", slot_name(slot))
+    format!("{PREFIX}{profile}:{}", slot_name(slot))
 }
 
 /// Stores a secret, replacing any earlier one.
@@ -108,6 +111,69 @@ pub fn delete_all(profile: Uuid) -> io::Result<()> {
         }
     }
     result
+}
+
+/// Deletes every entry of every profile, those no longer in the config included: the uninstaller's
+/// *Remove my settings* (spec §9). Returns how many there were. A failure does not stop the others.
+///
+/// # Errors
+/// The first error from Windows.
+pub fn delete_everything() -> io::Result<usize> {
+    delete_starting_with(PREFIX)
+}
+
+/// Deletes the generic entries whose names start with `prefix`.
+fn delete_starting_with(prefix: &str) -> io::Result<usize> {
+    let mut deleted = 0;
+    let mut result = Ok(());
+    for name in names_starting_with(prefix)? {
+        // SAFETY: `name` is nul-terminated and outlives the call.
+        match unsafe { CredDeleteW(PCWSTR(name.as_ptr()), CRED_TYPE_GENERIC, None) } {
+            Ok(()) => deleted += 1,
+            // Gone in the meantime.
+            Err(error) if error.code() == ERROR_NOT_FOUND.to_hresult() => {}
+            Err(error) => result = result.and(Err(os_error(&error))),
+        }
+    }
+    result.map(|()| deleted)
+}
+
+/// The names of the generic entries that start with `prefix`, each nul-terminated.
+fn names_starting_with(prefix: &str) -> io::Result<Vec<Vec<u16>>> {
+    let filter = wide(format!("{prefix}*"));
+    let mut count = 0;
+    let mut list = ptr::null_mut();
+    // SAFETY: `filter` is nul-terminated and outlives the call, and both outputs can be written to.
+    let listed =
+        unsafe { CredEnumerateW(PCWSTR(filter.as_ptr()), None, &raw mut count, &raw mut list) };
+    match listed {
+        Ok(()) => {}
+        Err(error) if error.code() == ERROR_NOT_FOUND.to_hresult() => return Ok(Vec::new()),
+        Err(error) => return Err(os_error(&error)),
+    }
+    let list = Listed(list);
+    let mut names = Vec::new();
+    for index in 0..count as usize {
+        // SAFETY: `CredEnumerateW` gave `count` pointers to valid credentials, freed only with `list`.
+        let credential = unsafe { &**list.0.add(index) };
+        if credential.Type != CRED_TYPE_GENERIC || credential.TargetName.is_null() {
+            continue;
+        }
+        // SAFETY: Windows ends the name in a nul, and it lives as long as `list`.
+        let name = unsafe { credential.TargetName.as_wide() };
+        names.push(name.iter().copied().chain([0]).collect());
+    }
+    Ok(names)
+}
+
+/// What `CredEnumerateW` returned. Its secrets are not looked at; dropping it frees the memory.
+struct Listed(*mut *mut CREDENTIALW);
+
+impl Drop for Listed {
+    fn drop(&mut self) {
+        // SAFETY: `CredEnumerateW` allocated this, and it is freed only here.
+        unsafe { CredFree(self.0.cast_const().cast()) };
+    }
 }
 
 fn write(target: &str, value: &Secret<String>) -> io::Result<()> {
@@ -349,6 +415,37 @@ mod tests {
             loaded(&other, SecretSlot::Password).as_deref(),
             Some("kept")
         );
+    }
+
+    /// `delete_everything`, under a prefix of the test's own, so the user's own entries stay.
+    #[test]
+    fn deleting_by_prefix_takes_every_entry_under_it_and_nothing_else() {
+        let prefix = format!("DriveMount.Test.{}:", Uuid::new_v4());
+        let outside = Profile::new();
+        store(outside.0, SecretSlot::Password, &secret("kept")).unwrap();
+        for name in [
+            "one:password",
+            "two:passphrase",
+            "gone-from-config:jump-password",
+        ] {
+            write(&format!("{prefix}{name}"), &secret("value")).unwrap();
+        }
+
+        assert_eq!(delete_starting_with(&prefix).unwrap(), 3);
+
+        assert!(names_starting_with(&prefix).unwrap().is_empty());
+        assert_eq!(
+            loaded(&outside, SecretSlot::Password).as_deref(),
+            Some("kept")
+        );
+        assert_eq!(delete_starting_with(&prefix).unwrap(), 0);
+    }
+
+    #[test]
+    fn every_entry_is_under_the_prefix_delete_everything_uses() {
+        for slot in SecretSlot::ALL {
+            assert!(target(Uuid::new_v4(), slot).starts_with(PREFIX));
+        }
     }
 
     #[test]

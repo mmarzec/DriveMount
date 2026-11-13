@@ -64,7 +64,8 @@ cargo install --locked --version 0.22.2 cargo-audit
 | `crates/drivemount-nfs` | `RemoteFs` over NFSv3 (M4) |
 | `crates/drivemount-win` | Windows helpers: credentials, drive letters, shell, WinFsp detection |
 | `crates/drivemount-winfsp` | Adapter from `RemoteFs` to a WinFsp drive |
-| `scripts` | CI checks and installers |
+| `scripts` | CI checks, installers and packaging |
+| `apps/drivemount/wix`, `apps/drivemount/setup`, `packaging` | The MSI, the setup exe, and the template of the third-party licence file |
 | `tests` | Test servers (Docker) and the `winfsp-tests` exclusions |
 | `spikes` | Throw-away experiments from M0, in their own workspaces |
 
@@ -76,6 +77,16 @@ cargo build --release -p drivemount --locked
 ```
 
 The workspace also builds on Linux, where the Windows-only crates (`drivemount-win`, `drivemount-winfsp`, `drivemount-smb`) are empty.
+
+### Packaging
+
+`scripts\package.ps1` builds the setup exe, the MSI and the portable zip into `target\package` (spec §9). It needs:
+
+- `cargo install --locked --version 0.3.9 cargo-wix` and `cargo install --locked --version 0.9.3 cargo-about`;
+- the [WiX Toolset 3.14](https://github.com/wixtoolset/wix3/releases) binaries, unzipped; give the folder with `-Wix` or the `WIX` variable;
+- the unmodified WinFsp MSI from [winfsp.dev](https://winfsp.dev/rel/) (`-WinFspMsi`), which the setup exe installs when WinFsp is missing.
+
+`-TargetDir target\dist` builds in a folder of its own, which leaves a running `target\release\drivemount.exe` alone. `scripts\test-installer.ps1` installs, upgrades and uninstalls two such builds on this PC from an elevated PowerShell; its help says how.
 
 ### Checks
 

@@ -15,3 +15,5 @@ pub mod crash;
 pub mod logging;
 #[cfg(windows)]
 pub mod ui;
+#[cfg(windows)]
+pub mod uninstall;

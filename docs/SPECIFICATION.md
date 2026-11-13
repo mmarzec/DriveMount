@@ -1016,7 +1016,7 @@ Buttons: *Open file location*, *Close*.
 This page replaces the list area inside the main window; a ← back arrow returns to the list. It holds the items in §3.8, one per row; the log level row has *Open logs folder*. About is on the information page (§7.5.1). Changes apply immediately. Only "Start with Windows" touches the registry.
 
 - **How a change is saved:** each change is in use in the window at once (theme, close button, toasts) and is then saved in the background, one after another, so a later change is never overtaken; changes made while one is saving count only as the latest. The log level changes once the file has it.
-- **Start with Windows** writes or removes the Run value before the file is saved. If the registry refuses, the box goes back to off and a banner says why. If the file then cannot be saved, the Run value is put back. At start, with the setting on, the value is written again, as the exe may have moved; with it off, nothing is touched, so a value written by someone else (the installer) stays.
+- **Start with Windows** writes or removes the Run value before the file is saved. If the registry refuses, the box goes back to off and a banner says why. If the file then cannot be saved, the Run value is put back. At start, with the setting on, the value is written again, as the exe may have moved. With it off, a value that starts this very exe (as the installer's *Start with Windows* writes it) turns the setting on, so the page shows what Windows will do; any other value is left alone.
 - **A failed save** shows a banner, and the page goes back to what is in use.
 - **Read-only file:** the controls are disabled; the banner above says why.
 - **WinFsp line** (FR-SET-07): "WinFsp 2.1.25156 installed"; too old: "WinFsp 2.0.x is installed, but 2.1 or later is required to mount SSH drives"; missing: the banner's text. The last two have *Download WinFsp*.
@@ -1112,16 +1112,22 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 ## 9. Packaging, installation and licensing
 
 - **Build:** `cargo build --release` with `lto = "fat"`, `codegen-units = 1`, `panic = "abort"` (after the crash hook runs) and `strip = true`. The C runtime is statically linked (`+crt-static`), so there is no VC++ redistributable dependency.
-- **Installer:** MSI built with WiX (`cargo-wix`).
+- **Artefacts** (`scripts/package.ps1`, into `target\package`):
+  - `DriveMount-<v>-setup.exe`, the download for most users: a WiX Burn bundle (`apps/drivemount/setup`) that installs WinFsp if needed, then the MSI. Apps & features lists it alone; the MSI inside is hidden.
+  - `DriveMount-<v>-x64.msi`: the MSI on its own (`apps/drivemount/wix/main.wxs`, built with `cargo-wix` and WiX 3.14), for administrators who install WinFsp themselves. It does not check for WinFsp; the app says when WinFsp is missing.
+  - `DriveMount-<v>-portable-x64.zip`.
+- **Installer (MSI):**
   - Per-machine install to `C:\Program Files\DriveMount\`; requires admin, which is also needed for WinFsp.
-  - Checks the WinFsp version in the registry (`HKLM\SOFTWARE\WOW6432Node\WinFsp`, `InstallDir` + DLL version). If WinFsp is missing or older than 2.1, it offers the official, **unmodified** WinFsp MSI as a chained install (allowed by WinFsp's FLOSS exception, ADR-0003) or a link (OD-5).
-  - Start-menu shortcut; optional *Start with Windows* checkbox (writes the HKCU Run key for the installing user).
-  - Uninstall removes the program. It keeps `%APPDATA%\DriveMount` and the credentials unless "Remove my settings" is ticked.
-- **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\DriveMount` with a `DisplayName` and a `CustomActivator` (a CLSID), and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}\LocalServer32` = `"<exe>"`. Spike M0-3 showed the AUMID key is what makes toasts appear; a shortcut with an AUMID alone did not. The CLSID is what a click in Action Center starts or calls (§5.3). Both are rewritten at every start, as the exe may have moved. The uninstaller removes them; the portable zip leaves them behind, as it has no uninstaller.
+  - A Start-menu shortcut for all users, with the AppUserModelID `DriveMount`.
+  - *Start with Windows*: `STARTWITHWINDOWS=1` writes the HKCU Run value of §7.5 for the installing user. Without the property, a Run value that already starts the installed exe is kept through an upgrade.
+  - A newer MSI replaces an older one (major upgrade); Windows Installer's Restart Manager closes a running app first, which unmounts its drives (FR-APP-05).
+  - **Uninstall** runs `drivemount.exe --uninstall` as the user, just before the files go (not in an upgrade). It removes the toast keys below and the Run value if it starts this exe (a portable copy's stays). Then *Remove my settings*: `%APPDATA%\DriveMount`, `%LOCALAPPDATA%\DriveMount` and every `DriveMount:` entry in Credential Manager; `~\.ssh\known_hosts` stays, as it is OpenSSH's file too. `REMOVESETTINGS=1` or `0` on `msiexec`'s command line decides; without it, the user is asked (*No* is the default) if the MSI shows its full or reduced UI or the setup exe its full UI, and settings are kept in a quiet uninstall. A checkbox in the MSI's own dialogs was not used: uninstalling from Settings shows none.
+- **Setup exe (OD-5):** looks up `InstallDir` under `HKLM\SOFTWARE\WOW6432Node\WinFsp` and the version of `bin\winfsp-x64.dll` in it. If WinFsp is missing or older than 2.1, it installs the official, **unmodified** WinFsp MSI it carries (allowed by WinFsp's FLOSS exception, ADR-0003); otherwise WinFsp is left as it is. WinFsp is permanent: uninstalling DriveMount leaves it, as other programs may use it. Its window has a *Start with Windows* box, ticked when this user's Run value is there, and passes it to the MSI. No licence to accept: the GPL asks for none.
+- **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\DriveMount` with a `DisplayName` and a `CustomActivator` (a CLSID), and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}\LocalServer32` = `"<exe>"`. Spike M0-3 showed the AUMID key is what makes toasts appear; a shortcut with an AUMID alone did not. The CLSID is what a click in Action Center starts or calls (§5.3). Both are rewritten at every start, as the exe may have moved. The uninstaller removes them for the user who uninstalls; the portable zip leaves them behind, as it has no uninstaller.
 - **Portable:** a zip with `drivemount.exe`. It needs WinFsp installed separately.
-- **Signing:** Authenticode for `drivemount.exe` and the MSI (OD-3).
-- **Updates:** none in v1. Users install a newer MSI over the old one. Settings and profiles are kept and migrated (§6.1).
-- **Licence:** DriveMount is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE` and `THIRD-PARTY-LICENSES.html`. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
+- **Signing:** Authenticode for `drivemount.exe`, the MSI and the setup exe (OD-3); the setup exe's engine is signed with WiX's `insignia` (M2-11).
+- **Updates:** none in v1. Users install a newer setup exe or MSI over the old one. Settings and profiles are kept and migrated (§6.1).
+- **Licence:** DriveMount is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE.txt` (the repository's `LICENSE`) and `THIRD-PARTY-LICENSES.html`, which `cargo-about` makes from the shipped exe's dependencies (`about.toml`, `packaging/about.hbs`) with WinFsp's attribution; a crate under a licence outside the allow-list fails the build. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
 
 ---
 
@@ -1234,7 +1240,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 | OD-2 | Final product name and icon | Before M2 | |
 | OD-3 | Code-signing certificate (OV/EV or Azure Trusted Signing) | Before M2 | Azure Trusted Signing (low cost, SmartScreen reputation) |
 | OD-4 | Write-behind on or off | End of M0 | ✅ **On**, 4 MiB bound (spike M0-2, §5.6) |
-| OD-5 | Bundle WinFsp MSI in our installer, or link to download | Before M2 | Bundle the unmodified MSI: WinFsp's FLOSS exception allows it for FLOSS apps that show the attribution (ADR-0003) |
+| OD-5 | Bundle WinFsp MSI in our installer, or link to download | Before M2 | ✅ **Bundled** (owner, 2026-11-13): the setup exe, a WiX Burn bundle, installs the unmodified WinFsp MSI when WinFsp is missing or older than 2.1 (§9). WinFsp's FLOSS exception allows it for FLOSS apps that show the attribution (ADR-0003) |
 
 ---
 

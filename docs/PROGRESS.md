@@ -2,6 +2,29 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-13: M2-10 Installer (branch `feat/m2-10-installer`)
+
+**Status: done locally, not committed; H-11 (the owner on a clean Windows 11 Pro) is still to do.** `scripts/test-installer.ps1` passes all 33 checks on the dev machine. `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check licenses` and the tests of `drivemount` (240) and `drivemount-win` (62) pass.
+
+- **Owner's choices (2026-11-13):**
+  - WiX 3.14.1 binaries downloaded to `C:\marcin\tools\wix314` (zip SHA-256 `6AC824E1…2FF43D31`, as published).
+  - **OD-5: a Burn setup exe**, as an MSI cannot chain another MSI. It installs the unmodified WinFsp MSI (`C:\marcin\tools\winfsp\winfsp-2.2.26286.msi`) when WinFsp is missing or older than 2.1, then our MSI. The bare MSI and the zip ship too.
+  - **"Remove my settings" is a question** the uninstall step asks, not an MSI checkbox: uninstalling from Settings shows no MSI dialogs.
+- **Added:**
+  - `apps/drivemount/wix/main.wxs` (MSI, `cargo wix`), `apps/drivemount/setup/` (bundle, theme with the *Start with Windows* box, texts), `about.toml` + `packaging/about.hbs` (`cargo-about`, accepting the deny.toml allow-list, Windows target, no dev or build crates), `scripts/package.ps1`, `scripts/test-installer.ps1`.
+  - `drivemount.exe --uninstall` (`apps/drivemount/src/uninstall.rs`): the MSI runs it as the user before `RemoveFiles`, not in an upgrade. Removes the toast keys, the Run value if it starts this exe, and on *Remove my settings* `%APPDATA%\DriveMount`, `%LOCALAPPDATA%\DriveMount` and every `DriveMount:` credential (new `credentials::delete_everything`, via `CredEnumerateW`). `known_hosts` stays (it is OpenSSH's). Asks (`shell::ask_yes_no`, *No* default) only with an MSI UI of 4+ or the bundle's full UI (`DMBUNDLEUI` = `WixBundleUILevel`); `REMOVESETTINGS=1|0` decides without asking.
+  - **App change:** at start, with *Start with Windows* off, a Run value that starts this exe turns the setting on (spec §7.5), so the installer's box shows on the settings page. `startup::starts` is shared with the uninstall step.
+- **Upgrade keeps Start with Windows:** the old MSI's removal deletes its Run value, so the new MSI looks for it first (`RUNVALUEFOUND`) and writes it again if it starts `"[ProgramFiles64Folder]DriveMount\drivemount.exe" --tray`; the bundle ticks its box from the same value.
+- **ICE57 is suppressed** in `package.ps1`: it takes the Start menu for per-user in a per-machine MSI; the shortcut's key path is under HKMU (HKLM here).
+- **Scripted on the dev machine** (it saves and puts back the Run value and toast keys): MSI install with `STARTWITHWINDOWS=1`, upgrade 0.1.0 → 0.1.1, silent uninstall, setup exe install and uninstall. Burn's log shows WinFsp 2.2.26286 found and `execute: None` for it, and a quiet uninstall passing `DMBUNDLEUI=2` (settings kept, no question).
+- **Not tested here (H-11):** the setup exe's window (theme, the box, *Start DriveMount*); WinFsp installed by the setup exe on a PC without it; the uninstall question and *Remove my settings* on real settings; the app turning the setting on from the installer's value; the About page's licence button in the installed app; Restart Manager closing a running app during an upgrade.
+- **Left for later:**
+  - The exe has no icon resource; the shortcut, Apps & features and the setup exe use `ui/tray/idle.ico` (16–32 px). Toasts still have no icon of their own.
+  - Signing (M2-11): sign `drivemount.exe` before the MSI is built, the MSI before the bundle, then `insignia -ib` / sign the engine / `insignia -ab` / sign the bundle.
+  - The MSI has no UI of its own beyond Windows Installer's progress; `STARTWITHWINDOWS=1` is how to tick the box with the bare MSI.
+- **The user guide (M2-12) was written before this:** check its §1 (install) and §10 (*Removing everything by hand*) against the real artefacts: the setup exe is the main download, *Remove my settings* is a question at uninstall, WinFsp stays after uninstall.
+- **Next:** H-11; the user guide check above; then M2-11.
+
 ## 2026-11-13: M2-12 User guide
 
 **Status: done, not committed.** [USER_GUIDE.md](USER_GUIDE.md): installing, adding a connection, ways to log in, server keys, mounting, the tray, settings, keys, troubleshooting, data locations, licence and the WinFsp attribution (NFR-LIC-02, §11). README links it.

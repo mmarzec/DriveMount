@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  DriveMount's MSI (spec §9, plan M2-10), built by `cargo wix` from scripts/package.ps1.
+
+  cargo-wix passes Version and CargoTargetBinDir. The script adds Stage: the folder holding
+  LICENSE.txt and THIRD-PARTY-LICENSES.html, and Icon: the icon for the shortcut and Apps & features.
+
+  The MSI does not check for WinFsp: the setup exe (apps/drivemount/setup/bundle.wxs) installs it
+  first when it is missing, and the app says so if it is not there.
+
+  Properties for msiexec's command line:
+    STARTWITHWINDOWS=1  writes HKCU\...\Run\DriveMount for the installing user. Without it, a Run
+                        value that already starts the installed exe keeps it on through an upgrade.
+    REMOVESETTINGS=1|0  at uninstall: delete or keep the user's settings without asking.
+    DMBUNDLEUI          set by the setup exe: its UI level, for the uninstall step.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="DriveMount"
+           UpgradeCode="0298CEAA-882E-4308-B3F1-41B85F7DB81C"
+           Manufacturer="DriveMount contributors"
+           Language="1033"
+           Codepage="1252"
+           Version="$(var.Version)">
+
+    <Package Id="*"
+             Description="DriveMount: mount remote file systems as Windows drives"
+             Manufacturer="DriveMount contributors"
+             InstallerVersion="500"
+             Languages="1033"
+             Compressed="yes"
+             InstallScope="perMachine"
+             InstallPrivileges="elevated"
+             Platform="x64"
+             SummaryCodepage="1252" />
+
+    <!-- A newer MSI replaces the old one. The old one's uninstall step sees UPGRADINGPRODUCTCODE and
+         leaves the user's things alone. -->
+    <MajorUpgrade Schedule="afterInstallInitialize"
+                  AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of DriveMount is already installed." />
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+
+    <Icon Id="DriveMount.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="DriveMount.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/mmarzec/DriveMount" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/mmarzec/DriveMount" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <Property Id="ARPNOREPAIR" Value="1" />
+    <!-- Windows Installer's Restart Manager closes a running app before files are replaced: the app
+         unmounts its drives on WM_ENDSESSION with ENDSESSION_CLOSEAPP (M2-02). -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="0" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="DriveMount" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="Program" Guid="*" Win64="yes">
+        <File Id="drivemount.exe" Name="drivemount.exe" KeyPath="yes"
+              Source="$(var.CargoTargetBinDir)\drivemount.exe" />
+      </Component>
+      <!-- NFR-LIC-04. The About page's button opens the second beside the exe. -->
+      <Component Id="Licence" Guid="*" Win64="yes">
+        <File Id="LICENSE.txt" Name="LICENSE.txt" KeyPath="yes" Source="$(var.Stage)\LICENSE.txt" />
+      </Component>
+      <Component Id="ThirdPartyLicences" Guid="*" Win64="yes">
+        <File Id="THIRD_PARTY_LICENSES.html" Name="THIRD-PARTY-LICENSES.html" KeyPath="yes"
+              Source="$(var.Stage)\THIRD-PARTY-LICENSES.html" />
+      </Component>
+      <!-- The same value the app's own setting writes (startup::command_for), for the installing user.
+           It goes with the program; the uninstall step also removes one the app wrote. -->
+      <Component Id="StartWithWindows" Guid="50560433-8D41-4513-9CBA-F83EB2C4BA63" Win64="yes">
+        <Condition>STARTWITHWINDOWS = "1"</Condition>
+        <RegistryValue Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                       Name="DriveMount" Type="string" Value="&quot;[INSTALLFOLDER]drivemount.exe&quot; --tray"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <!-- The AppUserModelID is the app's own (app::AUMID). Toasts do not need it, as the app
+           registers its AUMID key at each start (M2-04); it groups the window with the shortcut.
+           A shortcut's component needs a registry key path (ICE43, ICE57); HKMU is HKLM here. -->
+      <Component Id="StartMenuShortcut" Guid="17D46737-349E-4F4F-A20C-0351844479AB" Win64="yes">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="DriveMount"
+                  Description="Mount remote file systems as Windows drives"
+                  Target="[INSTALLFOLDER]drivemount.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="DriveMount.ico"
+                  Advertise="no">
+          <ShortcutProperty Key="System.AppUserModel.ID" Value="DriveMount" />
+        </Shortcut>
+        <RegistryValue Root="HKMU" Key="Software\DriveMount" Name="StartMenuShortcut" Type="integer"
+                       Value="1" KeyPath="yes" />
+        <RemoveRegistryKey Root="HKMU" Key="Software\DriveMount" Action="removeOnUninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="DriveMount" Level="1" Absent="disallow">
+      <ComponentRef Id="Program" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentRef Id="Licence" />
+      <ComponentRef Id="ThirdPartyLicences" />
+      <ComponentRef Id="StartWithWindows" />
+    </Feature>
+
+    <!-- Start with Windows through an upgrade: the old MSI's removal takes its value away, so a value
+         that starts the installed exe means the new one writes it again. Component conditions are
+         settled at CostFinalize, before the folders are, so this compares with the default folder. -->
+    <Property Id="RUNVALUEFOUND">
+      <RegistrySearch Id="RunValue" Root="HKCU" Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                      Name="DriveMount" Type="raw" />
+    </Property>
+    <SetProperty Id="RUNVALUEOURS" After="AppSearch" Sequence="both"
+                 Value="&quot;[ProgramFiles64Folder]DriveMount\drivemount.exe&quot; --tray">
+      RUNVALUEFOUND
+    </SetProperty>
+    <SetProperty Id="STARTWITHWINDOWS" Action="KeepStartWithWindows" After="SetRUNVALUEOURS"
+                 Sequence="both" Value="1">
+      NOT STARTWITHWINDOWS AND RUNVALUEFOUND ~= RUNVALUEOURS
+    </SetProperty>
+
+    <!-- drivemount.exe's uninstall step (apps/drivemount/src/uninstall.rs), as the user and before the
+         exe goes: the toast keys, the Run value, and "Remove my settings". Not in an upgrade. -->
+    <CustomAction Id="UndoForThisUser"
+                  FileKey="drivemount.exe"
+                  ExeCommand="--uninstall --remove-settings=[REMOVESETTINGS] --msi-ui=[UILevel] --bundle-ui=[DMBUNDLEUI]"
+                  Execute="deferred"
+                  Impersonate="yes"
+                  Return="ignore" />
+    <InstallExecuteSequence>
+      <Custom Action="UndoForThisUser" Before="RemoveFiles">
+        REMOVE ~= "ALL" AND NOT UPGRADINGPRODUCTCODE
+      </Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>
