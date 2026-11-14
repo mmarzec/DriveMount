@@ -1,0 +1,19 @@
+[package]
+name = "m3-01-smb"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Spike M3-01: SMB mappings through the WNet API (throw-away)"
+
+# Spikes stay outside the main workspace.
+[workspace]
+
+[dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_WNet",
+    "Win32_Storage_FileSystem",
+    "Win32_Security",
+    "Win32_System_IO",
+] }

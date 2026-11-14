@@ -702,18 +702,32 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 ### 5.9 SMB backend (drivemount-smb), M3
 
 - **Mount:** `WNetAddConnection2W` with:
-  - `NETRESOURCEW { dwType: RESOURCETYPE_DISK, lpLocalName: "Z:", lpRemoteName: "\\server\share" }`;
+  - `NETRESOURCEW { dwType: RESOURCETYPE_DISK, lpLocalName: "Z:", lpRemoteName: "\\server\share", lpProvider: <SMB provider> }`;
   - user and password from the SecretStore;
   - flags: `CONNECT_TEMPORARY`.
 
-  With *Current Windows user*, user and password are null.
+  With *Current Windows user*, user and password are null; Windows then reuses any session it already has to that server, whoever it belongs to.
+  - **The provider is always named**, from `WNetGetProviderNameW(WNNC_NET_LANMAN)`. Without it every network provider is asked (WinFsp's first), errors merge into 1203 `ERROR_NO_NET_OR_BAD_PATH`, and a call to a host that does not answer takes 47 s instead of 27 (spike M3-01 §3).
+  - The call runs under `spawn_blocking` and cannot be cancelled; against a host that does not answer it returns after about 27 s.
 - A sub-path is handled by mapping the share and opening Explorer at the sub-folder. Windows cannot map a drive letter to a sub-folder of a share; the UI states this next to the field.
-- **Unmount:** `WNetCancelConnection2W(L"Z:", 0, force)`.
+- **Unmount:** `WNetCancelConnection2W(L"Z:", 0, force)`. 2401 `ERROR_OPEN_FILES` without force is the cue for FR-SMB-04's question; 2250 `ERROR_NOT_CONNECTED` counts as done.
 - **Health:**
   - re-checked on Windows network events and before *Open in Explorer*;
-  - a failing `GetDiskFreeSpaceExW` sets the row to *Disconnected (Windows will reconnect)*;
-  - there is no app-side reconnect loop, because the Windows SMB client handles it.
-- **Error mapping** for WNet calls: `ERROR_SESSION_CREDENTIAL_CONFLICT` (1219) → E-SMB-1219; `ERROR_LOGON_FAILURE` → E-AUTH; `ERROR_BAD_NET_NAME` → E-SMB-SHARE-NOT-FOUND; `ERROR_BAD_NETPATH` → E-HOST-UNREACHABLE; `ERROR_ALREADY_ASSIGNED` → E-LETTER-TAKEN.
+  - `GetDiskFreeSpaceExW` on the share root runs on its own thread with a timeout of 5 s, one call per mount at a time. During an outage the call blocks for 36–82 s before it fails, so no answer in time counts as a failure;
+  - a failure sets the row to *Disconnected (Windows will reconnect)*;
+  - there is no app-side reconnect loop, because the Windows SMB client handles it. The mapping survives a server reboot; Windows notices a returned server up to about 30 s late. Files open across a server reboot are lost (59 `ERROR_UNEXP_NET_ERR`); across a network outage they are kept.
+- **Error mapping** for WNet calls (spike M3-01 §3):
+
+  | Win32 | Code |
+  |---|---|
+  | 1219 `ERROR_SESSION_CREDENTIAL_CONFLICT` | E-SMB-1219 (also for the same user with another password, or the same user written another way) |
+  | 1326 `ERROR_LOGON_FAILURE`, 86 `ERROR_INVALID_PASSWORD` | E-AUTH (Samba answers 1326, a Windows server 86) |
+  | 67 `ERROR_BAD_NET_NAME` | E-SMB-SHARE-NOT-FOUND |
+  | 53 `ERROR_BAD_NETPATH` | E-HOST-UNREACHABLE (an unknown name too: SMB has no E-DNS) |
+  | 85 `ERROR_ALREADY_ASSIGNED`, 1202 `ERROR_DEVICE_ALREADY_REMEMBERED` | E-LETTER-TAKEN |
+  | anything else, 1203 included | E-INTERNAL, with the number and Windows' text in the log |
+
+  E-HOST-UNREACHABLE shows port 445.
 
 ### 5.10 NFS backend (drivemount-nfs), M4
 

@@ -56,6 +56,23 @@ The same users and image also run with one difference each, for testing failures
 
 ProFTPD 1.3.8c `mod_sftp` (Debian trixie; bookworm's 1.3.8 aborts with a heap error after `mkdir` of some name lengths), with every optional extension off (FR-SSH-14). User `tester`, password `tester`, host key `keys/ssh_host_rsa_key`. Its own log is `/var/log/proftpd/sftp.log` in the container, and says why it refused something.
 
+## SMB server `samba`: the WSL VM's address, port 445
+
+Samba 4.17 (Debian bookworm), no NetBIOS. **Connect to the WSL VM's IP (`wsl hostname -I`), not `localhost`.** Windows' own SMB server holds port 445 on the Windows side, and the Windows 10 SMB client cannot use another port. The IP changes when WSL restarts.
+
+| User | Password |
+|---|---|
+| `smbuser1` | `smbpass1` |
+| `smbuser2` | `smbpass2` |
+
+Shares: `a` (writable, holds `hello.txt` and `sub/deeper/`), `b` (writable, empty), `ro` (read-only, holds `readme.txt`). Both users can use all three.
+
+- **Error 1219:** map one share as `smbuser1`, then another as `smbuser2`.
+- **A second name for the server:** `wsl -u root -- ip addr add <another address in the VM's /20>/20 dev eth0`. It is lost when WSL restarts.
+- **Outages:** `docker stop`/`start`/`restart`. For dropped packets, use `iptables -I DOCKER-USER -p tcp --dport 445 -j DROP` (the `INPUT` chain does not see container traffic).
+
+See `docs/spikes/m3-01-smb.md`.
+
 ## Notes
 
 

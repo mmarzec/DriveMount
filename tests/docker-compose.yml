@@ -87,3 +87,12 @@ services:
     command: ["-f", "/etc/ssh/sshd_config_winpaths"]
     ports:
       - "2232:22"
+
+  # SMB (M3). Port 445 is published inside the WSL VM only: Windows' own server holds 445 on the
+  # Windows side, and its SMB client cannot use another port, so Windows reaches it at the VM's IP
+  # (`wsl hostname -I`), not at localhost. See docker/README.md.
+  samba:
+    build: ./docker/samba
+    image: drivemount-test-samba
+    ports:
+      - "445:445"

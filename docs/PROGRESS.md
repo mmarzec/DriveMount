@@ -2,6 +2,18 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: M3-01 SMB spike (branch `spike/m3-01-smb`)
+
+**Status: done, go.** Report: `docs/spikes/m3-01-smb.md`; tool: `spikes/m3-01-smb/`; spec §5.9 updated.
+
+- **Added:** a Samba test server, `tests/docker/samba/` (service `samba`, users `smbuser1`/`smbuser2`, shares `a`, `b`, `ro`). `servers.ps1 up` starts it. **Windows reaches it at the WSL VM's IP, not localhost**, because Windows' own server holds port 445.
+- **Name the SMB provider in every `WNetAddConnection2W` call** (`WNetGetProviderNameW(WNNC_NET_LANMAN)`). Without it, errors merge into 1203 and an unreachable host takes 47 s instead of 27.
+- **Health check:** `GetDiskFreeSpaceExW` blocks for 36–82 s during an outage, so it needs its own 5 s timeout. A server reboot keeps the mapping but loses open files (59); a network drop keeps both.
+- **1219** also happens for the same user with another password, or with the user name written another way. A second address or name for the server avoids it. Null credentials reuse whatever session to that server already exists.
+- **Not done:** the CI runner (nothing runs on GitHub from here); Explorer showing the new letter (needs eyes, add to H-06 in M3-04).
+- Spike gotchas: in WSL, drop container traffic with the `DOCKER-USER` chain, not `INPUT`. Removing files on mapped letters is blocked by the agent's sandbox, so use new file names.
+- **Next:** M3-02.
+
 ## 2026-11-14: M2-11 Signing and release workflow
 
 **Status: written for SignPath and tested locally with a self-signed certificate standing in for it; nothing has run on GitHub. The signed test tag waits on H-10 (the SignPath Foundation application and project setup).**
