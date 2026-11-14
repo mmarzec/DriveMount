@@ -7,7 +7,7 @@ import { ScrollView } from "std-widgets.slint";
 import { Theme, Icons, Icon, AppButton, Card, Field } from "theme.slint";
 import { EntryKind, PrimaryAction, RowStatus, RowTexts, StatusIcon } from "rows.slint";
 
-export enum LoginKind { password, key-file, agent, ask }
+export enum LoginKind { password, key-file, agent, ask, windows-user }
 
 export struct PageView {
     kind: EntryKind,
@@ -208,6 +208,7 @@ export component ConnectionPage {
                         value: root.view.login == LoginKind.password ? @tr("Password")
                             : root.view.login == LoginKind.key-file ? @tr("Key file: {}", root.view.key-file)
                             : root.view.login == LoginKind.agent ? @tr("SSH agent")
+                            : root.view.login == LoginKind.windows-user ? @tr("Current Windows user")
                             : @tr("Ask each time");
                     }
 

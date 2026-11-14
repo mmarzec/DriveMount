@@ -118,14 +118,14 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). In use at once: `the_level_changes_while_the_log_is_written` (`logging.rs`). *Open logs folder*: H-08, passed 2026-11-13 | – |
 | FR-SET-07 | M2-05 | `the_winfsp_line_has_the_version` (`ui/settings.rs`). By eye: H-08, passed 2026-11-13 | – |
 | FR-SET-08 | M2-04, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The toast: `toasts_are_silent_unless_the_sound_is_on` (`apps/drivemount/src/ui/tests/toasts.rs`), `a_silent_toast_says_so` (`crates/drivemount-win/src/toast.rs`). The checkbox: `the_settings_page_turns_toasts_off_and_the_sound_on_at_once`. Hearing it: H-08, passed 2026-11-13 | – |
-| FR-SET-09 | M3-03, M3-04 | – | – |
+| FR-SET-09 | M3-03, M3-04 | The setting: `config::tests::other_network_drives_are_shown_unless_turned_off`, `a_file_from_before_m3_reads_without_a_migration_and_gains_the_key`. On the page and in the list: M3-04 | – |
 
 ## SMB backend
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-SMB-01 | M3-01 … M3-05 | – | – |
-| FR-SMB-02 | M3-01 … M3-05 | – | – |
+| FR-SMB-01 | M3-01 … M3-05 | Splitting: `the_acceptance_case_fills_server_share_and_sub_path` and the rest of `crates/drivemount-core/src/profile/unc.rs`; the field rules in `profile/validate.rs` (SMB section); the file: `config::tests` (SMB section). The form: M3-04 | – |
+| FR-SMB-02 | M3-01 … M3-05 | The methods in the file: `config::tests::each_smb_login_comes_back`; remembered passwords: `manager::tests::a_remembered_smb_password_is_stored_and_ticks_remember`, `an_smb_password_goes_when_the_profile_stops_having_a_use_for_it`, `an_smb_profile_without_a_remembered_password_stores_nothing`. Mounting by each method: M3-04, M3-05 | – |
 | FR-SMB-03 | M3-01 … M3-05 | `drivemount-smb` `tests/samba.rs` `a_share_maps_temporarily_and_unmaps` (`#[ignore]`, Samba): mapped through the API, not in the remembered list; no process started | – |
 | FR-SMB-04 | M3-01 … M3-05 | Backend: `tests/samba.rs` `open_files_refuse_an_unmount_until_it_is_forced`; manager: `manager::tests::an_unmount_refused_for_open_files_keeps_the_drive_until_forced`. The question itself: M3-04 | – |
 | FR-SMB-05 | M3-01 … M3-05 | `tests/samba.rs` `health_is_lost_during_an_outage_and_back_after` (`#[ignore]`, root in WSL); manager: `a_drive_windows_reconnects_waits_for_it_without_auto_reconnect` | – |

@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use drivemount_core::manager::ProfileChangeError;
 use drivemount_core::profile::{
-    DriveChoice, Field, FieldError, Problem, Profile, Protocol, SftpAuth, check_key_file,
+    DriveChoice, Field, FieldError, Problem, Profile, Protocol, SftpAuth, SmbAuth, check_key_file,
     read_key_head,
 };
 use drivemount_vfs::{
@@ -86,6 +86,12 @@ impl Inner {
                     let Some(profile) = list.profile(id) else {
                         return;
                     };
+                    // The form has SSH fields only until M3-04, and saving it would make the share
+                    // an SFTP profile.
+                    if matches!(profile.protocol, Protocol::Smb(_)) {
+                        tracing::debug!(%id, "SMB profiles cannot be edited in this version yet");
+                        return;
+                    }
                     (Some(profile.clone()), list.is_in_use(id))
                 }
                 None => (None, false),
@@ -879,8 +885,10 @@ impl Inner {
 }
 
 fn remembers_password(profile: &Profile) -> bool {
-    let Protocol::Sftp(sftp) = &profile.protocol;
-    matches!(sftp.auth, SftpAuth::Password { remember: true })
+    match &profile.protocol {
+        Protocol::Sftp(sftp) => matches!(sftp.auth, SftpAuth::Password { remember: true }),
+        Protocol::Smb(smb) => smb.auth == SmbAuth::Password { remember: true },
+    }
 }
 
 /// Reading a key file is file system work, and can take a while on a network path (NFR-PERF-10).

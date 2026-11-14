@@ -10,7 +10,7 @@
 //! |---|---|
 //! | The file is not TOML, has no valid `schema_version`, or has the wrong shape | Read-only, with nothing loaded |
 //! | A newer `schema_version` | Read-only, with what can be understood |
-//! | A profile that does not fit the model (`port = 70000`, `protocol = "smb"`) | That profile is in [`Config::unreadable`], and is written back as it was |
+//! | A profile that does not fit the model (`port = 70000`, `protocol = "nfs"`) | That profile is in [`Config::unreadable`], and is written back as it was |
 //! | A profile that fits but breaks a rule (`keepalive_secs = 9999`) | Loaded, and listed by [`Config::invalid_profiles`] |
 //! | A setting with a bad value (`theme = "purple"`) | Its default, listed by [`setting_problems`](ConfigStore::setting_problems) |
 //!
@@ -94,6 +94,8 @@ pub struct Settings {
     pub notification_sound: bool,
     /// FR-SET-06.
     pub log_level: LogLevel,
+    /// FR-SET-09: list drives mapped outside DriveMount (FR-SMB-09).
+    pub show_other_drives: bool,
     /// Not in the UI. 5–120.
     pub op_timeout_secs: u64,
     /// Not in the UI. 0 is the number of cores, and the most is 8.
@@ -110,6 +112,7 @@ impl Default for Settings {
             notifications: true,
             notification_sound: false,
             log_level: LogLevel::Info,
+            show_other_drives: true,
             op_timeout_secs: 15,
             winfsp_threads: 0,
         }

@@ -202,7 +202,9 @@ async fn a_remembered_password_mounts_writes_and_asks_only_once() {
     assert_eq!(world.typist.asked.load(Ordering::SeqCst), 1);
     let stored = world.secrets.load(id, SecretSlot::Password).unwrap();
     assert_eq!(stored.unwrap().expose_secret(), "tester");
-    let Protocol::Sftp(sftp) = &world.in_the_file().profiles[0].protocol.clone();
+    let Protocol::Sftp(sftp) = &world.in_the_file().profiles[0].protocol.clone() else {
+        panic!("not SFTP");
+    };
     assert_eq!(sftp.auth, SftpAuth::Password { remember: true });
 
     world.unmounted(id).await;
@@ -313,7 +315,9 @@ async fn test_connection_reports_a_good_login_a_bad_one_and_a_missing_path() {
     assert!(matches!(wrong, Err(ConnectError::Auth { .. })), "{wrong:?}");
 
     let mut missing = saved.clone();
-    let Protocol::Sftp(sftp) = &mut missing.protocol;
+    let Protocol::Sftp(sftp) = &mut missing.protocol else {
+        panic!("not SFTP");
+    };
     sftp.remote_path = "/no/such/folder".to_owned();
     let not_there = world.manager.test(&missing, typed("tester")).await;
     assert!(
@@ -472,7 +476,9 @@ async fn a_server_restart_during_a_large_read_comes_back_by_itself_and_the_hash_
 async fn a_password_changed_on_the_server_is_an_auth_error_with_no_retries() {
     let user = ServerUser::new("m2rec", "first-password");
     let mut saved = profile("M2-01 password", SftpAuth::Password { remember: false });
-    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    let Protocol::Sftp(sftp) = &mut saved.protocol else {
+        panic!("not SFTP");
+    };
     sftp.username = user.0.to_owned();
     let id = saved.id;
     let mut world = world(vec![saved], Typist::new("first-password"));
@@ -506,7 +512,9 @@ async fn without_auto_reconnect_a_dropped_connection_removes_the_drive() {
     let user = ServerUser::new("m2lost", "password");
     let mut saved = profile("M2-01 no reconnect", SftpAuth::Password { remember: false });
     saved.auto_reconnect = false;
-    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    let Protocol::Sftp(sftp) = &mut saved.protocol else {
+        panic!("not SFTP");
+    };
     sftp.username = user.0.to_owned();
     let id = saved.id;
     let mut world = world(vec![saved], Typist::new("password"));

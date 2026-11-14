@@ -126,7 +126,7 @@ fn home_form(path: String) -> String {
 }
 
 /// Text that does not decode to UTF-8 is left as it was, as is a `%` without two hex digits.
-fn percent_decode(text: &str) -> String {
+pub(super) fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
     let mut rest = bytes;

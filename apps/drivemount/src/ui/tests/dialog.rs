@@ -170,7 +170,9 @@ impl Fixture {
 }
 
 fn host_of(saved: &drivemount_core::profile::Profile) -> &str {
-    let Protocol::Sftp(sftp) = &saved.protocol;
+    let Protocol::Sftp(sftp) = &saved.protocol else {
+        panic!("not SFTP");
+    };
     &sftp.host
 }
 
@@ -298,7 +300,9 @@ fn a_new_form_opens_with_nothing_marked_though_save_is_off() {
 #[test]
 fn a_saved_profile_with_an_empty_box_has_it_marked_at_once() {
     let mut saved = profile("A");
-    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    let Protocol::Sftp(sftp) = &mut saved.protocol else {
+        panic!("not SFTP");
+    };
     sftp.username = String::new();
     let fixture = Fixture::new(vec![saved]);
     fixture.open_selected();
@@ -429,7 +433,9 @@ fn save_sends_the_profile_and_waits_for_the_answer() {
     let (saved, secrets) = fixture.take_save();
     assert_eq!(saved.name, "New");
     assert_eq!(host_of(&saved), "h");
-    let Protocol::Sftp(sftp) = &saved.protocol;
+    let Protocol::Sftp(sftp) = &saved.protocol else {
+        panic!("not SFTP");
+    };
     assert_eq!(sftp.auth, SftpAuth::Password { remember: true });
     assert_eq!(secrets.0.len(), 1);
     assert_eq!(secrets.0[0].1.expose_secret(), "hunter2");
@@ -558,7 +564,9 @@ fn editing_shows_what_is_saved_and_keeps_the_id() {
 #[test]
 fn a_profile_breaking_a_rule_opens_with_the_box_marked() {
     let mut saved = profile("Bad");
-    let Protocol::Sftp(sftp) = &mut saved.protocol;
+    let Protocol::Sftp(sftp) = &mut saved.protocol else {
+        panic!("not SFTP");
+    };
     sftp.keepalive_secs = 9999;
     let fixture = Fixture::new(vec![saved]);
     fixture.open_selected();
@@ -833,7 +841,9 @@ fn advanced_is_closed_until_asked_for_and_holds_its_fields() {
     let (saved, _) = fixture.take_save();
     assert!(saved.read_only);
     assert!(!saved.auto_reconnect);
-    let Protocol::Sftp(sftp) = &saved.protocol;
+    let Protocol::Sftp(sftp) = &saved.protocol else {
+        panic!("not SFTP");
+    };
     assert_eq!(sftp.cache_ttl_secs, 0);
     let jump = sftp.jump.as_ref().unwrap();
     assert_eq!(jump.host, "jump");

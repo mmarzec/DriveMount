@@ -1328,6 +1328,7 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
                     }
                     Login::Agent => LoginKind::Agent,
                     Login::Ask => LoginKind::Ask,
+                    Login::WindowsUser => LoginKind::WindowsUser,
                 };
                 view.remote_path = details.remote_path.into();
                 view.drive = details

@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use drivemount_core::profile::{
     DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_PORT, DEFAULT_REMOTE_PATH, DriveChoice,
     DriveWarning, Field, FieldError, JumpAuth, JumpHost, Problem, Profile, Protocol, SftpAuth,
-    SftpProfile, parse_cache_secs, parse_jump_host, parse_keepalive_secs, parse_pasted_host,
-    parse_port, validate_profile,
+    SftpProfile, SmbAuth, parse_cache_secs, parse_jump_host, parse_keepalive_secs,
+    parse_pasted_host, parse_port, validate_profile,
 };
 use drivemount_vfs::{DriveLetter, Secret, SecretSlot};
 use drivemount_win::credentials::MAX_SECRET_UNITS;
@@ -103,8 +103,16 @@ pub(super) fn new_form() -> DialogForm {
 }
 
 /// The boxes of a saved profile. A secret is never put in a box.
+///
+/// The dialog is not opened on an SMB profile until M3-04, which gives it SMB fields: such a profile
+/// gives a new form with its name.
 pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
-    let Protocol::Sftp(sftp) = &profile.protocol;
+    let Protocol::Sftp(sftp) = &profile.protocol else {
+        return DialogForm {
+            name: (&profile.name).into(),
+            ..new_form()
+        };
+    };
     let mut form = DialogForm {
         name: (&profile.name).into(),
         host: (&sftp.host).into(),
@@ -241,13 +249,19 @@ pub(super) fn check(
     }
 
     let too_long = |text: &str| text.encode_utf16().count() > MAX_SECRET_UNITS;
-    let Protocol::Sftp(sftp) = &profile.protocol;
-    let password_too_long =
-        matches!(sftp.auth, SftpAuth::Password { remember: true }) && too_long(&form.password);
-    let jump_password_too_long = matches!(
-        sftp.jump.as_ref().map(|jump| &jump.auth),
-        Some(JumpAuth::Password)
-    ) && too_long(&form.jump_password);
+    let (password_too_long, jump_password_too_long) = match &profile.protocol {
+        Protocol::Sftp(sftp) => (
+            matches!(sftp.auth, SftpAuth::Password { remember: true }) && too_long(&form.password),
+            matches!(
+                sftp.jump.as_ref().map(|jump| &jump.auth),
+                Some(JumpAuth::Password)
+            ) && too_long(&form.jump_password),
+        ),
+        Protocol::Smb(smb) => (
+            smb.auth == SmbAuth::Password { remember: true } && too_long(&form.password),
+            false,
+        ),
+    };
 
     Checked {
         profile,
@@ -261,8 +275,10 @@ pub(super) fn check(
 
 /// The key files a profile uses, and the box each is in.
 fn key_files(profile: &Profile) -> Vec<(Field, &Path)> {
-    let Protocol::Sftp(sftp) = &profile.protocol;
     let mut files = Vec::new();
+    let Protocol::Sftp(sftp) = &profile.protocol else {
+        return files;
+    };
     if let SftpAuth::KeyFile { path, .. } = &sftp.auth {
         files.push((Field::KeyFile, path.as_path()));
     }
@@ -379,7 +395,17 @@ pub(super) fn typed_secrets(
     if locked {
         return typed;
     }
-    let Protocol::Sftp(sftp) = &profile.protocol;
+    let Protocol::Sftp(sftp) = &profile.protocol else {
+        if matches!(&profile.protocol, Protocol::Smb(smb) if matches!(smb.auth, SmbAuth::Password { .. }))
+            && !form.password.is_empty()
+        {
+            typed.push((
+                SecretSlot::Password,
+                Secret::new(form.password.as_str().to_owned()),
+            ));
+        }
+        return typed;
+    };
     if matches!(sftp.auth, SftpAuth::Password { .. }) && !form.password.is_empty() {
         typed.push((
             SecretSlot::Password,
@@ -451,7 +477,9 @@ mod tests {
     }
 
     fn sftp(profile: &Profile) -> &SftpProfile {
-        let Protocol::Sftp(sftp) = &profile.protocol;
+        let Protocol::Sftp(sftp) = &profile.protocol else {
+            panic!("not SFTP");
+        };
         sftp
     }
 
@@ -502,7 +530,9 @@ mod tests {
         with_everything.read_only = true;
         with_everything.mount_on_start = true;
         with_everything.auto_reconnect = false;
-        let Protocol::Sftp(inner) = &mut with_everything.protocol;
+        let Protocol::Sftp(inner) = &mut with_everything.protocol else {
+            panic!("not SFTP");
+        };
         inner.port = 2222;
         inner.remote_path = "/var/www".to_owned();
         inner.cache_ttl_secs = 0;
@@ -515,7 +545,9 @@ mod tests {
         });
 
         let mut by_password_jump = saved("B", SftpAuth::Password { remember: false });
-        let Protocol::Sftp(inner) = &mut by_password_jump.protocol;
+        let Protocol::Sftp(inner) = &mut by_password_jump.protocol else {
+            panic!("not SFTP");
+        };
         inner.jump = Some(JumpHost {
             host: "jump".to_owned(),
             port: 22,

@@ -23,7 +23,9 @@ use uuid::Uuid;
 
 use super::*;
 use crate::config::{LetterConflict, LogLevel, Theme};
-use crate::profile::{DriveChoice, Field, JumpAuth, JumpHost, Protocol, SftpAuth, SftpProfile};
+use crate::profile::{
+    DriveChoice, Field, JumpAuth, JumpHost, Protocol, SftpAuth, SftpProfile, SmbAuth, SmbProfile,
+};
 
 const PATIENCE: Duration = Duration::from_secs(10);
 
@@ -393,7 +395,9 @@ fn with_auth(name: &str, auth: SftpAuth) -> Profile {
 }
 
 fn sftp_mut(profile: &mut Profile) -> &mut SftpProfile {
-    let Protocol::Sftp(sftp) = &mut profile.protocol;
+    let Protocol::Sftp(sftp) = &mut profile.protocol else {
+        panic!("not SFTP");
+    };
     sftp
 }
 
@@ -1860,7 +1864,9 @@ async fn a_password_ticked_in_the_prompt_is_stored_and_the_profile_marked() {
         world.secrets.get(id, SecretSlot::Password).as_deref(),
         Some("typed")
     );
-    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol;
+    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol else {
+        panic!("not SFTP");
+    };
     assert_eq!(saved.auth, SftpAuth::Password { remember: true });
 }
 
@@ -1896,7 +1902,9 @@ async fn a_passphrase_and_a_jump_password_go_in_their_own_slots() {
         world.secrets.get(id, SecretSlot::JumpPassword).as_deref(),
         Some("jump")
     );
-    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol;
+    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol else {
+        panic!("not SFTP");
+    };
     assert!(matches!(
         saved.auth,
         SftpAuth::KeyFile { remember: true, .. }
@@ -1918,6 +1926,120 @@ async fn ask_each_time_never_stores_anything() {
     world.mounted(id).await;
 
     assert!(world.secrets.inner.is_empty());
+}
+
+fn a_share(name: &str, auth: SmbAuth) -> Profile {
+    let smb = SmbProfile::new("nas", "media", "marcin", auth);
+    Profile::new(name, Protocol::Smb(smb))
+}
+
+/// FR-SMB-02: a password typed at the mount, with *Remember* ticked, is kept like an SSH one.
+#[tokio::test]
+async fn a_remembered_smb_password_is_stored_and_ticks_remember() {
+    let profile = a_share("NAS", SmbAuth::Password { remember: false });
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    *world.mock.to_remember.lock().unwrap() = vec![(SecretSlot::Password, "typed".to_owned())];
+
+    world.mounted(id).await;
+
+    assert_eq!(
+        world.secrets.get(id, SecretSlot::Password).as_deref(),
+        Some("typed")
+    );
+    let Protocol::Smb(saved) = world.profile_in_the_file(id).protocol else {
+        panic!("not SMB");
+    };
+    assert_eq!(saved.auth, SmbAuth::Password { remember: true });
+}
+
+/// *Ask each time* and *Current Windows user* never store anything, whatever a backend does.
+#[tokio::test]
+async fn an_smb_profile_without_a_remembered_password_stores_nothing() {
+    for auth in [SmbAuth::Ask, SmbAuth::WindowsUser] {
+        let profile = a_share("NAS", auth);
+        let id = profile.id;
+        let mut world = world(vec![profile]);
+        *world.mock.to_remember.lock().unwrap() = vec![
+            (SecretSlot::Password, "typed".to_owned()),
+            (SecretSlot::Passphrase, "typed".to_owned()),
+            (SecretSlot::JumpPassword, "typed".to_owned()),
+        ];
+
+        world.mounted(id).await;
+
+        assert!(world.secrets.inner.is_empty(), "{auth:?}");
+    }
+}
+
+/// Spec §6.2 for SMB: only *Password* with *Remember* keeps one, in the password slot.
+#[tokio::test]
+async fn an_smb_password_goes_when_the_profile_stops_having_a_use_for_it() {
+    let password = |remember| SmbAuth::Password { remember };
+    let cases = [
+        (password(true), true),
+        (password(false), false),
+        (SmbAuth::Ask, false),
+        (SmbAuth::WindowsUser, false),
+    ];
+    for (to, kept) in cases {
+        let mut profile = a_share("NAS", password(true));
+        let id = profile.id;
+        let world = world(vec![profile.clone()]);
+        for slot in SecretSlot::ALL {
+            world.secrets.put(id, slot, "secret");
+        }
+        let Protocol::Smb(smb) = &mut profile.protocol else {
+            panic!("not SMB");
+        };
+        smb.auth = to;
+
+        world.manager.save(profile, Vec::new()).await.unwrap();
+
+        assert_eq!(
+            world.secrets.get(id, SecretSlot::Password).is_some(),
+            kept,
+            "{to:?}"
+        );
+        assert_eq!(world.secrets.get(id, SecretSlot::Passphrase), None);
+        assert_eq!(world.secrets.get(id, SecretSlot::JumpPassword), None);
+    }
+}
+
+#[tokio::test]
+async fn the_smb_password_in_the_dialog_is_stored_if_remember_is_ticked() {
+    let world = world(Vec::new());
+    let remembered = a_share("One", SmbAuth::Password { remember: true });
+    let not = a_share("Two", SmbAuth::Password { remember: false });
+    let (kept, dropped) = (remembered.id, not.id);
+
+    for profile in [remembered, not] {
+        let secrets = typed(SecretSlot::Password, "typed-secret");
+        world.manager.save(profile, secrets).await.unwrap();
+    }
+
+    assert_eq!(
+        world.secrets.get(kept, SecretSlot::Password).as_deref(),
+        Some("typed-secret")
+    );
+    assert_eq!(world.secrets.get(dropped, SecretSlot::Password), None);
+    let text = fs::read_to_string(path_in(&world.folder)).unwrap();
+    assert!(!text.contains("typed-secret"), "NFR-SEC-02");
+}
+
+#[tokio::test]
+async fn an_smb_profile_that_breaks_a_rule_is_not_saved() {
+    let world = world(Vec::new());
+    let mut profile = a_share("NAS", SmbAuth::Ask);
+    let Protocol::Smb(smb) = &mut profile.protocol else {
+        panic!("not SMB");
+    };
+    smb.share = String::new();
+
+    let result = world.manager.save(profile, Vec::new()).await;
+
+    assert!(matches!(result, Err(ProfileChangeError::Invalid(_))));
+    assert!(world.manager.config().await.profiles.is_empty());
 }
 
 #[tokio::test]
@@ -1950,7 +2072,9 @@ async fn a_secret_that_cannot_be_stored_does_not_stop_the_drive() {
     world.mounted(id).await;
 
     assert_eq!(world.state(id), MountState::Mounted);
-    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol;
+    let Protocol::Sftp(saved) = world.profile_in_the_file(id).protocol else {
+        panic!("not SFTP");
+    };
     assert_eq!(
         saved.auth,
         SftpAuth::Password { remember: false },
@@ -2674,7 +2798,9 @@ async fn remember_is_only_ticked_for_a_secret_that_was_stored() {
 
     assert_eq!(secrets.0.len(), 1);
     let config = manager.config().await;
-    let Protocol::Sftp(saved) = &config.profiles[0].protocol;
+    let Protocol::Sftp(saved) = &config.profiles[0].protocol else {
+        panic!("not SFTP");
+    };
     assert_eq!(saved.auth, SftpAuth::Password { remember: false });
 }
 

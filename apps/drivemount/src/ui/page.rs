@@ -4,10 +4,13 @@
 //! nothing of Slint, and holds no text to translate, so all of it can be tested without a window.
 //! Secrets are never part of it.
 
-use drivemount_core::profile::{DriveChoice, Profile, Protocol, SftpAuth};
+use drivemount_core::profile::{DriveChoice, Profile, Protocol, SftpAuth, SmbAuth};
 use drivemount_vfs::DriveLetter;
 
 use super::form::jump_text;
+
+/// The port Windows maps SMB shares on.
+const SMB_PORT: u16 = 445;
 
 /// How the profile logs in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +23,8 @@ pub(super) enum Login {
     Agent,
     /// Asked for at each mount.
     Ask,
+    /// SMB: the signed-in Windows user.
+    WindowsUser,
 }
 
 /// A profile's settings, as the page lists them.
@@ -42,9 +47,36 @@ pub(super) struct Details {
 }
 
 impl Details {
-    /// What the page says about this profile.
+    /// What the page says about this profile. An SMB profile fills the SSH lines as best it can
+    /// until M3-04 gives the page its own: the server, port 445, the account, and the UNC path.
     pub(super) fn of(profile: &Profile) -> Self {
-        let Protocol::Sftp(sftp) = &profile.protocol;
+        let drive = match profile.drive {
+            DriveChoice::Auto => None,
+            DriveChoice::Letter(letter) => Some(letter),
+        };
+        let sftp = match &profile.protocol {
+            Protocol::Sftp(sftp) => sftp,
+            Protocol::Smb(smb) => {
+                return Self {
+                    host: smb.server.clone(),
+                    port: SMB_PORT,
+                    user: smb.account(),
+                    login: match smb.auth {
+                        SmbAuth::Password { .. } => Login::Password,
+                        SmbAuth::Ask => Login::Ask,
+                        SmbAuth::WindowsUser => Login::WindowsUser,
+                    },
+                    remote_path: smb.unc_with_sub_path(),
+                    drive,
+                    jump_host: String::new(),
+                    mount_on_start: profile.mount_on_start,
+                    auto_reconnect: profile.auto_reconnect,
+                    read_only: profile.read_only,
+                    cache_secs: 0,
+                    keepalive_secs: 0,
+                };
+            }
+        };
         Self {
             host: sftp.host.clone(),
             port: sftp.port,
@@ -56,10 +88,7 @@ impl Details {
                 SftpAuth::Ask => Login::Ask,
             },
             remote_path: sftp.remote_path.clone(),
-            drive: match profile.drive {
-                DriveChoice::Auto => None,
-                DriveChoice::Letter(letter) => Some(letter),
-            },
+            drive,
             jump_host: sftp.jump.as_ref().map(jump_text).unwrap_or_default(),
             mount_on_start: profile.mount_on_start,
             auto_reconnect: profile.auto_reconnect,
@@ -118,5 +147,21 @@ mod tests {
         assert_eq!(details.drive, None);
         assert_eq!(details.jump_host, "");
         assert_eq!(details.login, Login::Password);
+    }
+
+    #[test]
+    fn an_smb_profile_shows_its_server_account_and_unc_path() {
+        use drivemount_core::profile::SmbProfile;
+
+        let mut smb = SmbProfile::new("nas", "media", "marcin", SmbAuth::WindowsUser);
+        smb.domain = "CORP".to_owned();
+        smb.sub_path = "films".to_owned();
+        let details = Details::of(&Profile::new("NAS", Protocol::Smb(smb)));
+        assert_eq!(details.host, "nas");
+        assert_eq!(details.port, 445);
+        assert_eq!(details.user, r"CORP\marcin");
+        assert_eq!(details.login, Login::WindowsUser);
+        assert_eq!(details.remote_path, r"\\nas\media\films");
+        assert_eq!(details.jump_host, "");
     }
 }

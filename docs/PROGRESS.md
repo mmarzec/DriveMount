@@ -2,6 +2,19 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: M3-03 SMB profile and config (branch `feat/m3-03-smb-profile`)
+
+**Status: done.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass (`drivemount-core` 268, `drivemount` 242).
+
+- **Model:** `Protocol::Smb(SmbProfile)` with `server`, `share`, `sub_path`, `domain`, `username` and `SmbAuth` (`Password { remember }`, `Ask`, `WindowsUser`); `unc()`, `unc_with_sub_path()` and `account()` (`DOMAIN\user`) as `drivemount_smb::SmbTarget` has them. The core's `SmbAuth` and `drivemount_smb::SmbAuth` share a name: M3-04's factory will need an alias.
+- **Rules (spec §7.3, new SMB table):** `check_server` (IPv4 or a name; a raw IPv6 address gets its own message, pointing to `ipv6-literal.net`), `check_share`, `check_sub_path`, `check_smb_user` (spaces allowed, 104 chars), `check_domain`, and *Domain* marked when User already has `@domain`. *Current Windows user* checks neither user nor domain.
+- **Pastes:** `parse_pasted_unc` (`\\server\share\sub`, `//…`, `smb://[dom;]user@server[:445]/share/sub`) and `split_smb_user` (`DOMAIN\user`), in `profile/unc.rs`. Nothing calls them yet: the Server and User boxes are M3-04.
+- **File (spec §6.1):** `ProfileRecord` is now an enum of an SFTP and an SMB record, picked by `protocol`; each keeps its unknown keys, and a profile that changes protocol takes only those along. `remember` stays for *Ask*/*Windows* like `key_path` does for SSH. `show_other_drives` (default on) goes after `log_level`; `schema_version` stays 1 (additive).
+- **Secrets (spec §6.2):** an SMB profile keeps only `Password` with *Remember*; the prompt's *Remember* ticks it after a mount, as for SSH.
+- **The app until M3-04:** an SMB profile in the file is listed with its UNC path as address, and the connection page fills the SSH lines (server, 445, account, UNC; *Current Windows user* as a new `LoginKind`). Mount and Test fail with an E-INTERNAL "SMB drives cannot be mounted by this version yet", and Edit does nothing, so the SSH form cannot turn a share into an SFTP profile. The settings page keeps `show_other_drives` as it is (no box yet).
+- **Not done:** everything in M3-04's row (form, factory, external rows, the FR-SET-09 box).
+- **Next:** M3-04.
+
 ## 2026-11-14: M3-02 `drivemount-smb`
 
 **Status: done locally, not committed.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass; the 8 Samba tests (`crates/drivemount-smb/tests/samba.rs`, `#[ignore]`) pass against the test server, the outage one in 21 s. The owner's own mappings (`W:`–`Z:`) and the iptables rules were as before afterwards.

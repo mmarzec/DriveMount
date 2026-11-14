@@ -805,9 +805,20 @@ key_path = ""
 
 # M3 example
 # [[profiles]]
-# protocol = "smb"
-# server = "nas"           share = "media"      sub_path = "films"
-# domain = ""              username = "marcin"  auth = "password"   # password | ask | windows
+# id             = "11111111-2222-4333-8444-555555555555"
+# name           = "NAS media"
+# protocol       = "smb"
+# server         = "nas"
+# share          = "media"
+# sub_path       = 'films\2024'      # "" = the share itself
+# domain         = ""
+# username       = "marcin"
+# auth           = "password"       # password | ask | windows
+# remember       = true             # password stored in Credential Manager
+# drive_letter   = "M"
+# read_only      = false
+# mount_on_start = true
+# auto_reconnect = true
 
 # M4 example
 # [[profiles]]
@@ -825,13 +836,15 @@ key_path = ""
   - A profile that fits but breaks a rule of §7.3 (`keepalive_secs = 9999`) is loaded and listed, and the dialog marks the fields. A key file is not looked at on loading, only its name.
   - A setting with a bad value or out of range takes its default and is reported, and the next save replaces it.
 - **Required in a profile:** `id`, `name`, `protocol`, `host`, `username`, `auth`, and `host` and `auth` in `jump`. The others take the defaults above: no `drive_letter` is Auto, no `key_path` is blank. No `username` in `jump`, or a blank one, is the profile's own (§7.3).
-- `key_path` and `remember` stay in the file for an auth method with no use for them.
+- **Required in an SMB profile:** `id`, `name`, `protocol`, `server`, `share`, `auth`. No `sub_path`, `domain` or `username` is blank (*Current Windows user* needs no user; §7.3 asks for one with the other methods). An SMB profile has none of the SFTP keys, nor `cache_ttl_secs` and `keepalive_secs`; `auto_reconnect` is kept but Windows reconnects the drive whatever it says (§5.9).
+- `key_path` and `remember` stay in the file for an auth method with no use for them. When a profile changes protocol, only its unknown keys go along.
+- `show_other_drives` came with M3 and changes no existing key, so `schema_version` stays 1: an older file reads without a migration and gains the key at the next save.
 
 ### 6.2 Secrets
 
 Windows Credential Manager entries (NFR-SEC-01) are created only when "Remember" is ticked. They are deleted on profile delete, and when "Remember" is unticked.
 
-- **On Save,** a profile keeps only what it says it has: the password if it is *Password* with "Remember", the passphrase if it is *Key file* with "Remember", and the jump password if the jump host uses one. Anything else is deleted. So is the passphrase when the key file changes, as it is of no use for another key, and a wrong one is E-AUTH with no second prompt. A change of host or user keeps them.
+- **On Save,** a profile keeps only what it says it has: the password if it is *Password* with "Remember" (SSH or SMB), the passphrase if it is *Key file* with "Remember", and the jump password if the jump host uses one. *Ask each time* and *Current Windows user* keep none. Anything else is deleted. So is the passphrase when the key file changes, as it is of no use for another key, and a wrong one is E-AUTH with no second prompt. A change of host or user keeps them.
 - **Ticked in a prompt:** the secret is stored once the login has worked, before the row shows *Mounted*, and the profile's "Remember" is turned on, unless the file is read-only. A secret that cannot be stored costs a question at the next mount, not the drive.
 - **Order:** secrets go before the file changes. If the file then cannot be written, the worst that has happened is a question at the next mount, and the change can be tried again. The other way round, secrets could be left under a profile that no longer exists. A secret that cannot be deleted stops the Save or Delete. For an unreadable entry (§6.1), they go only if nothing else in the file uses that id.
 
@@ -1004,6 +1017,21 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 - **Chars** are Unicode characters, not bytes.
 - **Host:** letters, digits, `-` and `_` in labels. `_` is not legal DNS, but common on local networks. An international name goes in as `xn--…`, and a last label of only digits is refused as a mistyped address (`10.0.4.256`). An IPv6 scope (`fe80::1%4`) is not accepted.
 - **Key file:** the name alone is enough to refuse (`.ppk`, `.pub`, in any case). Otherwise the start of the file decides: a PuTTY or public key by its content too, and a private key by its header. What only reading the key can show (an RSA key under 2048 bits, encrypted forms `russh` cannot read, §5.7) is E-KEY-FORMAT at connect. So a real OpenSSH key named `.ppk` can connect (§5.7) but cannot be selected here.
+
+**SMB fields (FR-SMB-01, M3).**
+
+| Field | Rule | Message |
+|---|---|---|
+| Server | DNS or NetBIOS name, or IPv4 address, by the Host rule's name rules. A UNC path cannot hold an IPv6 address as it is, so one is refused with a hint; Windows' `fe80--1.ipv6-literal.net` form is a name and passes | "Enter a server name or IP address" / "Write an IPv6 address as its ipv6-literal.net name, such as fe80--1.ipv6-literal.net" |
+| Share | 1–80 chars; none of `\ / [ ] : \| < > + = ; , ? *` `"` or control characters. `C$` and the like are fine | "Share is required" / "Use at most 80 characters" / "A share name cannot contain \ / [ ] : \| < > + = ; , ? * "" |
+| Sub-path | Empty, or folder names separated by `\` or `/`: no empty name (so no separator at either end), no `.` or `..`, none of `: * ? " < > \|` or control characters, no name ending in a dot or space | "Use folder names separated by \, such as films\2024" |
+| User | Only with *Password* and *Ask each time*. 1–104 chars (`me@corp.example` fits); spaces allowed (local Windows accounts have them); none of `" / \ [ ] : ; \| = , + * ? < >` or control characters | "User name is required" / "Use at most 104 characters" / "A user name cannot contain " / \ [ ] : ; \| = , + * ? < >" |
+| Domain | Only with *Password* and *Ask each time*. Empty, or at most 255 chars with no white space and none of `\ / : * ? " < > \| @`; `.` is the server's own accounts. Empty when User has `@domain` | "Enter a domain such as CORP or corp.example" / "Leave Domain empty when the user name ends in @domain" |
+
+- *Current Windows user* sends no user or domain, so they are not checked, and are kept for when the method changes back.
+- Drive, Name and the flags have the same rules as for SSH.
+- **UNC paste (FR-SMB-01):** `\\server\share[\sub\path]` pasted into the Server box fills server, share and sub-path. `//server/share/sub` and `smb://[[domain;]user[:password]@]server[:445]/share/sub` are understood too: a URL also fills Domain and User, with `%XX` decoded, and a password is dropped. A separator at the end is dropped, and the sub-path is stored with `\`. All or nothing, as for SSH: a share missing, a port other than 445, another scheme or any part that breaks its rule leaves the text in the Server box.
+- **`DOMAIN\user`** typed or pasted into the User box is split at the backslash into Domain and User, when both parts pass their rules. `user@corp.example` is not split: Windows takes it as it is.
 
 **Paste (FR-PROF-05).** Besides `[user@]host[:port][/path]` and `sftp://` before it, the form the main window shows is understood: `user@host:/path`, `user@host:~`, `user@host:C:/data`. So are `[::1]:22`, a bare `::1`, and a user with a domain (`me@corp.example@host`).
 - In a URL, `%XX` is decoded. `/~` and `/~/…` after a host mean home, in both forms.

@@ -2,6 +2,9 @@
 
 //! A `[[profiles]]` entry as spec §6.1 has it. The file is flat and the model is enums, so the model
 //! knows nothing of serde and these types know nothing of its rules.
+//!
+//! Each protocol has its own keys, so each has its own record, chosen by `protocol`. Both write `id`,
+//! `name` and `protocol` first, and the flags after the protocol's own keys.
 
 use std::path::{Path, PathBuf};
 
@@ -12,13 +15,29 @@ use uuid::Uuid;
 use super::SaveError;
 use crate::profile::{
     DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_PORT, DEFAULT_REMOTE_PATH, DriveChoice,
-    JumpAuth, JumpHost, Profile, Protocol, SftpAuth, SftpProfile, parse_drive,
+    JumpAuth, JumpHost, Profile, Protocol, SftpAuth, SftpProfile, SmbAuth, SmbProfile, parse_drive,
 };
 
 const AUTO: &str = "auto";
 
+/// A `[[profiles]]` entry the model can hold.
+#[derive(Debug, Clone, Serialize)]
+#[serde(untagged)]
+pub(super) enum ProfileRecord {
+    /// `protocol = "sftp"`.
+    Sftp(SftpRecord),
+    /// `protocol = "smb"`.
+    Smb(SmbRecord),
+}
+
+/// Only `protocol`, to know which record to read.
+#[derive(Deserialize)]
+struct Head {
+    protocol: ProtocolRecord,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct ProfileRecord {
+pub(super) struct SftpRecord {
     id: Uuid,
     name: String,
     protocol: ProtocolRecord,
@@ -53,10 +72,49 @@ pub(super) struct ProfileRecord {
     extra: Table,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct SmbRecord {
+    id: Uuid,
+    name: String,
+    protocol: ProtocolRecord,
+    server: String,
+    share: String,
+    #[serde(default)]
+    sub_path: String,
+    #[serde(default)]
+    domain: String,
+    /// Not needed for `windows`, so it may be missing; the rules ask for it for the others.
+    #[serde(default)]
+    username: String,
+    auth: SmbAuthRecord,
+    /// As in an SFTP record: kept for an auth method with no use for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    remember: Option<bool>,
+    #[serde(default = "default_drive")]
+    drive_letter: String,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    mount_on_start: bool,
+    #[serde(default = "default_true")]
+    auto_reconnect: bool,
+    #[serde(flatten)]
+    extra: Table,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ProtocolRecord {
     Sftp,
+    Smb,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum SmbAuthRecord {
+    Password,
+    Ask,
+    Windows,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -132,6 +190,62 @@ impl ProfileRecord {
     ///
     /// When it does not have the keys and types of spec §6.1.
     pub fn read(raw: &Table) -> Result<Self, toml::de::Error> {
+        let head: Head = toml::Value::Table(raw.clone()).try_into()?;
+        Ok(match head.protocol {
+            ProtocolRecord::Sftp => Self::Sftp(SftpRecord::read(raw)?),
+            ProtocolRecord::Smb => Self::Smb(SmbRecord::read(raw)?),
+        })
+    }
+
+    /// The model's view of it. No key file is looked at, and the rules of spec §7.3 are not applied,
+    /// except that a drive that is not Auto or D–Z has no place in the model's text form.
+    ///
+    /// # Errors
+    ///
+    /// What to say about the profile.
+    pub fn to_profile(&self) -> Result<Profile, String> {
+        match self {
+            Self::Sftp(record) => record.to_profile(),
+            Self::Smb(record) => record.to_profile(),
+        }
+    }
+
+    /// The record for a profile. `previous`, its record on file, gives what the model does not hold:
+    /// unknown keys whatever the protocol was, and what the auth method has no use for if it is the
+    /// same protocol.
+    ///
+    /// # Errors
+    ///
+    /// [`SaveError::PathNotText`].
+    pub fn from_profile(profile: &Profile, previous: Option<&Self>) -> Result<Self, SaveError> {
+        Ok(match &profile.protocol {
+            Protocol::Sftp(sftp) => {
+                let previous = previous.map(|previous| match previous {
+                    Self::Sftp(record) => record.clone(),
+                    Self::Smb(record) => SftpRecord::keeping(record.extra.clone()),
+                });
+                Self::Sftp(SftpRecord::from_profile(profile, sftp, previous.as_ref())?)
+            }
+            Protocol::Smb(smb) => {
+                let previous = previous.map(|previous| match previous {
+                    Self::Smb(record) => record.clone(),
+                    Self::Sftp(record) => SmbRecord::keeping(record.extra.clone()),
+                });
+                Self::Smb(SmbRecord::from_profile(profile, smb, previous.as_ref()))
+            }
+        })
+    }
+}
+
+fn drive_text(drive: DriveChoice) -> String {
+    match drive {
+        DriveChoice::Auto => AUTO.to_owned(),
+        DriveChoice::Letter(letter) => letter.as_char().to_string(),
+    }
+}
+
+impl SftpRecord {
+    fn read(raw: &Table) -> Result<Self, toml::de::Error> {
         let mut record: Self = toml::Value::Table(raw.clone()).try_into()?;
         restore_exact_values(&mut record.extra, raw);
         if let (Some(jump), Some(raw_jump)) = (
@@ -143,13 +257,31 @@ impl ProfileRecord {
         Ok(record)
     }
 
-    /// The model's view of it. No key file is looked at, and the rules of spec §7.3 are not applied,
-    /// except that a drive that is not Auto or D–Z has no place in the model's text form.
-    ///
-    /// # Errors
-    ///
-    /// What to say about the profile.
-    pub fn to_profile(&self) -> Result<Profile, String> {
+    /// A record of another protocol becoming this one: only its unknown keys go along.
+    fn keeping(extra: Table) -> Self {
+        Self {
+            id: Uuid::nil(),
+            name: String::new(),
+            protocol: ProtocolRecord::Sftp,
+            host: String::new(),
+            port: DEFAULT_PORT,
+            username: String::new(),
+            auth: AuthRecord::Agent,
+            key_path: None,
+            remember: None,
+            remote_path: default_remote_path(),
+            drive_letter: default_drive(),
+            read_only: false,
+            mount_on_start: false,
+            auto_reconnect: true,
+            cache_ttl_secs: DEFAULT_CACHE_TTL_SECS,
+            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
+            jump: None,
+            extra,
+        }
+    }
+
+    fn to_profile(&self) -> Result<Profile, String> {
         let drive = parse_drive(&self.drive_letter).map_err(|problem| problem.to_string())?;
         let key_path = || PathBuf::from(self.key_path.clone().unwrap_or_default());
         let remember = self.remember.unwrap_or(false);
@@ -162,18 +294,16 @@ impl ProfileRecord {
             AuthRecord::Agent => SftpAuth::Agent,
             AuthRecord::Ask => SftpAuth::Ask,
         };
-        let protocol = match self.protocol {
-            ProtocolRecord::Sftp => Protocol::Sftp(SftpProfile {
-                host: self.host.clone(),
-                port: self.port,
-                username: self.username.clone(),
-                auth,
-                remote_path: self.remote_path.clone(),
-                cache_ttl_secs: self.cache_ttl_secs,
-                keepalive_secs: self.keepalive_secs,
-                jump: self.jump.as_ref().map(JumpRecord::to_jump),
-            }),
-        };
+        let protocol = Protocol::Sftp(SftpProfile {
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            auth,
+            remote_path: self.remote_path.clone(),
+            cache_ttl_secs: self.cache_ttl_secs,
+            keepalive_secs: self.keepalive_secs,
+            jump: self.jump.as_ref().map(JumpRecord::to_jump),
+        });
         Ok(Profile {
             id: self.id,
             name: self.name.clone(),
@@ -185,13 +315,11 @@ impl ProfileRecord {
         })
     }
 
-    /// The record for a profile. `previous`, its record on file, gives what the model does not hold.
-    ///
-    /// # Errors
-    ///
-    /// [`SaveError::PathNotText`].
-    pub fn from_profile(profile: &Profile, previous: Option<&Self>) -> Result<Self, SaveError> {
-        let Protocol::Sftp(sftp) = &profile.protocol;
+    fn from_profile(
+        profile: &Profile,
+        sftp: &SftpProfile,
+        previous: Option<&Self>,
+    ) -> Result<Self, SaveError> {
         let path_text = |path: &Path| {
             path.to_str()
                 .map(str::to_owned)
@@ -236,10 +364,7 @@ impl ProfileRecord {
             key_path,
             remember,
             remote_path: sftp.remote_path.clone(),
-            drive_letter: match profile.drive {
-                DriveChoice::Auto => AUTO.to_owned(),
-                DriveChoice::Letter(letter) => letter.as_char().to_string(),
-            },
+            drive_letter: drive_text(profile.drive),
             read_only: profile.read_only,
             mount_on_start: profile.mount_on_start,
             auto_reconnect: profile.auto_reconnect,
@@ -250,6 +375,93 @@ impl ProfileRecord {
                 .map(|record| record.extra.clone())
                 .unwrap_or_default(),
         })
+    }
+}
+
+impl SmbRecord {
+    fn read(raw: &Table) -> Result<Self, toml::de::Error> {
+        let mut record: Self = toml::Value::Table(raw.clone()).try_into()?;
+        restore_exact_values(&mut record.extra, raw);
+        Ok(record)
+    }
+
+    /// A record of another protocol becoming this one: only its unknown keys go along.
+    fn keeping(extra: Table) -> Self {
+        Self {
+            id: Uuid::nil(),
+            name: String::new(),
+            protocol: ProtocolRecord::Smb,
+            server: String::new(),
+            share: String::new(),
+            sub_path: String::new(),
+            domain: String::new(),
+            username: String::new(),
+            auth: SmbAuthRecord::Windows,
+            remember: None,
+            drive_letter: default_drive(),
+            read_only: false,
+            mount_on_start: false,
+            auto_reconnect: true,
+            extra,
+        }
+    }
+
+    fn to_profile(&self) -> Result<Profile, String> {
+        let drive = parse_drive(&self.drive_letter).map_err(|problem| problem.to_string())?;
+        let auth = match self.auth {
+            SmbAuthRecord::Password => SmbAuth::Password {
+                remember: self.remember.unwrap_or(false),
+            },
+            SmbAuthRecord::Ask => SmbAuth::Ask,
+            SmbAuthRecord::Windows => SmbAuth::WindowsUser,
+        };
+        Ok(Profile {
+            id: self.id,
+            name: self.name.clone(),
+            protocol: Protocol::Smb(SmbProfile {
+                server: self.server.clone(),
+                share: self.share.clone(),
+                sub_path: self.sub_path.clone(),
+                domain: self.domain.clone(),
+                username: self.username.clone(),
+                auth,
+            }),
+            drive,
+            read_only: self.read_only,
+            mount_on_start: self.mount_on_start,
+            auto_reconnect: self.auto_reconnect,
+        })
+    }
+
+    fn from_profile(profile: &Profile, smb: &SmbProfile, previous: Option<&Self>) -> Self {
+        let mut remember = previous.and_then(|record| record.remember);
+        let auth = match smb.auth {
+            SmbAuth::Password { remember: chosen } => {
+                remember = Some(chosen);
+                SmbAuthRecord::Password
+            }
+            SmbAuth::Ask => SmbAuthRecord::Ask,
+            SmbAuth::WindowsUser => SmbAuthRecord::Windows,
+        };
+        Self {
+            id: profile.id,
+            name: profile.name.clone(),
+            protocol: ProtocolRecord::Smb,
+            server: smb.server.clone(),
+            share: smb.share.clone(),
+            sub_path: smb.sub_path.clone(),
+            domain: smb.domain.clone(),
+            username: smb.username.clone(),
+            auth,
+            remember,
+            drive_letter: drive_text(profile.drive),
+            read_only: profile.read_only,
+            mount_on_start: profile.mount_on_start,
+            auto_reconnect: profile.auto_reconnect,
+            extra: previous
+                .map(|record| record.extra.clone())
+                .unwrap_or_default(),
+        }
     }
 }
 

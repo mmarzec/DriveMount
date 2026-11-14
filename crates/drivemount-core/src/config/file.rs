@@ -171,6 +171,7 @@ fn read_settings(table: &mut Table, problems: &mut Vec<SettingProblem>) -> Setti
         notifications: reader.read("notifications", defaults.notifications),
         notification_sound: reader.read("notification_sound", defaults.notification_sound),
         log_level: reader.read("log_level", defaults.log_level),
+        show_other_drives: reader.read("show_other_drives", defaults.show_other_drives),
         op_timeout_secs: reader.read_in_range("op_timeout_secs", defaults.op_timeout_secs, 5..=120),
         winfsp_threads: reader.read_in_range("winfsp_threads", defaults.winfsp_threads, 0..=8),
     }

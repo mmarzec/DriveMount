@@ -8,7 +8,8 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::profile::{
-    DriveChoice, Field, JumpAuth, JumpHost, Problem, Protocol, SftpAuth, SftpProfile,
+    DriveChoice, Field, JumpAuth, JumpHost, Problem, Protocol, SftpAuth, SftpProfile, SmbAuth,
+    SmbProfile,
 };
 
 const ID_A: &str = "6f1c2c1e-4d0b-4c55-9a51-7d8a1c3b2e10";
@@ -26,6 +27,7 @@ letter_conflict    = "auto"       # auto | fail
 notifications      = true
 notification_sound = false
 log_level          = "info"       # error | warn | info | debug
+show_other_drives  = true         # FR-SET-09 (M3)
 op_timeout_secs    = 15           # not in UI, 5..=120
 winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
 
@@ -53,6 +55,27 @@ port     = 22
 username = "jump"
 auth     = "agent"                # agent | key | password
 key_path = ""
+"#;
+
+/// Spec §6.1's SMB example, whole.
+const SMB_EXAMPLE: &str = r#"
+schema_version = 1
+
+[[profiles]]
+id             = "11111111-2222-4333-8444-555555555555"
+name           = "NAS media"
+protocol       = "smb"
+server         = "nas"
+share          = "media"
+sub_path       = 'films\2024'
+domain         = "CORP"
+username       = "marcin"
+auth           = "password"       # password | ask | windows
+remember       = true
+drive_letter   = "M"
+read_only      = false
+mount_on_start = true
+auto_reconnect = true
 "#;
 
 /// A folder for one test, and the file in it.
@@ -113,13 +136,41 @@ fn a_profile(name: &str) -> Profile {
 }
 
 fn sftp(profile: &Profile) -> &SftpProfile {
-    let Protocol::Sftp(sftp) = &profile.protocol;
+    let Protocol::Sftp(sftp) = &profile.protocol else {
+        panic!("not SFTP");
+    };
     sftp
 }
 
 fn sftp_mut(profile: &mut Profile) -> &mut SftpProfile {
-    let Protocol::Sftp(sftp) = &mut profile.protocol;
+    let Protocol::Sftp(sftp) = &mut profile.protocol else {
+        panic!("not SFTP");
+    };
     sftp
+}
+
+fn a_share(name: &str) -> Profile {
+    let smb = SmbProfile::new(
+        "nas",
+        "media",
+        "marcin",
+        SmbAuth::Password { remember: true },
+    );
+    Profile::new(name, Protocol::Smb(smb))
+}
+
+fn smb(profile: &Profile) -> &SmbProfile {
+    let Protocol::Smb(smb) = &profile.protocol else {
+        panic!("not SMB");
+    };
+    smb
+}
+
+fn an_smb_entry(id: &str, name: &str, more: &str) -> String {
+    format!(
+        "[[profiles]]\nid = \"{id}\"\nname = \"{name}\"\nprotocol = \"smb\"\nserver = \"nas\"\n\
+         share = \"media\"\nauth = \"windows\"\n{more}\n"
+    )
 }
 
 fn a_profile_entry(id: &str, name: &str, more: &str) -> String {
@@ -303,6 +354,32 @@ fn any_jump() -> impl Strategy<Value = Option<JumpHost>> {
     ))
 }
 
+fn any_smb() -> impl Strategy<Value = SmbProfile> {
+    let auth = prop_oneof![
+        any::<bool>().prop_map(|remember| SmbAuth::Password { remember }),
+        Just(SmbAuth::Ask),
+        Just(SmbAuth::WindowsUser),
+    ];
+    (
+        any::<String>(),
+        any::<String>(),
+        any::<String>(),
+        any::<String>(),
+        any::<String>(),
+        auth,
+    )
+        .prop_map(
+            |(server, share, sub_path, domain, username, auth)| SmbProfile {
+                server,
+                share,
+                sub_path,
+                domain,
+                username,
+                auth,
+            },
+        )
+}
+
 fn any_profile() -> impl Strategy<Value = Profile> {
     let values = 0..=i64::MAX.cast_unsigned();
     let drive = prop_oneof![
@@ -323,7 +400,7 @@ fn any_profile() -> impl Strategy<Value = Profile> {
     )
         .prop_map(
             |(host, port, username, auth, remote_path, cache_ttl_secs, keepalive_secs, jump)| {
-                SftpProfile {
+                Protocol::Sftp(SftpProfile {
                     host,
                     port,
                     username,
@@ -332,21 +409,22 @@ fn any_profile() -> impl Strategy<Value = Profile> {
                     cache_ttl_secs,
                     keepalive_secs,
                     jump,
-                }
+                })
             },
         );
+    let protocol = prop_oneof![sftp, any_smb().prop_map(Protocol::Smb)];
     (
         any::<u128>(),
         any::<String>(),
-        sftp,
+        protocol,
         drive,
         any::<[bool; 3]>(),
     )
         .prop_map(
-            |(id, name, sftp, drive, [read_only, mount_on_start, auto_reconnect])| Profile {
+            |(id, name, protocol, drive, [read_only, mount_on_start, auto_reconnect])| Profile {
                 id: Uuid::from_u128(id),
                 name,
-                protocol: Protocol::Sftp(sftp),
+                protocol,
                 drive,
                 read_only,
                 mount_on_start,
@@ -381,6 +459,7 @@ fn settings_come_back() {
         notifications: false,
         notification_sound: true,
         log_level: LogLevel::Debug,
+        show_other_drives: false,
         op_timeout_secs: 120,
         winfsp_threads: 8,
     };
@@ -704,15 +783,15 @@ fn a_profile_that_does_not_fit_leaves_the_rest_usable_and_is_written_back_as_it_
 
 #[test]
 fn entries_of_a_later_milestone_or_with_parts_missing_are_kept() {
-    let smb = "[[profiles]]\nid = \"11111111-2222-4333-8444-555555555555\"\nname = \"Nas\"\n\
-               protocol = \"smb\"\nserver = \"nas\"\nshare = \"media\"\n"
+    let nfs = "[[profiles]]\nid = \"11111111-2222-4333-8444-555555555555\"\nname = \"Nas\"\n\
+               protocol = \"nfs\"\nserver = \"nas\"\nexport = \"/volume1/data\"\n"
         .to_owned();
     let unknown_login = a_profile_entry(ID_A, "Agent", "").replace("agent", "fido");
     let no_id = "[[profiles]]\nname = \"No id\"\n".to_owned();
     let bad_id = "[[profiles]]\nid = \"not-a-uuid\"\n".to_owned();
     let nothing = "[[profiles]]\n".to_owned();
 
-    let folder = Folder::with(a_file(&[smb, unknown_login, no_id, bad_id, nothing]));
+    let folder = Folder::with(a_file(&[nfs, unknown_login, no_id, bad_id, nothing]));
     let mut store = folder.open();
 
     assert_eq!(store.read_only(), None);
@@ -727,7 +806,269 @@ fn entries_of_a_later_milestone_or_with_parts_missing_are_kept() {
     save_with(&mut store, |config| config.settings.notifications = false);
     let entries = profile_tables(&folder.table());
     assert_eq!(entries.len(), 5);
-    assert_eq!(entries[0]["share"].as_str(), Some("media"));
+    assert_eq!(entries[0]["export"].as_str(), Some("/volume1/data"));
+}
+
+// SMB profiles (M3-03)
+
+#[test]
+fn the_smb_example_reads_as_it_says() {
+    let store = Folder::with(SMB_EXAMPLE).open();
+
+    assert_eq!(store.read_only(), None);
+    assert!(store.config().unreadable.is_empty());
+    assert!(store.config().invalid_profiles().is_empty());
+    let profile = &store.config().profiles[0];
+    assert_eq!(profile.id, Uuid::parse_str(ID_B).unwrap());
+    assert_eq!(profile.name, "NAS media");
+    assert_eq!(
+        profile.drive,
+        DriveChoice::Letter(DriveLetter::new('M').unwrap())
+    );
+    assert!(profile.mount_on_start);
+    assert_eq!(
+        smb(profile),
+        &SmbProfile {
+            server: "nas".to_owned(),
+            share: "media".to_owned(),
+            sub_path: r"films\2024".to_owned(),
+            domain: "CORP".to_owned(),
+            username: "marcin".to_owned(),
+            auth: SmbAuth::Password { remember: true },
+        }
+    );
+}
+
+#[test]
+fn saving_the_smb_example_keeps_every_value() {
+    let folder = Folder::with(SMB_EXAMPLE);
+    let before: Table = SMB_EXAMPLE.parse().unwrap();
+    let mut store = folder.open();
+    let config = store.config().clone();
+
+    save_with(&mut store, |config| config.settings.notifications = false);
+    store.save(&config).unwrap();
+
+    assert_eq!(profile_tables(&folder.table()), profile_tables(&before));
+}
+
+#[test]
+fn an_smb_profile_is_written_with_the_keys_in_the_order_of_the_spec() {
+    let folder = Folder::new();
+    let mut store = folder.open();
+    save_with(&mut store, |config| config.profiles.push(a_share("Media")));
+
+    let text = folder.text();
+    let keys: Vec<&str> = text
+        .split("[[profiles]]")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once(" = ").map(|(key, _)| key))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "id",
+            "name",
+            "protocol",
+            "server",
+            "share",
+            "sub_path",
+            "domain",
+            "username",
+            "auth",
+            "remember",
+            "drive_letter",
+            "read_only",
+            "mount_on_start",
+            "auto_reconnect",
+        ]
+    );
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["protocol"].as_str(), Some("smb"));
+    assert_eq!(entry["auth"].as_str(), Some("password"));
+}
+
+#[test]
+fn an_smb_profile_needs_only_its_server_share_and_login_method() {
+    let folder = Folder::with(a_file(&[an_smb_entry(ID_A, "Bare", "")]));
+    let store = folder.open();
+
+    assert!(store.config().unreadable.is_empty());
+    let profile = &store.config().profiles[0];
+    assert_eq!(profile.drive, DriveChoice::Auto);
+    assert!(!profile.read_only);
+    assert!(!profile.mount_on_start);
+    assert!(profile.auto_reconnect);
+    assert_eq!(
+        smb(profile),
+        &SmbProfile::new("nas", "media", "", SmbAuth::WindowsUser)
+    );
+    assert!(store.config().invalid_profiles().is_empty());
+}
+
+#[test]
+fn each_smb_login_comes_back() {
+    for (text, auth) in [
+        (
+            "auth = \"password\"\nremember = true",
+            SmbAuth::Password { remember: true },
+        ),
+        (
+            "auth = \"password\"\nremember = false",
+            SmbAuth::Password { remember: false },
+        ),
+        ("auth = \"password\"", SmbAuth::Password { remember: false }),
+        ("auth = \"ask\"", SmbAuth::Ask),
+        ("auth = \"windows\"", SmbAuth::WindowsUser),
+    ] {
+        let entry = an_smb_entry(ID_A, "S", "username = \"u\"").replace("auth = \"windows\"", text);
+        let store = Folder::with(a_file(&[entry])).open();
+        assert_eq!(smb(&store.config().profiles[0]).auth, auth, "{text}");
+    }
+}
+
+#[test]
+fn an_smb_entry_the_model_cannot_hold_is_kept_as_it_was() {
+    let cases = [
+        an_smb_entry(ID_A, "No share", "").replace("share = \"media\"\n", ""),
+        an_smb_entry(ID_A, "No server", "").replace("server = \"nas\"\n", ""),
+        an_smb_entry(ID_A, "No auth", "").replace("auth = \"windows\"\n", ""),
+        an_smb_entry(ID_A, "Key", "").replace("\"windows\"", "\"key\""),
+        an_smb_entry(ID_A, "Agent", "").replace("\"windows\"", "\"agent\""),
+        an_smb_entry(ID_A, "Letter", "drive_letter = \"B\""),
+        an_smb_entry(ID_A, "Number", "share = 7").replace("share = \"media\"\n", ""),
+    ];
+    for entry in cases {
+        let folder = Folder::with(a_file(std::slice::from_ref(&entry)));
+        let mut store = folder.open();
+        assert!(store.config().profiles.is_empty(), "{entry}");
+        assert_eq!(store.config().unreadable.len(), 1, "{entry}");
+
+        let before = profile_tables(&entry.parse().unwrap());
+        save_with(&mut store, |config| config.settings.notifications = false);
+        assert_eq!(profile_tables(&folder.table()), before, "{entry}");
+    }
+}
+
+#[test]
+fn an_smb_profile_keeps_its_unknown_keys_and_remember_for_another_method() {
+    let entry = an_smb_entry(ID_A, "S", "remember = true\nfuture = \"x\"");
+    let folder = Folder::with(a_file(&[entry]));
+    let mut store = folder.open();
+    assert_eq!(smb(&store.config().profiles[0]).auth, SmbAuth::WindowsUser);
+
+    save_with(&mut store, |config| {
+        config.profiles[0].name = "Renamed".to_owned()
+    });
+
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["remember"].as_bool(), Some(true));
+    assert_eq!(entry["future"].as_str(), Some("x"));
+    assert_eq!(entry["name"].as_str(), Some("Renamed"));
+}
+
+#[test]
+fn a_profile_that_changes_protocol_keeps_only_its_unknown_keys() {
+    let entry = a_profile_entry(
+        ID_A,
+        "Was SFTP",
+        "key_path = 'C:\\k'\nremember = true\nfuture = 1\n[profiles.jump]\nhost = \"j\"\nauth = \"agent\"",
+    );
+    let folder = Folder::with(a_file(&[entry]));
+    let mut store = folder.open();
+
+    save_with(&mut store, |config| {
+        config.profiles[0].protocol = a_share("x").protocol;
+    });
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["protocol"].as_str(), Some("smb"));
+    assert_eq!(entry["future"].as_integer(), Some(1));
+    assert_eq!(entry["remember"].as_bool(), Some(true));
+    for gone in [
+        "host",
+        "port",
+        "key_path",
+        "jump",
+        "remote_path",
+        "cache_ttl_secs",
+    ] {
+        assert!(!entry.contains_key(gone), "{gone}");
+    }
+
+    save_with(&mut store, |config| {
+        config.profiles[0].protocol = a_profile("x").protocol;
+    });
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["protocol"].as_str(), Some("sftp"));
+    assert_eq!(entry["future"].as_integer(), Some(1));
+    for gone in ["server", "share", "sub_path", "domain"] {
+        assert!(!entry.contains_key(gone), "{gone}");
+    }
+    assert_eq!(
+        sftp(&folder.open().config().profiles[0]).auth,
+        SftpAuth::Agent
+    );
+}
+
+#[test]
+fn an_smb_profile_that_breaks_a_rule_is_loaded_and_marked() {
+    let entry = an_smb_entry(ID_A, "S", "sub_path = 'a\\..\\b'")
+        .replace("\"windows\"", "\"password\"")
+        .replace("server = \"nas\"", "server = \"::1\"");
+    let store = Folder::with(a_file(&[entry])).open();
+
+    let invalid = store.config().invalid_profiles();
+    let [(_, errors)] = invalid.as_slice() else {
+        panic!("{invalid:?}");
+    };
+    let marked: Vec<_> = errors
+        .iter()
+        .map(|error| (error.field, error.problem))
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            (Field::Server, Problem::ServerIpv6),
+            (Field::SubPath, Problem::SubPathInvalid),
+            (Field::User, Problem::UserRequired),
+        ]
+    );
+}
+
+#[test]
+fn other_network_drives_are_shown_unless_turned_off() {
+    let store = Folder::new().open();
+    assert!(store.config().settings.show_other_drives);
+
+    let folder = Folder::with("schema_version = 1\n[settings]\nshow_other_drives = false\n");
+    let mut store = folder.open();
+    assert!(!store.config().settings.show_other_drives);
+    assert!(store.setting_problems().is_empty());
+
+    save_with(&mut store, |config| config.settings.notifications = false);
+    assert_eq!(
+        folder.table()["settings"]["show_other_drives"].as_bool(),
+        Some(false)
+    );
+}
+
+/// The key is new in M3 and changes no existing one, so the version stays (spec §6.1).
+#[test]
+fn a_file_from_before_m3_reads_without_a_migration_and_gains_the_key() {
+    let folder = Folder::with(a_file(&[a_profile_entry(ID_A, "Old", "")]));
+    let mut store = folder.open();
+    assert_eq!(store.read_only(), None);
+    assert!(store.setting_problems().is_empty());
+
+    save_with(&mut store, |config| config.settings.notifications = false);
+    assert!(folder.text().starts_with("schema_version = 1\n"));
+    assert_eq!(
+        folder.table()["settings"]["show_other_drives"].as_bool(),
+        Some(true)
+    );
+    assert!(!folder.names().iter().any(|name| name.contains(".v1.")));
 }
 
 #[test]
@@ -842,6 +1183,7 @@ fn a_bad_setting_gets_its_default_and_the_file_stays_usable() {
         ("op_timeout_secs", "\"long\""),
         ("winfsp_threads", "9"),
         ("winfsp_threads", "-1"),
+        ("show_other_drives", "\"on\""),
     ];
     for (key, value) in cases {
         let what = format!("{key} = {value}");
