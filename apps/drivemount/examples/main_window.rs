@@ -33,7 +33,7 @@ mod preview {
     use std::rc::Rc;
     use std::time::Duration;
 
-    use drivemount_app::ui::{MainUi, UiCommand};
+    use drivemount_app::ui::{MainUi, TakeOverRefused, UiCommand};
     use drivemount_core::config::{Config, ConfigStore, Theme};
     use drivemount_core::manager::{MountDetail, MountEvent, MountState};
     use drivemount_smb::{DriveStatus, OtherDrive};
@@ -234,6 +234,8 @@ drive_letter = "M"
                 provider: provider.to_owned(),
                 status,
                 user: user.map(str::to_owned),
+                smb: provider == "Microsoft Windows Network",
+                remembered: false,
             })
         };
         let drives = [
@@ -308,6 +310,17 @@ drive_letter = "M"
             UiCommand::Save { profile, .. } => {
                 let mut config = config.borrow_mut();
                 config.profiles.retain(|saved| saved.id != profile.id);
+                config.profiles.push(*profile);
+                ui.set_config(config.clone());
+                ui.save_finished(Ok(()));
+            }
+            // Taking over a made-up drive pretends files are open on it, until the user says
+            // remove it anyway (FR-SMB-10).
+            UiCommand::TakeOver { force: false, .. } => {
+                ui.take_over_refused(&TakeOverRefused::FilesOpen);
+            }
+            UiCommand::TakeOver { profile, .. } => {
+                let mut config = config.borrow_mut();
                 config.profiles.push(*profile);
                 ui.set_config(config.clone());
                 ui.save_finished(Ok(()));

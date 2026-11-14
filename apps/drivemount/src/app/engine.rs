@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 
 use drivemount_core::config::Settings;
-use drivemount_core::manager::{MountEvent, MountManager, MountRefused};
+use drivemount_core::manager::{MountEvent, MountManager, MountRefused, ProfileChangeError};
 use drivemount_vfs::DriveLetter;
 use drivemount_win::drives::is_letter_free;
 use drivemount_win::shell;
@@ -21,9 +21,12 @@ use tokio::sync::broadcast::{self, error::RecvError};
 use tokio::sync::mpsc;
 use tokio::task::AbortHandle;
 use tracing::{debug, info, warn};
+use uuid::Uuid;
 
 use crate::logging::LogLevelControl;
-use crate::ui::{ActionFailure, MainUi, TypedSecrets, UiCommand, WINFSP_DOWNLOAD_URL};
+use crate::ui::{
+    ActionFailure, MainUi, TakeOverRefused, TypedSecrets, UiCommand, WINFSP_DOWNLOAD_URL,
+};
 
 /// Something for the UI thread to do.
 pub(super) type UiAction = Box<dyn FnOnce(&MainUi) + Send>;
@@ -43,7 +46,14 @@ pub(super) trait StartWithWindows: Send + Sync {
     fn set(&self, on: bool) -> io::Result<()>;
 }
 
-/// What the settings page reaches beyond the file (FR-SET).
+/// Removes a drive mapped outside DriveMount for a profile to take its place (FR-SMB-10):
+/// `drivemount_smb::release_other_drive` in the app, something that records it in tests.
+pub(super) trait ReleaseDrive: Send + Sync {
+    /// Removes the drive on `letter` if it still maps `unc`. Blocks.
+    fn release(&self, letter: DriveLetter, unc: &str, force: bool) -> Result<(), TakeOverRefused>;
+}
+
+/// What the settings page reaches beyond the file (FR-SET), and Windows' other drives.
 pub(super) struct Surroundings {
     /// The log, whose level changes with the setting.
     pub log_level: LogLevelControl,
@@ -53,6 +63,8 @@ pub(super) struct Surroundings {
     pub logs: Option<PathBuf>,
     /// `THIRD-PARTY-LICENSES.html`, beside the exe.
     pub licences: Option<PathBuf>,
+    /// What removes a drive mapped outside DriveMount (FR-SMB-10).
+    pub release_drive: Arc<dyn ReleaseDrive>,
 }
 
 /// Starts following commands from `inbox` and events from `manager`. Both go on until the runtime
@@ -82,6 +94,7 @@ pub(super) fn start(
         settings,
         logs: surroundings.logs,
         licences: surroundings.licences,
+        release_drive: surroundings.release_drive,
     };
     // After subscribing, so the rows follow these mounts too (FR-MNT-08).
     let starting = engine.manager.clone();
@@ -216,6 +229,21 @@ struct Engine {
     settings: mpsc::UnboundedSender<Settings>,
     logs: Option<PathBuf>,
     licences: Option<PathBuf>,
+    release_drive: Arc<dyn ReleaseDrive>,
+}
+
+/// Mounts a profile, and says so if it did not start.
+async fn mount(manager: &MountManager, to_ui: &ToUi, id: Uuid) {
+    match manager.mount(id).await {
+        Ok(()) => show_failure(to_ui, None),
+        // A second press before the row caught up. It is doing what was asked.
+        Err(MountRefused::Busy) => debug!(%id, "already in use"),
+        Err(error) => {
+            warn!(%id, %error, "a mount did not start");
+            let failure = ActionFailure::Mount(error.to_string());
+            show_failure(to_ui, Some(failure));
+        }
+    }
 }
 
 impl Engine {
@@ -312,16 +340,43 @@ impl Engine {
                 });
             }
             UiCommand::Mount(id) => {
+                tokio::spawn(async move { mount(&manager, &to_ui, id).await });
+            }
+            // FR-SMB-10: the drive goes first, so that a refusal saves nothing; then the profile is
+            // saved as Save would, and mounted on the letter the drive left.
+            UiCommand::TakeOver {
+                letter,
+                unc,
+                force,
+                profile,
+                secrets,
+            } => {
+                let TypedSecrets(secrets) = secrets;
+                let release = Arc::clone(&self.release_drive);
                 tokio::spawn(async move {
-                    match manager.mount(id).await {
-                        Ok(()) => show_failure(&to_ui, None),
-                        // A second press before the row caught up. It is doing what was asked.
-                        Err(MountRefused::Busy) => debug!(%id, "already in use"),
-                        Err(error) => {
-                            warn!(%id, %error, "a mount did not start");
-                            let failure = ActionFailure::Mount(error.to_string());
-                            show_failure(&to_ui, Some(failure));
-                        }
+                    let released =
+                        tokio::task::spawn_blocking(move || release.release(letter, &unc, force))
+                            .await
+                            .unwrap_or_else(|error| {
+                                Err(TakeOverRefused::Failed(error.to_string()))
+                            });
+                    if let Err(refused) = released {
+                        info!(%letter, ?refused, "a drive mapped outside DriveMount was not removed");
+                        to_ui(Box::new(move |ui| ui.take_over_refused(&refused)));
+                        return;
+                    }
+                    let id = profile.id;
+                    let saved = manager.save(*profile, secrets).await;
+                    if let Err(error) = &saved {
+                        warn!(%id, %error, "a save did not finish");
+                    }
+                    // Saved without its password is still in the file, and mounting asks for it.
+                    let in_the_file =
+                        matches!(saved, Ok(()) | Err(ProfileChangeError::StoringSecret(_)));
+                    show_config(&manager, &to_ui).await;
+                    to_ui(Box::new(move |ui| ui.save_finished(saved)));
+                    if in_the_file {
+                        mount(&manager, &to_ui, id).await;
                     }
                 });
             }

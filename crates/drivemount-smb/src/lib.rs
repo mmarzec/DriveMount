@@ -4,7 +4,8 @@
 //!
 //! [`SmbBackend`] maps a share on a drive letter through the WNet API and follows its health; Windows'
 //! own SMB client does the reconnecting. [`other_drives`] lists the network drives DriveMount did not
-//! make (FR-SMB-09).
+//! make (FR-SMB-09), and [`release_other_drive`] removes one for a profile to take its place
+//! (FR-SMB-10).
 //!
 //! The Win32 calls themselves are in `drivemount_win::wnet`, as this crate has no `unsafe`.
 //!
@@ -20,4 +21,4 @@ mod errors;
 mod other;
 
 pub use backend::{SmbAuth, SmbBackend, SmbTarget};
-pub use other::{DriveStatus, OtherDrive, other_drives};
+pub use other::{DriveStatus, OtherDrive, ReleaseError, other_drives, release_other_drive};

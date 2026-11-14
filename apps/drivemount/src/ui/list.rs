@@ -55,6 +55,10 @@ pub(super) struct ExternalDrive {
     pub status: ExternalStatus,
     /// For an SMB drive, the user it was made as.
     pub user: Option<String>,
+    /// Whether it is an SMB drive, which a profile can take over (FR-SMB-10).
+    pub smb: bool,
+    /// Whether Windows maps it again at each sign-in.
+    pub remembered: bool,
 }
 
 /// What a row's button does.
@@ -1066,6 +1070,8 @@ mod tests {
             provider: "Microsoft Windows Network".to_owned(),
             status: ExternalStatus::Mapped,
             user: None,
+            smb: true,
+            remembered: false,
         }
     }
 

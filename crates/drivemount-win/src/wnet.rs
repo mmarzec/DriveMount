@@ -17,10 +17,10 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::NetworkManagement::NetManagement::{NetApiBufferFree, NetUseEnum, USE_INFO_2};
 use windows::Win32::NetworkManagement::WNet::{
-    CONNECT_TEMPORARY, NET_CONNECT_FLAGS, NET_RESOURCE_SCOPE, NETRESOURCEW, RESOURCE_CONNECTED,
-    RESOURCE_REMEMBERED, RESOURCETYPE_DISK, WNET_OPEN_ENUM_USAGE, WNetAddConnection2W,
-    WNetCancelConnection2W, WNetCloseEnum, WNetEnumResourceW, WNetGetLastErrorW,
-    WNetGetProviderNameW, WNetOpenEnumW,
+    CONNECT_TEMPORARY, CONNECT_UPDATE_PROFILE, NET_CONNECT_FLAGS, NET_RESOURCE_SCOPE, NETRESOURCEW,
+    RESOURCE_CONNECTED, RESOURCE_REMEMBERED, RESOURCETYPE_DISK, WNET_OPEN_ENUM_USAGE,
+    WNetAddConnection2W, WNetCancelConnection2W, WNetCloseEnum, WNetEnumResourceW,
+    WNetGetLastErrorW, WNetGetProviderNameW, WNetOpenEnumW,
 };
 use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
 use windows::core::{PCWSTR, PWSTR};
@@ -201,7 +201,19 @@ pub fn add_connection(
 /// # Errors
 /// What Windows answered: 2250 `ERROR_NOT_CONNECTED` if there is no mapping.
 pub fn cancel_connection(letter: DriveLetter, force: bool) -> Result<(), WNetError> {
-    cancel(&letter.to_string(), force)
+    cancel(&letter.to_string(), NET_CONNECT_FLAGS(0), force)
+}
+
+/// Removes the mapping on `letter` and Windows' memory of it (`CONNECT_UPDATE_PROFILE`), so that it
+/// does not come back at the next sign-in: for a drive another program mapped, which DriveMount takes
+/// over (FR-SMB-10). A remembered drive that is not connected is only forgotten. Open files behave as
+/// for [`cancel_connection`].
+///
+/// # Errors
+/// What Windows answered: 2401 `ERROR_OPEN_FILES` without `force` while files are open, 2250
+/// `ERROR_NOT_CONNECTED` if there is no such drive, connected or remembered.
+pub fn forget_connection(letter: DriveLetter, force: bool) -> Result<(), WNetError> {
+    cancel(&letter.to_string(), CONNECT_UPDATE_PROFILE, force)
 }
 
 /// Removes the connection without a drive to `unc` that [`add_connection`] made with no letter.
@@ -209,14 +221,13 @@ pub fn cancel_connection(letter: DriveLetter, force: bool) -> Result<(), WNetErr
 /// # Errors
 /// What Windows answered: 2250 `ERROR_NOT_CONNECTED` if there is none.
 pub fn cancel_connection_to(unc: &str, force: bool) -> Result<(), WNetError> {
-    cancel(unc, force)
+    cancel(unc, NET_CONNECT_FLAGS(0), force)
 }
 
-fn cancel(name: &str, force: bool) -> Result<(), WNetError> {
+fn cancel(name: &str, flags: NET_CONNECT_FLAGS, force: bool) -> Result<(), WNetError> {
     let name = wide(name);
     // SAFETY: `name` is nul-terminated and outlives the call.
-    let status =
-        unsafe { WNetCancelConnection2W(PCWSTR(name.as_ptr()), NET_CONNECT_FLAGS(0), force) };
+    let status = unsafe { WNetCancelConnection2W(PCWSTR(name.as_ptr()), flags, force) };
     if status == NO_ERROR {
         Ok(())
     } else {
@@ -429,6 +440,13 @@ mod tests {
     fn removing_a_letter_with_no_mapping_is_not_connected() {
         let _letters = lock_letters();
         let error = cancel_connection(free_letter(), false).unwrap_err();
+        assert_eq!(error.code, 2250, "{error}");
+    }
+
+    #[test]
+    fn forgetting_a_letter_with_no_mapping_is_not_connected() {
+        let _letters = lock_letters();
+        let error = forget_connection(free_letter(), false).unwrap_err();
         assert_eq!(error.code, 2250, "{error}");
     }
 

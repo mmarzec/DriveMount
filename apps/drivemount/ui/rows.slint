@@ -27,6 +27,8 @@ export struct ListEntry {
     can-open: bool,
     can-edit: bool,
     can-delete: bool,
+    // An external SMB drive a profile can take the place of (FR-SMB-10).
+    can-take-over: bool,
 }
 
 // What each state is called, and what its button says.
@@ -95,6 +97,7 @@ export component ProfileRow {
     callback edit();
     callback delete();
     callback copy-path();
+    callback take-over();
     callback hover-changed(hovering: bool);
 
     property <bool> external: root.entry.kind == EntryKind.external;
@@ -114,10 +117,120 @@ export component ProfileRow {
         root.pressed();
     }
 
-    menu := ContextMenuArea {
+    Rectangle {
+        border-radius: Theme.radius;
+        background: root.selected ? Theme.selected
+            : touch.has-hover ? Theme.hover
+            : transparent;
+    }
+
+    touch := TouchArea {
         enabled: root.interactive;
+        mouse-cursor: pointer;
+        clicked => {
+            root.pressed();
+        }
+        changed has-hover => {
+            root.hover-changed(self.has-hover);
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 8px;
+        spacing: 12px;
+
+        // The whole row is dimmed for an external drive, but its letter (spec 7.1).
+        VerticalLayout {
+            alignment: center;
+            opacity: root.external ? 0.6 : 1;
+
+            StatusIcon {
+                status: root.entry.status;
+                kind: root.entry.kind;
+            }
+        }
+
+        Text {
+            text: root.entry.name;
+            preferred-width: 0;
+            horizontal-stretch: 1;
+            overflow: elide;
+            vertical-alignment: center;
+            color: root.external ? Theme.text-muted : Theme.text;
+            accessible-role: none;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            width: 96px;
+
+            if root.external: HorizontalLayout {
+                alignment: center;
+
+                Rectangle {
+                    border-radius: 4px;
+                    background: Theme.hover;
+                    width: tag.preferred-width + 12px;
+                    height: tag.preferred-height + 4px;
+
+                    tag := Text {
+                        text: @tr("External");
+                        font-size: Theme.small-size;
+                        color: Theme.text-muted;
+                        accessible-role: none;
+                    }
+                }
+            }
+
+            if root.entry.primary != PrimaryAction.none: AppButton {
+                text: root.primary-text;
+                primary: root.entry.primary == PrimaryAction.retry;
+                enabled: root.interactive && root.entry.primary-enabled;
+                accessible-label: root.primary-text + " " + root.entry.name;
+                clicked => {
+                    root.primary();
+                }
+            }
+        }
+
+        // The letter it is on, else the one it asks for, dimmed while not on it; Auto when it
+        // asks for none.
+        Text {
+            text: root.entry.letter != "" ? root.entry.letter
+                : root.entry.kind == EntryKind.profile ? @tr("Auto")
+                : "";
+            width: 36px;
+            vertical-alignment: center;
+            horizontal-alignment: right;
+            font-weight: 600;
+            color: root.entry.letter-is-live ? Theme.text : Theme.text-muted;
+            accessible-role: none;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            width: 16px;
+
+            Icon {
+                source: Icons.chevron-right;
+                size: 16px;
+                colour: Theme.text-muted;
+                opacity: touch.has-hover || root.selected ? 1 : 0;
+            }
+        }
+    }
+
+    // Last, so that it is on top and sees a right-click before the TouchArea, which would take
+    // it: an item that grabs the mouse for any button keeps it from the items under it. With no
+    // children it lets every other event through, as LineEdit's does.
+    menu := ContextMenuArea {
+        width: 100%;
+        height: 100%;
+        enabled: root.interactive;
+
         Menu {
-            if !root.external: MenuItem {
+            MenuItem {
                 title: @tr("Details");
                 activated => {
                     root.pressed();
@@ -136,6 +249,13 @@ export component ProfileRow {
                     root.copy-path();
                 }
             }
+            // FR-SMB-10: the one thing DriveMount does to such a drive, when asked.
+            if root.external && root.entry.can-take-over: MenuItem {
+                title: @tr("Manage with DriveMount…");
+                activated => {
+                    root.take-over();
+                }
+            }
             if !root.external: MenuItem {
                 title: @tr("Edit…");
                 enabled: root.entry.can-edit;
@@ -148,111 +268,6 @@ export component ProfileRow {
                 enabled: root.entry.can-delete;
                 activated => {
                     root.delete();
-                }
-            }
-        }
-
-        Rectangle {
-            border-radius: Theme.radius;
-            background: root.selected ? Theme.selected
-                : touch.has-hover ? Theme.hover
-                : transparent;
-        }
-
-        touch := TouchArea {
-            enabled: root.interactive;
-            mouse-cursor: pointer;
-            clicked => {
-                root.pressed();
-            }
-            changed has-hover => {
-                root.hover-changed(self.has-hover);
-            }
-        }
-
-        HorizontalLayout {
-            padding-left: 12px;
-            padding-right: 8px;
-            spacing: 12px;
-
-            // The whole row is dimmed for an external drive, but its letter (spec 7.1).
-            VerticalLayout {
-                alignment: center;
-                opacity: root.external ? 0.6 : 1;
-
-                StatusIcon {
-                    status: root.entry.status;
-                    kind: root.entry.kind;
-                }
-            }
-
-            Text {
-                text: root.entry.name;
-                preferred-width: 0;
-                horizontal-stretch: 1;
-                overflow: elide;
-                vertical-alignment: center;
-                color: root.external ? Theme.text-muted : Theme.text;
-                accessible-role: none;
-            }
-
-            VerticalLayout {
-                alignment: center;
-                width: 96px;
-
-                if root.external: HorizontalLayout {
-                    alignment: center;
-
-                    Rectangle {
-                        border-radius: 4px;
-                        background: Theme.hover;
-                        width: tag.preferred-width + 12px;
-                        height: tag.preferred-height + 4px;
-
-                        tag := Text {
-                            text: @tr("External");
-                            font-size: Theme.small-size;
-                            color: Theme.text-muted;
-                            accessible-role: none;
-                        }
-                    }
-                }
-
-                if root.entry.primary != PrimaryAction.none: AppButton {
-                    text: root.primary-text;
-                    primary: root.entry.primary == PrimaryAction.retry;
-                    enabled: root.interactive && root.entry.primary-enabled;
-                    accessible-label: root.primary-text + " " + root.entry.name;
-                    clicked => {
-                        root.primary();
-                    }
-                }
-            }
-
-            // The letter it is on, else the one it asks for, dimmed while not on it; Auto when it
-            // asks for none.
-            Text {
-                text: root.entry.letter != "" ? root.entry.letter
-                    : root.entry.kind == EntryKind.profile ? @tr("Auto")
-                    : "";
-                width: 36px;
-                vertical-alignment: center;
-                horizontal-alignment: right;
-                font-weight: 600;
-                color: root.entry.letter-is-live ? Theme.text : Theme.text-muted;
-                accessible-role: none;
-            }
-
-            VerticalLayout {
-                alignment: center;
-                width: 16px;
-
-                // An external drive has no page to go to.
-                Icon {
-                    source: Icons.chevron-right;
-                    size: 16px;
-                    colour: Theme.text-muted;
-                    opacity: !root.external && (touch.has-hover || root.selected) ? 1 : 0;
                 }
             }
         }

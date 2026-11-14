@@ -23,6 +23,8 @@ fn other(on: char, unc: &str) -> OtherDrive {
         provider: "Microsoft Windows Network".to_owned(),
         status: DriveStatus::Mapped,
         user: Some(r"CORP\anna".to_owned()),
+        smb: true,
+        remembered: true,
     }
 }
 
@@ -80,14 +82,14 @@ fn another_programs_drive_is_an_external_row_with_no_button() {
     );
 }
 
-/// Spec §7.1: Enter, Space, Ctrl+E and Del do nothing on it; Ctrl+Enter opens it.
+/// Spec §7.1: Enter, Ctrl+E and Del do nothing on it; Space opens its page; Ctrl+Enter opens it in
+/// Explorer.
 #[test]
-fn an_external_row_only_opens_in_explorer() {
+fn an_external_row_has_a_page_and_opens_in_explorer() {
     let fixture = Fixture::new(Vec::new());
     listing(&fixture, vec![other('W', r"\\nas\photos")]);
     fixture.key(Key::DownArrow);
     fixture.key(Key::Return);
-    fixture.key(" ");
     fixture.ctrl("e");
     fixture.key(Key::Delete);
     assert!(!fixture.ui.window().get_page_open());
@@ -100,6 +102,87 @@ fn an_external_row_only_opens_in_explorer() {
         fixture.take_sent(),
         [UiCommand::OpenInExplorer(letter('W'), String::new())]
     );
+
+    fixture.key(" ");
+    assert!(fixture.ui.window().get_page_open());
+}
+
+/// FR-SMB-09, FR-SMB-10: a click opens the drive's page, with what Windows says of it and its
+/// buttons.
+#[test]
+fn an_external_drives_page_shows_what_windows_says_and_can_take_it_over() {
+    let fixture = Fixture::new(Vec::new());
+    listing(&fixture, vec![other('W', r"\\nas\photos")]);
+    fixture.click_at(&fixture.row(r"\\nas\photos"), 1);
+    let window = fixture.ui.window();
+    assert!(window.get_page_open());
+    let view = window.get_page_view();
+    assert_eq!(view.kind, EntryKind::External);
+    assert_eq!(view.unc, r"\\nas\photos");
+    assert_eq!(view.drive, "W:");
+    assert_eq!(view.windows_status, "Mapped");
+    assert_eq!(view.provider, "Microsoft Windows Network");
+    assert_eq!(view.user, r"CORP\anna");
+    assert!(view.remembered);
+    assert!(view.can_take_over);
+
+    fixture.press("Copy path");
+    assert_eq!(
+        fixture.take_sent(),
+        [UiCommand::CopyText(r"\\nas\photos".to_owned())]
+    );
+    fixture.press("Open in Explorer");
+    assert_eq!(
+        fixture.take_sent(),
+        [UiCommand::OpenInExplorer(letter('W'), String::new())]
+    );
+
+    fixture.press("Manage with DriveMount…");
+    assert!(window.get_dialog_open());
+    assert_eq!(fixture.take_sent(), [UiCommand::FindFreeLetters]);
+}
+
+/// Once the take-over is saved, the page shows the profile that took the drive's place.
+#[test]
+fn after_a_take_over_the_page_shows_the_new_profile() {
+    let fixture = Fixture::new(Vec::new());
+    let listed = listing(&fixture, vec![other('W', r"\\nas\photos")]);
+    fixture.click_at(&fixture.row(r"\\nas\photos"), 1);
+    fixture.press("Manage with DriveMount…");
+    fixture.take_sent();
+    fixture.ui.inner.save_taking_over(false);
+    let mut sent = fixture.take_sent();
+    let Some(UiCommand::TakeOver { profile, .. }) = sent.pop() else {
+        panic!("{sent:?}");
+    };
+    listed.borrow_mut().clear();
+    fixture.ui.set_config(Config {
+        profiles: vec![*profile],
+        ..Config::default()
+    });
+    fixture.ui.save_finished(Ok(()));
+
+    let window = fixture.ui.window();
+    assert!(!window.get_dialog_open());
+    assert!(window.get_page_open());
+    assert_eq!(window.get_page_view().kind, EntryKind::Profile);
+    assert_eq!(window.get_page_view().name, "photos");
+    assert_eq!(kinds_and_names(&fixture).len(), 1, "the external row went");
+}
+
+/// WSL's and other providers' drives have a page, but nothing to take over.
+#[test]
+fn a_drive_of_another_provider_cannot_be_taken_over_from_its_page() {
+    let fixture = Fixture::new(Vec::new());
+    let mut wsl = other('Y', r"\\wsl$\Ubuntu");
+    wsl.provider = "Plan 9 Network Provider".to_owned();
+    wsl.smb = false;
+    wsl.user = None;
+    listing(&fixture, vec![wsl]);
+    fixture.click_at(&fixture.row(r"\\wsl$\Ubuntu"), 1);
+    assert!(fixture.ui.window().get_page_open());
+    assert!(!fixture.ui.window().get_page_view().can_take_over);
+    assert!(fixture.labelled("Manage with DriveMount…").is_none());
 }
 
 /// FR-SMB-09's acceptance: after `net use W: /delete` the row goes at the next listing; FR-SET-09
@@ -166,4 +249,68 @@ fn without_winfsp_a_share_can_still_be_mounted() {
     fixture.ui.set_winfsp_ready(false);
     assert!(fixture.is_enabled("Mount NAS"));
     assert!(!fixture.is_enabled("Mount SSH"));
+}
+
+/// What a right-click on this row shows: every label in the window then, as the testing back-end
+/// gives menu items no role of their own. Menu items show only once a menu is up.
+fn right_click_menu(fixture: &Fixture, name: &str) -> Vec<String> {
+    use i_slint_backend_testing::ElementQuery;
+    use slint::LogicalPosition;
+    use slint::platform::{PointerEventButton, WindowEvent};
+
+    let at = fixture.row(name).absolute_position();
+    let position = LogicalPosition::new(at.x + 60.0, at.y + 20.0);
+    fixture.dispatch(WindowEvent::PointerMoved { position });
+    fixture.dispatch(WindowEvent::PointerPressed {
+        position,
+        button: PointerEventButton::Right,
+    });
+    fixture.dispatch(WindowEvent::PointerReleased {
+        position,
+        button: PointerEventButton::Right,
+    });
+    let mut items: Vec<String> = ElementQuery::from_root(fixture.ui.window())
+        .match_descendants()
+        .find_all()
+        .into_iter()
+        .filter_map(|item| item.accessible_label().map(|label| label.to_string()))
+        .collect();
+    items.dedup();
+    items.sort();
+    items.dedup();
+    items
+}
+
+/// The row's TouchArea took every button, so a right-click never reached the menu (owner,
+/// 2026-11-14). It is on top now.
+#[test]
+fn a_right_click_on_a_profile_row_shows_its_menu() {
+    let fixture = Fixture::new(vec![profile("Zed")]);
+    let items = right_click_menu(&fixture, "Zed");
+    assert!(items.iter().any(|item| item == "Details"), "{items:?}");
+    assert!(items.iter().any(|item| item == "Edit…"), "{items:?}");
+    assert!(
+        fixture.take_sent().is_empty(),
+        "a right-click is not a click"
+    );
+    assert!(!fixture.ui.window().get_page_open());
+}
+
+#[test]
+fn a_right_click_on_an_external_row_shows_its_menu() {
+    let fixture = Fixture::new(Vec::new());
+    listing(&fixture, vec![other('P', r"\\nas\photos")]);
+    let items = right_click_menu(&fixture, r"\\nas\photos");
+    for wanted in [
+        "Details",
+        "Open in Explorer",
+        "Copy path",
+        "Manage with DriveMount…",
+    ] {
+        assert!(
+            items.iter().any(|item| item == wanted),
+            "{wanted}: {items:?}"
+        );
+    }
+    assert!(!items.iter().any(|item| item == "Edit…"), "{items:?}");
 }

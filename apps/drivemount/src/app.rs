@@ -29,11 +29,11 @@ use tokio::runtime::{self, Runtime};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use self::engine::{StartWithWindows, Surroundings, UiAction};
+use self::engine::{ReleaseDrive, StartWithWindows, Surroundings, UiAction};
 use crate::backend::{DriveFactory, SystemDriveLetters, default_known_hosts};
 use crate::crash;
 use crate::logging::{self, LogGuard, LogLevelControl};
-use crate::ui::{MainUi, TrayIcon};
+use crate::ui::{MainUi, TakeOverRefused, TrayIcon};
 
 /// Spec §5.3's limits on the runtime's workers.
 const FEWEST_WORKERS: usize = 2;
@@ -255,6 +255,26 @@ fn start_toasts(ui: &MainUi, app: &AppId) {
     }
 }
 
+/// Removes Windows' own mapping of a drive a profile takes over (FR-SMB-10).
+struct WindowsDrives;
+
+impl ReleaseDrive for WindowsDrives {
+    fn release(
+        &self,
+        letter: drivemount_vfs::DriveLetter,
+        unc: &str,
+        force: bool,
+    ) -> Result<(), TakeOverRefused> {
+        drivemount_smb::release_other_drive(letter, unc, force).map_err(|error| match error {
+            drivemount_smb::ReleaseError::FilesOpen => TakeOverRefused::FilesOpen,
+            drivemount_smb::ReleaseError::Moved(now) => TakeOverRefused::Moved(now),
+            drivemount_smb::ReleaseError::Failed(error) => {
+                TakeOverRefused::Failed(error.text.trim().to_owned())
+            }
+        })
+    }
+}
+
 /// The Run value under a name, for this exe.
 struct RunValue {
     name: Option<String>,
@@ -454,6 +474,7 @@ fn run_logged(
             start_with_windows: Arc::new(run_value),
             logs: setup.logs.clone(),
             licences,
+            release_drive: Arc::new(WindowsDrives),
         },
     );
     let system_events = system::start(runtime.handle(), &manager);

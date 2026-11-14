@@ -203,7 +203,11 @@ The drive appears in Explorer under *Network locations*, named after the connect
 
 ### Drives mapped by other programs
 
-The list also shows network drives mapped outside DriveMount, by `net use`, Explorer or another program, so you can see every letter in use. They are dimmed, marked **External**, and have no button: DriveMount never changes them. Hover for what Windows says about them. Ctrl+Enter or the right-click menu opens one in Explorer, and **Copy path** copies its `\\server\share`. Remove one where it was made, for example with `net use W: /delete`. The list is read again every 5 seconds while the window is open. Turn this off in Settings: **Show other network drives**.
+The list also shows network drives mapped outside DriveMount, by `net use`, Explorer or another program, so you can see every letter in use. They are dimmed, marked **External**, and have no button: DriveMount never changes them. Hover for what Windows says about them. Ctrl+Enter or the right-click menu opens one in Explorer, and **Copy path** copies its `\\server\share`. Remove one where it was made, for example with `net use W: /delete`. The list is read again every 5 seconds while the window is open.
+
+Click an *External* drive to see what Windows says about it: its path, status, network, the user it was made as, and whether Windows maps it at sign-in.
+
+**Moving a mapped share into DriveMount.** Click an *External* SMB drive and press **Manage with DriveMount…** on its page (it is in the right-click menu too). The Add page opens with its server, share, user and letter filled in; Windows never reveals the password, so type it, or choose another sign-in method. Save asks before it goes on: DriveMount then removes the drive from Windows, including Windows' memory of it, so it is no longer mapped at sign-in, and mounts the new connection on the same letter. If Windows mapped it at each sign-in, *Mount when DriveMount starts* is already ticked. If files are open on the drive you are asked again, and if anything goes wrong nothing is saved and the drive stays as it was. WSL and other non-SMB drives cannot be moved. Turn this off in Settings: **Show other network drives**.
 
 ### When the drive letter is taken
 

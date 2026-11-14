@@ -129,6 +129,23 @@ impl StartWithWindows for RunValueLog {
     }
 }
 
+/// Windows' other drives, as a list of what was removed, answering as told.
+#[derive(Default)]
+struct ReleaseLog {
+    released: Mutex<Vec<(DriveLetter, String, bool)>>,
+    answers: Mutex<Vec<Result<(), TakeOverRefused>>>,
+}
+
+impl ReleaseDrive for ReleaseLog {
+    fn release(&self, letter: DriveLetter, unc: &str, force: bool) -> Result<(), TakeOverRefused> {
+        self.released
+            .lock()
+            .unwrap()
+            .push((letter, unc.to_owned(), force));
+        self.answers.lock().unwrap().pop().unwrap_or(Ok(()))
+    }
+}
+
 struct Fixture {
     folder: TempDir,
     ui: MainUi,
@@ -137,6 +154,7 @@ struct Fixture {
     actions: std_mpsc::Receiver<UiAction>,
     script: Arc<Script>,
     run_value: Arc<RunValueLog>,
+    release: Arc<ReleaseLog>,
     runtime: Runtime,
 }
 
@@ -178,11 +196,13 @@ fn fixture_from(folder: TempDir) -> Fixture {
         let _ = post.send(action);
     });
     let run_value = Arc::new(RunValueLog::default());
+    let release = Arc::new(ReleaseLog::default());
     let surroundings = Surroundings {
         log_level: LogLevelControl::default(),
         start_with_windows: Arc::clone(&run_value) as _,
         logs: Some(folder.path().join("logs")),
         licences: Some(folder.path().join("THIRD-PARTY-LICENSES.html")),
+        release_drive: Arc::clone(&release) as _,
     };
     start(
         runtime.handle(),
@@ -199,6 +219,7 @@ fn fixture_from(folder: TempDir) -> Fixture {
         actions,
         script,
         run_value,
+        release,
         runtime,
     }
 }
@@ -295,6 +316,61 @@ fn a_save_shows_in_the_list_before_the_dialog_closes() {
     assert!(window.get_dialog_open());
     fixture.run_next_action();
     assert!(!window.get_dialog_open());
+}
+
+fn taking_over(name: &str, letter: char, force: bool) -> (Uuid, UiCommand) {
+    let mut taking = profile(name);
+    taking.drive = drivemount_core::profile::DriveChoice::Letter(DriveLetter::new(letter).unwrap());
+    let id = taking.id;
+    let command = UiCommand::TakeOver {
+        letter: DriveLetter::new(letter).unwrap(),
+        unc: r"\\nas\photos".to_owned(),
+        force,
+        profile: Box::new(taking),
+        secrets: TypedSecrets::default(),
+    };
+    (id, command)
+}
+
+/// FR-SMB-10: Windows' drive goes, then the profile is saved and mounted in its place.
+#[test]
+fn taking_over_removes_the_drive_then_saves_and_mounts() {
+    let fixture = fixture(Vec::new());
+    let (id, command) = taking_over("Photos", 'W', false);
+    fixture.send(command);
+    fixture.until("mounted", |f| {
+        f.rows() == 1 && f.is_named_one_mounted("Photos")
+    });
+    assert_eq!(
+        *fixture.release.released.lock().unwrap(),
+        [(
+            DriveLetter::new('W').unwrap(),
+            r"\\nas\photos".to_owned(),
+            false
+        )]
+    );
+    let config = fixture.runtime.block_on(fixture.manager.config());
+    assert_eq!(config.profiles.len(), 1);
+    assert_eq!(config.profiles[0].id, id);
+}
+
+/// A drive Windows kept, for open files or anything else, saves nothing.
+#[test]
+fn a_drive_that_stays_saves_nothing() {
+    let fixture = fixture(Vec::new());
+    fixture
+        .release
+        .answers
+        .lock()
+        .unwrap()
+        .push(Err(TakeOverRefused::FilesOpen));
+    let (_, command) = taking_over("Photos", 'W', false);
+    fixture.send(command);
+    // The refusal, which no dialog is open to show.
+    fixture.run_next_action();
+    let config = fixture.runtime.block_on(fixture.manager.config());
+    assert!(config.profiles.is_empty());
+    assert_eq!(fixture.rows(), 0);
 }
 
 #[test]

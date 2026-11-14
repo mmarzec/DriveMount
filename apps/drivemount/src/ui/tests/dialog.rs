@@ -1696,3 +1696,152 @@ fn a_unc_path_pasted_into_server_fills_share_and_sub_path() {
         ("CORP", "anna")
     );
 }
+
+/// A drive another program mapped, as Windows lists it (FR-SMB-09).
+fn mapped_outside(on: char, smb: bool) -> drivemount_smb::OtherDrive {
+    drivemount_smb::OtherDrive {
+        letter: letter(on),
+        unc: r"\\nas\photos".to_owned(),
+        provider: if smb {
+            "Microsoft Windows Network"
+        } else {
+            "Plan 9 Network Provider"
+        }
+        .to_owned(),
+        status: drivemount_smb::DriveStatus::Mapped,
+        user: smb.then(|| r"CORP\anna".to_owned()),
+        smb,
+        remembered: true,
+    }
+}
+
+/// FR-SMB-10: the menu opens Add filled from the drive; Save asks, then sends the drive and the
+/// profile together; open files ask again.
+#[test]
+fn an_external_smb_drive_is_taken_over_after_asking() {
+    let fixture = Fixture::new(Vec::new());
+    fixture
+        .ui
+        .set_other_drives(|| Some(vec![mapped_outside('W', true)]));
+    assert!(fixture.entry(0).can_take_over);
+    fixture.ui.window().invoke_row_take_over(0);
+    assert!(fixture.dialog_is_open());
+    assert_eq!(fixture.take_sent(), [UiCommand::FindFreeLetters]);
+    assert_eq!(
+        fixture.ui.window().get_dialog_view().title,
+        "Manage W: with DriveMount"
+    );
+    assert_eq!(fixture.box_holds("Name"), "photos");
+    assert_eq!(fixture.box_holds("Server"), "nas");
+    assert_eq!(fixture.box_holds("Share"), "photos");
+    assert_eq!(fixture.box_holds("User"), "anna");
+    assert_eq!(fixture.box_holds("Domain"), "CORP");
+    assert_eq!(
+        fixture.ui.window().get_marks().drive_warning,
+        "",
+        "Save frees the letter"
+    );
+
+    fixture.choose_auth("Current Windows user");
+    assert!(fixture.can_save());
+    fixture.press("Save");
+    assert!(fixture.take_sent().is_empty(), "asked first");
+    let question = fixture.ui.window().get_question();
+    assert!(question.contains("W:"), "{question}");
+    assert!(question.contains(r"\\nas\photos"), "{question}");
+
+    fixture.ui.inner.answer(true);
+    let mut sent = fixture.take_sent();
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let UiCommand::TakeOver {
+        letter: taken,
+        unc,
+        force,
+        profile,
+        ..
+    } = sent.remove(0)
+    else {
+        panic!("not a take-over");
+    };
+    assert_eq!(
+        (taken, unc.as_str(), force),
+        (letter('W'), r"\\nas\photos", false)
+    );
+    assert_eq!(profile.drive, DriveChoice::Letter(letter('W')));
+    assert!(profile.mount_on_start, "Windows mapped it at each sign-in");
+    let Protocol::Smb(smb) = &profile.protocol else {
+        panic!("not SMB");
+    };
+    assert_eq!(smb.unc(), r"\\nas\photos");
+    assert!(fixture.ui.window().get_dialog_view().saving);
+
+    fixture
+        .ui
+        .take_over_refused(&super::super::TakeOverRefused::FilesOpen);
+    let question = fixture.ui.window().get_question();
+    assert!(question.contains("Files are open on W:"), "{question}");
+    fixture.ui.inner.answer(true);
+    let sent = fixture.take_sent();
+    assert!(
+        matches!(sent.as_slice(), [UiCommand::TakeOver { force: true, .. }]),
+        "{sent:?}"
+    );
+
+    fixture.ui.save_finished(Ok(()));
+    assert!(!fixture.dialog_is_open());
+}
+
+/// A letter that maps something else by now is left alone, and the dialog says so.
+#[test]
+fn a_drive_that_changed_is_left_and_said() {
+    let fixture = Fixture::new(Vec::new());
+    fixture
+        .ui
+        .set_other_drives(|| Some(vec![mapped_outside('W', true)]));
+    fixture.ui.window().invoke_row_take_over(0);
+    fixture.choose_auth("Current Windows user");
+    fixture.press("Save");
+    fixture.ui.inner.answer(true);
+    fixture.take_sent();
+
+    fixture
+        .ui
+        .take_over_refused(&super::super::TakeOverRefused::Moved(
+            r"\\nas\scans".to_owned(),
+        ));
+    assert!(fixture.dialog_is_open());
+    let view = fixture.ui.window().get_dialog_view();
+    assert!(view.message.contains(r"\\nas\scans"), "{}", view.message);
+    assert!(!view.saving);
+    assert_eq!(fixture.ui.window().get_question(), "");
+}
+
+/// Saying no to the question sends nothing and leaves the dialog as it was.
+#[test]
+fn saying_no_to_taking_over_keeps_the_dialog() {
+    let fixture = Fixture::new(Vec::new());
+    fixture
+        .ui
+        .set_other_drives(|| Some(vec![mapped_outside('W', true)]));
+    fixture.ui.window().invoke_row_take_over(0);
+    fixture.take_sent();
+    fixture.choose_auth("Current Windows user");
+    fixture.press("Save");
+    fixture.ui.inner.answer(false);
+    assert!(fixture.take_sent().is_empty());
+    assert!(fixture.dialog_is_open());
+    assert!(fixture.can_save());
+}
+
+/// Only SMB drives: WSL's and other providers' stay read only.
+#[test]
+fn only_an_smb_drive_can_be_taken_over() {
+    let fixture = Fixture::new(Vec::new());
+    fixture
+        .ui
+        .set_other_drives(|| Some(vec![mapped_outside('Y', false)]));
+    assert!(!fixture.entry(0).can_take_over);
+    fixture.ui.window().invoke_row_take_over(0);
+    assert!(!fixture.dialog_is_open());
+    assert!(fixture.take_sent().is_empty());
+}

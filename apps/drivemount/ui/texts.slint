@@ -333,6 +333,29 @@ export global Texts {
     public pure function external-user(user: string) -> string {
         return @tr("as {}", user);
     }
+    // Taking over a drive mapped outside DriveMount (FR-SMB-10).
+    public pure function take-over-title(letter: string) -> string {
+        return @tr("Manage {} with DriveMount", letter);
+    }
+    public pure function take-over-question(letter: string, unc: string) -> string {
+        return @tr("Remove {} ({}) from Windows and mount this connection in its place? Windows will no longer map it at sign-in; DriveMount will.", letter, unc);
+    }
+    public pure function take-over-yes() -> string {
+        return @tr("Remove and mount");
+    }
+    public pure function take-over-files-open-question(letter: string) -> string {
+        return @tr("Files are open on {}. Remove it anyway? Programs using them may lose unsaved changes.", letter);
+    }
+    public pure function take-over-files-open-yes() -> string {
+        return @tr("Remove anyway");
+    }
+    public pure function take-over-moved(letter: string, unc: string) -> string {
+        return @tr("{} now maps {}, so it was left alone. Nothing was saved.", letter, unc);
+    }
+    public pure function take-over-failed(letter: string, detail: string) -> string {
+        return @tr("{} could not be removed from Windows: {}. Nothing was saved.", letter, detail);
+    }
+
     // FR-SMB-04.
     public pure function files-open-question(name: string, letter: string) -> string {
         return @tr("Files are open on {} (\"{}\"). Unmount anyway? Programs using them may lose unsaved changes.", letter, name);

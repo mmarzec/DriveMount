@@ -25,14 +25,15 @@ use uuid::Uuid;
 
 use super::errors::{read_only_text, shown_connect_error};
 use super::form::{
-    Base, Checked, KeyChecks, check, fill_from_paste, fill_from_smb_user, fill_from_unc_paste,
-    form_of, looks_pasted, new_form, typed_secrets,
+    Base, Checked, KeyChecks, TakeOver, check, fill_from_paste, fill_from_smb_user,
+    fill_from_unc_paste, form_of, form_taking_over, looks_pasted, new_form, typed_secrets,
 };
 use super::generated::{
     DialogForm, DialogMarks, DialogView, KeyFileBox, PromptInput, PromptKind, PromptView, Texts,
 };
+use super::list::ExternalDrive;
 use super::prompts::{Entry, Mailbox, Posted, Question, round_message};
-use super::{Inner, MainWindow, TypedSecrets, UiCommand};
+use super::{Asking, Inner, MainWindow, TakeOverRefused, TypedSecrets, UiCommand};
 
 /// What the Add/Edit page and the connection page need to have room for without scrolling, with
 /// Advanced closed and the toolbar and status bar around them.
@@ -74,9 +75,6 @@ pub(super) struct Room {
 impl Inner {
     /// Opens the dialog on a profile, or on a new one with `None`.
     pub(super) fn open_dialog(&self, id: Option<Uuid>) {
-        let Some(window) = self.window.upgrade() else {
-            return;
-        };
         if self.dialog.borrow().is_some() {
             return;
         }
@@ -97,7 +95,47 @@ impl Inner {
             .original
             .as_ref()
             .map_or_else(new_form, |profile| form_of(profile, &base.drives));
+        self.open_dialog_with(base, form);
+    }
 
+    /// Opens the dialog on a new SMB profile to take the place of a drive mapped outside DriveMount
+    /// (FR-SMB-10), filled from what Windows says of it. A path the SMB form cannot take opens
+    /// nothing.
+    pub(super) fn open_dialog_taking_over(&self, drive: &ExternalDrive) {
+        if self.dialog.borrow().is_some() {
+            return;
+        }
+        let base = Base::taking_over(TakeOver {
+            letter: drive.letter,
+            unc: drive.unc.clone(),
+        });
+        let form = {
+            let list = self.list.borrow();
+            let names: Vec<&str> = list.profiles().iter().map(|p| p.name.as_str()).collect();
+            form_taking_over(
+                &drive.unc,
+                drive.letter,
+                drive.user.as_deref(),
+                drive.remembered,
+                &names,
+                &base.drives,
+            )
+        };
+        let Some(form) = form else {
+            tracing::info!(unc = %drive.unc, "this path cannot be an SMB profile");
+            return;
+        };
+        tracing::info!(letter = %drive.letter, unc = %drive.unc, "taking over a drive mapped outside DriveMount");
+        self.open_dialog_with(base, form);
+    }
+
+    fn open_dialog_with(&self, base: Base, form: DialogForm) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if self.dialog.borrow().is_some() {
+            return;
+        }
         *self.dialog.borrow_mut() = Some(Dialog {
             last_host: form.host.clone(),
             last_server: form.server.clone(),
@@ -294,9 +332,15 @@ impl Inner {
                 .filter(|field| is_new && !dialog.filled.contains(field))
                 .collect();
             let mut marks = marks_of(&checked, &dialog.refused, &untouched, &texts);
-            // From M3, a letter another program has mapped warns too (spec §7.3).
+            // From M3, a letter another program has mapped warns too (spec §7.3), but the one this
+            // profile takes over, which Save frees (FR-SMB-10).
             if marks.drive_warning.is_empty()
                 && let DriveChoice::Letter(letter) = checked.profile.drive
+                && dialog
+                    .base
+                    .taking_over
+                    .as_ref()
+                    .is_none_or(|taking| taking.letter != letter)
                 && let Some(drive) = self.list.borrow().external(letter)
             {
                 marks.drive_warning = texts.invoke_drive_used_outside(drive.unc.as_str().into());
@@ -315,6 +359,8 @@ impl Inner {
             window.set_dialog_view(DialogView {
                 title: if dialog.base.original.is_some() {
                     texts.invoke_edit_connection()
+                } else if let Some(taking) = &dialog.base.taking_over {
+                    texts.invoke_take_over_title(taking.letter.to_string().into())
                 } else {
                     texts.invoke_add_connection()
                 },
@@ -520,6 +566,15 @@ impl Inner {
         if !checked.can_save() || self.list.borrow().is_read_only() {
             return;
         }
+        let taking_over = self
+            .dialog
+            .borrow()
+            .as_ref()
+            .and_then(|dialog| dialog.base.taking_over.clone());
+        if let Some(taking) = taking_over {
+            self.ask_to_take_over(&taking, false);
+            return;
+        }
         let secrets = {
             let mut dialog = self.dialog.borrow_mut();
             let Some(dialog) = dialog.as_mut() else {
@@ -537,6 +592,109 @@ impl Inner {
             profile: Box::new(checked.profile),
             secrets: TypedSecrets(secrets),
         });
+    }
+
+    /// FR-SMB-10: Save removes a drive from Windows, so the user is asked first; and again, with
+    /// files open on it, whether to remove it anyway.
+    fn ask_to_take_over(&self, taking: &TakeOver, files_open: bool) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if self.asking.borrow().is_some() {
+            return;
+        }
+        let texts = window.global::<Texts>();
+        let letter = SharedString::from(taking.letter.to_string());
+        let unc = SharedString::from(taking.unc.as_str());
+        let (question, yes) = if files_open {
+            (
+                texts.invoke_take_over_files_open_question(letter),
+                texts.invoke_take_over_files_open_yes(),
+            )
+        } else {
+            (
+                texts.invoke_take_over_question(letter, unc),
+                texts.invoke_take_over_yes(),
+            )
+        };
+        *self.asking.borrow_mut() = Some(Asking::TakeOver { files_open });
+        window.set_question_yes(yes);
+        window.set_question(question);
+    }
+
+    /// The user said yes to taking the drive over (FR-SMB-10): what is in the boxes is saved once the
+    /// drive has gone, and mounted.
+    pub(super) fn save_taking_over(&self, force: bool) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let Some(checked) = self.checked(&window) else {
+            return;
+        };
+        if !checked.can_save() || self.list.borrow().is_read_only() {
+            return;
+        }
+        let (taking, secrets) = {
+            let mut dialog = self.dialog.borrow_mut();
+            let Some(dialog) = dialog.as_mut() else {
+                return;
+            };
+            let Some(taking) = dialog.base.taking_over.clone() else {
+                return;
+            };
+            if dialog.saving || !dialog.refused.is_empty() {
+                return;
+            }
+            dialog.saving = true;
+            dialog.message = SharedString::new();
+            let secrets = typed_secrets(&window.get_form(), &checked.profile, dialog.base.locked);
+            (taking, secrets)
+        };
+        self.refresh_dialog();
+        self.send(UiCommand::TakeOver {
+            letter: taking.letter,
+            unc: taking.unc,
+            force,
+            profile: Box::new(checked.profile),
+            secrets: TypedSecrets(secrets),
+        });
+    }
+
+    /// The drive was not removed, so nothing was saved (FR-SMB-10). Open files ask whether to remove
+    /// it anyway; anything else is said above the buttons.
+    pub(super) fn take_over_refused(&self, refused: &TakeOverRefused) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let taking = {
+            let mut dialog = self.dialog.borrow_mut();
+            let Some(dialog) = dialog.as_mut() else {
+                return;
+            };
+            if !dialog.saving {
+                return;
+            }
+            dialog.saving = false;
+            let texts = window.global::<Texts>();
+            let Some(taking) = dialog.base.taking_over.clone() else {
+                return;
+            };
+            let letter = SharedString::from(taking.letter.to_string());
+            match refused {
+                TakeOverRefused::FilesOpen => {}
+                TakeOverRefused::Moved(unc) => {
+                    dialog.message = texts.invoke_take_over_moved(letter, unc.into());
+                }
+                TakeOverRefused::Failed(detail) => {
+                    dialog.message = texts.invoke_take_over_failed(letter, detail.into());
+                }
+            }
+            taking
+        };
+        self.refresh_dialog();
+        if *refused == TakeOverRefused::FilesOpen {
+            self.ask_to_take_over(&taking, true);
+        }
     }
 
     /// What Save did. The dialog closes unless there is something to say.
@@ -584,13 +742,24 @@ impl Inner {
                 }
             }
         }
-        let close = self
-            .dialog
-            .borrow()
-            .as_ref()
-            .is_some_and(|dialog| dialog.message.is_empty());
+        let (close, taken_over) = {
+            let dialog = self.dialog.borrow();
+            let close = dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.message.is_empty());
+            let taken_over = dialog
+                .as_ref()
+                .filter(|dialog| dialog.base.taking_over.is_some())
+                .map(|dialog| dialog.base.id);
+            (close, taken_over)
+        };
         if close {
             self.close_dialog();
+            // FR-SMB-10: the drive's page shows the profile that took its place, and its row goes.
+            if let Some(id) = taken_over {
+                self.select_profile(id);
+                self.poll_other_drives();
+            }
         } else {
             self.refresh_dialog();
         }

@@ -231,6 +231,7 @@ export component MainWindow inherits Window {
     callback row-primary(index: int);
     callback row-open(index: int);
     callback row-copy-path(index: int);
+    callback row-take-over(index: int);
     callback row-edit(index: int);
     callback row-delete(index: int);
 
@@ -238,6 +239,9 @@ export component MainWindow inherits Window {
     callback page-primary();
     callback page-edit();
     callback page-delete();
+    callback page-take-over();
+    callback page-open-drive();
+    callback page-copy-path();
 
     callback settings-back();
     callback settings-changed();
@@ -607,6 +611,9 @@ export component MainWindow inherits Window {
                             copy-path => {
                                 root.row-copy-path(index);
                             }
+                            take-over => {
+                                root.row-take-over(index);
+                            }
                             edit => {
                                 root.row-edit(index);
                             }
@@ -684,6 +691,15 @@ export component MainWindow inherits Window {
                     }
                     delete => {
                         root.page-delete();
+                    }
+                    take-over => {
+                        root.page-take-over();
+                    }
+                    open => {
+                        root.page-open-drive();
+                    }
+                    copy-path => {
+                        root.page-copy-path();
                     }
                 }
 

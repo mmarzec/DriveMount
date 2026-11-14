@@ -2,6 +2,20 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: M3-04a taking over external SMB drives (FR-SMB-10)
+
+**Status: done (branch `feat/m3-04a-smb-takeover`, fast-forwarded into `main`); the owner saw the page, the take-over and the right-click menus in the preview. The rest of H-06 is still to come.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass (`drivemount` 274); the new Samba test passes against the test server. The owner's own mappings (`W:`–`Z:`, and `HKCU\Network`) were as before afterwards.
+
+- **Asked by the owner:** "External windows smb mounts could be converted to internal DriveMounts". Decided with them: DriveMount takes the drive over (removes the Windows mapping and its remembered entry, then mounts its own on the letter), after a confirmation; SMB drives only. New FR-SMB-10; FR-SMB-09 and §5.9, §7.1 say so.
+- **`drivemount-smb`:** `OtherDrive` has `smb` (listed by `NetUseEnum`, or the SMB client's provider name, asked once) and `remembered`. `release_other_drive(letter, unc, force)` checks the letter still maps `unc`, then `wnet::forget_connection` (`CONNECT_UPDATE_PROFILE`); `ReleaseError::{FilesOpen, Moved, Failed}`; a letter with nothing on it counts as done.
+- **UI:** `ListEntry.can-take-over` (SMB and the file writable), the menu item *Manage with DriveMount…*, `row-take-over`. `form::form_taking_over` fills Add: name from the share (or "share on server" if taken), server/share/sub-path, `DOMAIN\user` split, letter, *Mount at start* if Windows remembered it, *Password* left empty. `Base.taking_over`; title "Manage W: with DriveMount"; no Drive warning for that letter. Save asks (`Asking::TakeOver`), yes sends `UiCommand::TakeOver`; `MainUi::take_over_refused` asks again for open files (yes resends with `force`) or says why above the buttons.
+- **Engine:** `Surroundings.release_drive` (`ReleaseDrive`, `WindowsDrives` in the app); the drive goes first, then `save`, `save_finished`, and `mount` if the profile is in the file (also when its password could not be stored).
+- **Preview:** `examples/main_window.rs` pretends files are open on the first try, so the second question can be seen.
+- **After the owner's first look:** an external row now opens a page (owner's request), with what Windows says of the drive and *Manage with DriveMount…*, *Open in Explorer*, *Copy path* buttons (`PageView.unc`, `provider`, `windows-status`, `remembered`, `can-take-over`; callbacks `page-take-over`, `page-open-drive`, `page-copy-path`). *Details* is in its menu too, and the row has the chevron. After a take-over the page and selection move to the new profile, and the other drives are listed again at once.
+- **Fixed: right-click did nothing on any row** (owner, 2026-11-14; there since M1, never seen on screen). The row's `ContextMenuArea` wrapped its `TouchArea`, and a `TouchArea` grabs the mouse on a press of any button, so the menu never saw the right-click. The `ContextMenuArea` is now the row's last child, on top, with no children, as Slint's own `LineEdit` has it: it takes the right-click and lets the rest through. `ui/tests/external.rs` `a_right_click_on_a_profile_row_shows_its_menu` and `…_external_row_…` find the menu's items after a right-click, which they did not before.
+- **Not done:** nothing on screen was looked at; no test through the real app against a server (the engine test uses a recording fake, the Samba test calls `release_other_drive` itself).
+- **Next:** the owner's H-06 look, with M3-04's.
+
 ## 2026-11-14: M3-04 SMB in the UI (branch `feat/m3-04-smb-ui`)
 
 **Status: done locally, waiting for the owner's H-06 look.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass (`drivemount-core` 269, `drivemount` 264). Nothing was looked at on screen: the form, the page and the external rows are tested through Slint's testing back-end only.

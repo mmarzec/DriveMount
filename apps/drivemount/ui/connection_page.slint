@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 // The connection page (spec 7.1.1): one connection's state, what is wrong with it, and its settings,
-// in place of the list. `drivemount_app::ui` fills it in; this file only draws it.
+// in place of the list. Also a drive mapped outside DriveMount (FR-SMB-09), with what Windows says of
+// it and, for SMB, the way to have DriveMount take it over (FR-SMB-10). `drivemount_app::ui` fills it in; this file only draws it.
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme, Icons, Icon, AppButton, Card, Field } from "theme.slint";
@@ -40,6 +41,13 @@ export struct PageView {
     read-only: bool,
     cache: string,
     keep-alive: string,
+    // An external drive (FR-SMB-09): its path, its network provider, its state as Windows reports it,
+    // whether Windows maps it at sign-in, and whether DriveMount can take it over (FR-SMB-10).
+    unc: string,
+    provider: string,
+    windows-status: string,
+    remembered: bool,
+    can-take-over: bool,
 }
 
 export component ConnectionPage {
@@ -50,12 +58,17 @@ export component ConnectionPage {
     callback primary();
     callback edit();
     callback delete();
+    callback take-over();
+    callback open();
+    callback copy-path();
 
     property <bool> is-profile: root.view.kind == EntryKind.profile;
+    property <bool> is-external: root.view.kind == EntryKind.external;
     property <string> primary-text: RowTexts.primary(root.view.primary);
     property <string> yes: @tr("Yes");
     property <string> no: @tr("No");
-    property <string> status-line: !root.is-profile ? @tr("Cannot be read")
+    property <string> status-line: root.is-external ? @tr("Mapped outside DriveMount")
+        : !root.is-profile ? @tr("Cannot be read")
         : root.view.status == RowStatus.mounted ? (root.view.letter != "" ? @tr("Mounted on {}", root.view.letter) : @tr("Mounted"))
         : root.view.status == RowStatus.connecting ? @tr("Connecting…")
         : root.view.status == RowStatus.reconnecting && root.view.smb ? @tr("Disconnected (Windows will reconnect)")
@@ -115,7 +128,8 @@ export component ConnectionPage {
                 Text {
                     text: root.status-line;
                     font-size: Theme.small-size;
-                    color: root.view.status == RowStatus.error || !root.is-profile ? Theme.red : Theme.text-muted;
+                    color: root.is-external ? Theme.text-muted
+                        : root.view.status == RowStatus.error || !root.is-profile ? Theme.red : Theme.text-muted;
                 }
             }
 
@@ -261,7 +275,88 @@ export component ConnectionPage {
             }
         }
 
-        HorizontalLayout {
+        // An external drive: what Windows says of it, read only.
+        if root.is-external: Card {
+            VerticalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                padding-top: 2px;
+                padding-bottom: 2px;
+
+                Field {
+                    label: @tr("Path");
+                    value: root.view.unc;
+                }
+
+                Field {
+                    label: @tr("Drive");
+                    value: root.view.drive;
+                }
+
+                Field {
+                    label: @tr("Status");
+                    value: root.view.windows-status;
+                }
+
+                Field {
+                    label: @tr("Network");
+                    value: root.view.provider;
+                }
+
+                if root.view.user != "": Field {
+                    label: @tr("User");
+                    value: root.view.user;
+                }
+
+                Field {
+                    label: @tr("Mapped at sign-in");
+                    value: root.view.remembered ? root.yes : root.no;
+                    last: true;
+                }
+            }
+        }
+
+        if root.is-external: Text {
+            text: root.view.can-take-over
+                ? @tr("Mapped by net use, Explorer or another program. DriveMount only shows it, unless you have DriveMount manage it: it then removes the drive from Windows and mounts it itself, on the same letter.")
+                : @tr("Mapped by net use, Explorer or another program. DriveMount only shows it. Only SMB drives can be managed with DriveMount.");
+            font-size: Theme.small-size;
+            color: Theme.text-muted;
+            wrap: word-wrap;
+        }
+
+        if root.is-external: HorizontalLayout {
+            spacing: 8px;
+            alignment: start;
+
+            if root.view.can-take-over: AppButton {
+                text: @tr("Manage with DriveMount…");
+                primary: true;
+                enabled: root.interactive;
+                clicked => {
+                    root.take-over();
+                }
+            }
+
+            AppButton {
+                icon: Icons.folder-open;
+                text: @tr("Open in Explorer");
+                enabled: root.interactive;
+                clicked => {
+                    root.open();
+                }
+            }
+
+            AppButton {
+                text: @tr("Copy path");
+                enabled: root.interactive;
+                clicked => {
+                    root.copy-path();
+                }
+            }
+        }
+
+        if !root.is-external: HorizontalLayout {
             spacing: 8px;
             alignment: start;
 

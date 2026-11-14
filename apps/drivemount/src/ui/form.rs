@@ -38,6 +38,8 @@ pub(super) struct Base {
     pub(super) locked: bool,
     /// What each line of the Drive dropdown means.
     pub(super) drives: Vec<DriveChoice>,
+    /// The drive mapped outside DriveMount that this new profile takes the place of (FR-SMB-10).
+    pub(super) taking_over: Option<TakeOver>,
 }
 
 impl Base {
@@ -52,8 +54,76 @@ impl Base {
             drives: drive_choices(current),
             original,
             locked,
+            taking_over: None,
         }
     }
+
+    /// A new profile in place of a drive mapped outside DriveMount (FR-SMB-10).
+    pub(super) fn taking_over(drive: TakeOver) -> Self {
+        Self {
+            taking_over: Some(drive),
+            ..Self::new(None, false)
+        }
+    }
+}
+
+/// A drive mapped outside DriveMount, which Save removes from Windows for the new profile to take its
+/// place (FR-SMB-10).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct TakeOver {
+    /// Its letter.
+    pub(super) letter: DriveLetter,
+    /// What it maps, as `\\nas\photos`.
+    pub(super) unc: String,
+}
+
+/// The boxes of a new SMB profile for a drive mapped outside DriveMount (FR-SMB-10): its share, the
+/// user Windows says it was made as, and its letter. Windows never tells the password, so it is
+/// left to type, or to change to *Current Windows user*. A drive Windows remembered was mapped at
+/// each sign-in, so the profile mounts at start. `None` if the path is not one the SMB form takes.
+pub(super) fn form_taking_over(
+    unc: &str,
+    letter: DriveLetter,
+    user: Option<&str>,
+    remembered: bool,
+    names: &[&str],
+    drives: &[DriveChoice],
+) -> Option<DialogForm> {
+    let mut form = DialogForm {
+        protocol: ProtocolChoice::Smb,
+        smb_auth: SmbAuthChoice::Password,
+        mount_on_start: remembered,
+        drive_index: drives
+            .iter()
+            .position(|drive| *drive == DriveChoice::Letter(letter))
+            .and_then(|place| i32::try_from(place).ok())
+            .unwrap_or(0),
+        ..new_form()
+    };
+    let pasted = parse_pasted_unc(unc)?;
+    let taken = |name: &str| {
+        names
+            .iter()
+            .any(|other| other.trim().eq_ignore_ascii_case(name.trim()))
+    };
+    let on_server = format!("{} on {}", pasted.share, pasted.server);
+    form.name = if !taken(&pasted.share) {
+        pasted.share.as_str().into()
+    } else if !taken(&on_server) {
+        on_server.into()
+    } else {
+        // The Name rule marks it, and the user picks another.
+        pasted.share.as_str().into()
+    };
+    form.server = pasted.server.into();
+    form.share = pasted.share.into();
+    form.sub_path = pasted.sub_path.into();
+    if let Some(user) = user.filter(|user| !user.is_empty())
+        && !fill_from_smb_user(&mut form, user)
+    {
+        form.user = user.into();
+    }
+    Some(form)
 }
 
 /// Auto, then D to Z. A letter from the file that is not allowed is listed too, so that the box can
@@ -1265,5 +1335,59 @@ mod tests {
         assert!(fill_from_smb_user(&mut form, r"CORP\anna"));
         assert_eq!((form.domain.as_str(), form.user.as_str()), ("CORP", "anna"));
         assert!(!fill_from_smb_user(&mut form, "anna@corp.example"));
+    }
+
+    fn choices() -> Vec<DriveChoice> {
+        drive_choices(DriveChoice::Auto)
+    }
+
+    /// FR-SMB-10: the share, the user Windows names, the letter, and *Password* left to type.
+    #[test]
+    fn a_drive_taken_over_fills_the_smb_boxes() {
+        let w = DriveLetter::new('W').unwrap();
+        let form = form_taking_over(
+            r"\\nas\photos",
+            w,
+            Some(r"CORP\anna"),
+            true,
+            &[],
+            &choices(),
+        )
+        .unwrap();
+        assert_eq!(form.protocol, ProtocolChoice::Smb);
+        assert_eq!(form.name, "photos");
+        assert_eq!(form.server, "nas");
+        assert_eq!(form.share, "photos");
+        assert_eq!(form.sub_path, "");
+        assert_eq!(form.domain, "CORP");
+        assert_eq!(form.user, "anna");
+        assert_eq!(form.smb_auth, SmbAuthChoice::Password);
+        assert!(form.mount_on_start, "Windows remembered it");
+        assert_eq!(choices()[form.drive_index as usize], DriveChoice::Letter(w));
+    }
+
+    #[test]
+    fn a_taken_name_says_which_server() {
+        let w = DriveLetter::new('W').unwrap();
+        let form =
+            form_taking_over(r"\\nas\photos", w, None, false, &["Photos"], &choices()).unwrap();
+        assert_eq!(form.name, "photos on nas");
+        assert_eq!(form.user, "");
+        assert!(!form.mount_on_start);
+    }
+
+    #[test]
+    fn a_user_without_a_domain_goes_in_user() {
+        let w = DriveLetter::new('W').unwrap();
+        let form =
+            form_taking_over(r"\\nas\photos", w, Some("anna"), false, &[], &choices()).unwrap();
+        assert_eq!(form.user, "anna");
+        assert_eq!(form.domain, "");
+    }
+
+    #[test]
+    fn a_path_the_form_cannot_take_is_not_taken_over() {
+        let w = DriveLetter::new('W').unwrap();
+        assert!(form_taking_over(r"\\nas", w, None, false, &[], &choices()).is_none());
     }
 }

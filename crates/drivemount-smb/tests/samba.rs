@@ -24,7 +24,9 @@ use std::process::Command;
 use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use drivemount_smb::{DriveStatus, SmbAuth, SmbBackend, SmbTarget, other_drives};
+use drivemount_smb::{
+    DriveStatus, ReleaseError, SmbAuth, SmbBackend, SmbTarget, other_drives, release_other_drive,
+};
 use drivemount_vfs::{
     ConnectError, DriveLetter, Health, HostKeyDecision, HostKeyRequest, KbdIntRequest, LoginAnswer,
     LoginRequest, MountBackend, MountError, Prompter, Remember, Secret, SecretRequest, async_trait,
@@ -380,4 +382,69 @@ async fn a_net_use_drive_is_listed_as_another_drive() {
     drop(mapped);
     let gone = other_drives(&[]).unwrap();
     assert!(gone.iter().all(|drive| drive.letter != letter));
+}
+
+/// FR-SMB-10: a persistent `net use` drive is listed as SMB and remembered; open files keep it until
+/// forced, a path other than its own is refused, and removing it takes Windows' memory of it too.
+#[tokio::test]
+#[ignore = "needs the Samba test server"]
+async fn a_net_use_drive_is_taken_over_and_forgotten() {
+    struct NetUse(DriveLetter);
+
+    impl Drop for NetUse {
+        fn drop(&mut self) {
+            let _ = Command::new("net")
+                .args(["use", &self.0.to_string(), "/delete", "/y"])
+                .output();
+        }
+    }
+
+    let _turn = one_at_a_time();
+    let [letter] = free_letters(1)[..] else {
+        unreachable!()
+    };
+    let unc = format!(r"\\{}\b", server());
+    let output = Command::new("net")
+        .args(["use", &letter.to_string(), &unc, USER1.1])
+        .arg(format!("/user:{}", USER1.0))
+        .arg("/persistent:yes")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let _mapped = NetUse(letter);
+
+    let listed = other_drives(&[]).unwrap();
+    let drive = listed
+        .iter()
+        .find(|drive| drive.letter == letter)
+        .expect("the net use drive is not listed");
+    assert!(drive.smb, "{drive:?}");
+    assert!(drive.remembered, "{drive:?}");
+
+    let other = format!(r"\\{}\a", server());
+    assert_eq!(
+        release_other_drive(letter, &other, false),
+        Err(ReleaseError::Moved(unc.clone()))
+    );
+
+    let mut open = File::create(format!(r"{letter}\{}", unique_name("taken"))).unwrap();
+    open.write_all(b"held open").unwrap();
+    assert_eq!(
+        release_other_drive(letter, &unc.to_uppercase(), false),
+        Err(ReleaseError::FilesOpen)
+    );
+    assert!(is_mapped(letter));
+
+    release_other_drive(letter, &unc, true).unwrap();
+    assert!(!is_mapped(letter));
+    let local = letter.to_string();
+    assert!(
+        wnet::remembered()
+            .unwrap()
+            .iter()
+            .all(|remembered| remembered.local.as_deref() != Some(local.as_str())),
+        "Windows still remembers it"
+    );
+    // Gone already counts as done.
+    release_other_drive(letter, &unc, false).unwrap();
 }

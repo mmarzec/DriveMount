@@ -114,6 +114,18 @@ pub enum ActionFailure {
     Licences(String),
 }
 
+/// Why a drive mapped outside DriveMount was not removed for a profile to take over (FR-SMB-10).
+/// Nothing was saved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TakeOverRefused {
+    /// Files are open on it: the user is asked whether to remove it anyway.
+    FilesOpen,
+    /// Its letter maps this other path now.
+    Moved(String),
+    /// What Windows said.
+    Failed(String),
+}
+
 /// What the user asked for.
 #[derive(Debug, PartialEq)]
 pub enum UiCommand {
@@ -166,6 +178,21 @@ pub enum UiCommand {
     OpenInExplorer(DriveLetter, String),
     /// Put this on the clipboard: an external drive's path (spec §7.1).
     CopyText(String),
+    /// Remove a drive mapped outside DriveMount, then save the profile that takes its place and mount
+    /// it (FR-SMB-10). The user has been asked. Answer with [`MainUi::save_finished`], or with
+    /// [`MainUi::take_over_refused`] if the drive was not removed, when nothing was saved.
+    TakeOver {
+        /// The drive's letter.
+        letter: DriveLetter,
+        /// What it maps, which it must still map.
+        unc: String,
+        /// Remove it even with files open: the user said yes to that too.
+        force: bool,
+        /// The profile, checked as far as the dialog can.
+        profile: Box<Profile>,
+        /// What goes with it.
+        secrets: TypedSecrets,
+    },
     /// Save the settings, changed on the settings page (FR-SET). They are in use in the window
     /// already. Answer a failure with [`MainUi::set_config`] and [`MainUi::set_action_failure`].
     SaveSettings(Box<Settings>),
@@ -223,6 +250,12 @@ enum Asking {
     Quit,
     /// Unmounting a drive with files open on it (FR-SMB-04).
     FilesOpen(Uuid),
+    /// Saving a profile in place of a drive mapped outside DriveMount (FR-SMB-10); with files open
+    /// on it, once that drive refused for them.
+    TakeOver {
+        /// Whether files are open on it.
+        files_open: bool,
+    },
 }
 
 struct Inner {
@@ -466,6 +499,11 @@ impl MainUi {
         self.inner.save_finished(result);
     }
 
+    /// The answer to [`UiCommand::TakeOver`] when the drive was not removed, and nothing was saved.
+    pub fn take_over_refused(&self, refused: &TakeOverRefused) {
+        self.inner.take_over_refused(refused);
+    }
+
     /// The answer to [`UiCommand::Test`].
     pub fn test_finished(&self, attempt: u64, result: Result<Duration, ConnectError>) {
         self.inner.test_finished(attempt, result);
@@ -624,6 +662,7 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_row_primary(on_row(Inner::primary_of));
     window.on_row_open(on_row(Inner::open_of));
     window.on_row_copy_path(on_row(Inner::copy_path_of));
+    window.on_row_take_over(on_row(Inner::take_over_of));
     window.on_row_edit(on_row(Inner::edit_of));
     window.on_row_delete(on_row(Inner::ask_to_delete_at));
 
@@ -632,6 +671,9 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_page_edit(on(Inner::edit_selected));
     window.on_page_delete(on(Inner::delete_selected));
     window.on_open_page_selected(on(Inner::open_page_selected));
+    window.on_page_take_over(on(Inner::take_over_selected));
+    window.on_page_open_drive(on(Inner::open_selected));
+    window.on_page_copy_path(on(Inner::copy_path_selected));
 
     window.on_settings_back(on(Inner::close_settings));
     window.on_settings_changed(on(Inner::settings_changed));
@@ -918,8 +960,7 @@ impl Inner {
             list.select_place(index);
             list.selected().cloned()
         };
-        // An external drive has no page: a click only selects it (spec §7.1).
-        if key.is_some() && !matches!(key, Some(Key::External(_))) {
+        if key.is_some() {
             *self.page.borrow_mut() = key;
             self.make_room();
         }
@@ -928,7 +969,7 @@ impl Inner {
 
     fn open_page_selected(&self) {
         let key = self.list.borrow().selected().cloned();
-        if key.is_some() && !matches!(key, Some(Key::External(_))) {
+        if key.is_some() {
             *self.page.borrow_mut() = key;
             self.make_room();
             self.refresh();
@@ -1071,6 +1112,37 @@ impl Inner {
         }
     }
 
+    /// *Manage with DriveMount…* on an external SMB drive's row (FR-SMB-10): a new profile in its
+    /// place, filled from what Windows says of it.
+    fn take_over_of(&self, index: usize) {
+        if let Some(item) = self.item(index) {
+            self.take_over(item);
+        }
+    }
+
+    /// The same, from the drive's page.
+    fn take_over_selected(&self) {
+        if let Some(item) = self.selected_item() {
+            self.take_over(item);
+        }
+    }
+
+    fn take_over(&self, item: Item) {
+        if let Body::External(drive) = item.body
+            && drive.smb
+            && self.list.borrow().can_add()
+        {
+            self.open_dialog_taking_over(&drive);
+        }
+    }
+
+    /// *Copy path* on an external drive's page.
+    fn copy_path_selected(&self) {
+        if let Some(Body::External(drive)) = self.selected_item().map(|item| item.body) {
+            self.send(UiCommand::CopyText(drive.unc));
+        }
+    }
+
     fn edit_of(&self, index: usize) {
         if let Some(Item {
             key: Key::Profile(id),
@@ -1195,6 +1267,10 @@ impl Inner {
                 self.send(UiCommand::ForceUnmount(id));
                 return;
             }
+            Some(Asking::TakeOver { files_open }) => {
+                self.save_taking_over(files_open);
+                return;
+            }
             None => None,
         };
         // An unreadable entry is known by its place, which the next one takes once it is gone.
@@ -1291,6 +1367,7 @@ impl Inner {
         let items = list.items();
         let selected = list.selected_place();
         let own = list.live_letters();
+        let can_add = list.can_add();
 
         let mut top = 0.0;
         let mut selected_top = 0.0;
@@ -1300,7 +1377,7 @@ impl Inner {
             .enumerate()
             .map(|(place, item)| {
                 let height = item.height();
-                let entry = list_entry(&texts, item, top, height, &own);
+                let entry = list_entry(&texts, item, top, height, &own, can_add);
                 if selected == Some(place) {
                     selected_top = top;
                     selected_height = height;
@@ -1388,6 +1465,7 @@ fn list_entry(
     top: f32,
     height: f32,
     own: &[DriveLetter],
+    can_add: bool,
 ) -> ListEntry {
     let placed = ListEntry {
         top,
@@ -1444,6 +1522,7 @@ fn list_entry(
             },
             line: external_tip(texts, drive),
             can_open: true,
+            can_take_over: drive.smb && can_add,
             ..placed
         },
         Body::Unreadable {
@@ -1467,7 +1546,7 @@ fn list_entry(
 /// The connection page's view of a list item.
 fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
     let own = list.live_letters();
-    let entry = list_entry(texts, item, 0.0, 0.0, &own);
+    let entry = list_entry(texts, item, 0.0, 0.0, &own, list.can_add());
     let mut view = PageView {
         kind: entry.kind,
         name: entry.name,
@@ -1530,8 +1609,16 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
             view.problem = entry.line;
             view.problem_is_error = true;
         }
-        // Never opened (spec §7.1).
-        Body::External(_) => {}
+        // What Windows says of it (FR-SMB-09), and whether it can be taken over (FR-SMB-10).
+        Body::External(drive) => {
+            view.unc = drive.unc.as_str().into();
+            view.drive = drive.letter.to_string().into();
+            view.windows_status = external_status(texts, drive.status);
+            view.provider = drive.provider.as_str().into();
+            view.user = drive.user.as_deref().unwrap_or_default().into();
+            view.remembered = drive.remembered;
+            view.can_take_over = entry.can_take_over;
+        }
     }
     view
 }
@@ -1550,17 +1637,22 @@ fn shortened_unc(unc: &str) -> String {
 
 /// An external drive's tooltip (spec §7.1): what it is, then what Windows says of it.
 fn external_tip(texts: &Texts<'_>, drive: &ExternalDrive) -> SharedString {
-    let status = match drive.status {
-        ExternalStatus::Mapped => texts.invoke_external_mapped(),
-        ExternalStatus::Reconnecting => texts.invoke_external_reconnecting(),
-        ExternalStatus::Disconnected => texts.invoke_external_disconnected(),
-        ExternalStatus::NotConnected => texts.invoke_external_not_connected(),
-    };
+    let status = external_status(texts, drive.status);
     let mut facts = vec![status.to_string(), drive.provider.clone()];
     if let Some(user) = &drive.user {
         facts.push(texts.invoke_external_user(user.into()).to_string());
     }
     format!("{}\n{}", texts.invoke_external_tip(), facts.join(" · ")).into()
+}
+
+/// An external drive's state, in Windows' words (spec §5.9).
+fn external_status(texts: &Texts<'_>, status: ExternalStatus) -> SharedString {
+    match status {
+        ExternalStatus::Mapped => texts.invoke_external_mapped(),
+        ExternalStatus::Reconnecting => texts.invoke_external_reconnecting(),
+        ExternalStatus::Disconnected => texts.invoke_external_disconnected(),
+        ExternalStatus::NotConnected => texts.invoke_external_not_connected(),
+    }
 }
 
 /// What `drivemount_smb` lists, as the list shows it.
@@ -1576,6 +1668,8 @@ fn external_of(drive: OtherDrive) -> ExternalDrive {
             DriveStatus::NotConnected => ExternalStatus::NotConnected,
         },
         user: drive.user,
+        smb: drive.smb,
+        remembered: drive.remembered,
     }
 }
 
