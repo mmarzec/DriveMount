@@ -6,18 +6,6 @@ It is a native Rust program built on [WinFsp](https://winfsp.dev). It needs no e
 
 ![The DriveMount main window, with six connections: three mounted, one reconnecting and two not mounted](docs/images/main-window.png)
 
-| Release | Content |
-|---|---|
-| **v1** (milestones M0–M2) | SSH/SFTP connections as drive letters, tray, auto-mount, auto-reconnect, Windows Credential Manager, host-key verification, settings, MSI installer |
-| **M3** | SMB 2/3 connections, through Windows' own SMB client |
-| **M4** | NFSv3 connections, with a built-in userspace client |
-
-It targets Windows 10 22H2 and Windows 11 23H2 or later, on x64.
-
-## Status
-
-**Early development: there is no usable application yet.** Milestone M1 is in progress. The SFTP backend and the WinFsp drive adapter are done, but profiles, the mount manager and the UI are still to come, and `drivemount.exe` currently does nothing. Task-by-task notes are in [docs/PROGRESS.md](docs/PROGRESS.md).
-
 ## User guide
 
 In short:
