@@ -22,6 +22,7 @@ use thiserror::Error;
 use super::paste::split_host;
 use super::{
     DEFAULT_PORT, DriveChoice, JumpAuth, JumpHost, Profile, Protocol, SftpAuth, SftpProfile,
+    SmbAuth, SmbProfile,
 };
 
 const MAX_NAME_CHARS: usize = 64;
@@ -32,6 +33,20 @@ const MIN_KEEPALIVE_SECS: u64 = 5;
 const MAX_KEEPALIVE_SECS: u64 = 300;
 const MAX_DNS_NAME: usize = 253;
 const MAX_DNS_LABEL: usize = 63;
+/// The longest share name Windows allows.
+const MAX_SHARE_CHARS: usize = 80;
+const SHARE_FORBIDDEN: &[char] = &[
+    '\\', '/', '[', ']', ':', '|', '<', '>', '+', '=', ';', ',', '?', '*', '"',
+];
+/// Characters a Windows file or folder name cannot hold, besides the separators.
+const FOLDER_FORBIDDEN: &[char] = &[':', '*', '?', '"', '<', '>', '|'];
+/// The longest user principal name (`user@domain`) Windows takes.
+const MAX_SMB_USER_CHARS: usize = 104;
+const SMB_USER_FORBIDDEN: &[char] = &[
+    '"', '/', '\\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>',
+];
+const MAX_DOMAIN_CHARS: usize = 255;
+const DOMAIN_FORBIDDEN: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|', '@'];
 
 /// Enough for the headers OpenSSL can put in front of a key.
 const KEY_HEAD_BYTES: u64 = 8192;
@@ -78,6 +93,14 @@ pub enum Field {
     JumpHost,
     /// The jump host's own key file.
     JumpKeyFile,
+    /// SMB: the server.
+    Server,
+    /// SMB: the share.
+    Share,
+    /// SMB: the folder inside the share.
+    SubPath,
+    /// SMB: the user's domain.
+    Domain,
 }
 
 /// What is wrong with a value. `Display` is the text to show (spec §7.3), in English for now.
@@ -143,6 +166,36 @@ pub enum Problem {
     /// Not `[user@]host[:port]`.
     #[error("Use user@host:port")]
     JumpHostInvalid,
+    /// Not a name or an IPv4 address.
+    #[error("Enter a server name or IP address")]
+    ServerInvalid,
+    /// An IPv6 address, which a UNC path cannot hold as it is.
+    #[error("Write an IPv6 address as its ipv6-literal.net name, such as fe80--1.ipv6-literal.net")]
+    ServerIpv6,
+    /// Blank.
+    #[error("Share is required")]
+    ShareRequired,
+    /// Over 80 characters.
+    #[error("Use at most 80 characters")]
+    ShareTooLong,
+    /// A character Windows does not allow in a share name.
+    #[error("A share name cannot contain \\ / [ ] : | < > + = ; , ? * \"")]
+    ShareForbiddenCharacter,
+    /// Not folder names separated by `\`.
+    #[error("Use folder names separated by \\, such as films\\2024")]
+    SubPathInvalid,
+    /// Over 104 characters.
+    #[error("Use at most 104 characters")]
+    SmbUserTooLong,
+    /// A character Windows does not allow in a user name.
+    #[error("A user name cannot contain \" / \\ [ ] : ; | = , + * ? < >")]
+    SmbUserForbiddenCharacter,
+    /// Not a NetBIOS or DNS domain name.
+    #[error("Enter a domain such as CORP or corp.example")]
+    DomainInvalid,
+    /// A domain in both boxes: `me@corp.example` in User and something in Domain.
+    #[error("Leave Domain empty when the user name ends in @domain")]
+    DomainTwice,
 }
 
 /// A [`Problem`] and the box to mark.
@@ -225,8 +278,29 @@ pub fn validate_profile(
 
     match &profile.protocol {
         Protocol::Sftp(sftp) => check_sftp(&mut result, sftp, read_key),
+        Protocol::Smb(smb) => check_smb(&mut result, smb),
     }
     result
+}
+
+/// The user and domain are only checked when they are sent: *Current Windows user* sends neither, and
+/// keeps them as they were for when the method changes back.
+fn check_smb(result: &mut Validation, smb: &SmbProfile) {
+    result.check(Field::Server, check_server(&smb.server));
+    result.check(Field::Share, check_share(&smb.share));
+    result.check(Field::SubPath, check_sub_path(&smb.sub_path));
+    if smb.auth == SmbAuth::WindowsUser {
+        return;
+    }
+    result.check(Field::User, check_smb_user(&smb.username));
+    let domain = check_domain(&smb.domain).and_then(|()| {
+        if !smb.domain.is_empty() && smb.username.contains('@') {
+            Err(Problem::DomainTwice)
+        } else {
+            Ok(())
+        }
+    });
+    result.check(Field::Domain, domain);
 }
 
 fn check_sftp(
@@ -319,6 +393,105 @@ fn is_dns_label(label: &str) -> bool {
         && label
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
+/// SMB server: a DNS or NetBIOS name, or an IPv4 address. A UNC path cannot hold an IPv6 address as it
+/// is: Windows takes it as `fe80--1.ipv6-literal.net`, which is a name here.
+///
+/// # Errors
+///
+/// [`Problem::ServerIpv6`] or [`Problem::ServerInvalid`].
+pub fn check_server(server: &str) -> Result<(), Problem> {
+    match server.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => Ok(()),
+        Ok(IpAddr::V6(_)) => Err(Problem::ServerIpv6),
+        Err(_) if is_dns_name(server) => Ok(()),
+        Err(_) => Err(Problem::ServerInvalid),
+    }
+}
+
+/// SMB share: 1–80 characters, none of `\ / [ ] : | < > + = ; , ? * "` or control characters. `C$`
+/// and other names ending in `$` are fine.
+///
+/// # Errors
+///
+/// The first thing wrong with it.
+pub fn check_share(share: &str) -> Result<(), Problem> {
+    if share.trim().is_empty() {
+        return Err(Problem::ShareRequired);
+    }
+    if share.chars().count() > MAX_SHARE_CHARS {
+        return Err(Problem::ShareTooLong);
+    }
+    if share.contains(SHARE_FORBIDDEN) || share.contains(char::is_control) {
+        return Err(Problem::ShareForbiddenCharacter);
+    }
+    Ok(())
+}
+
+/// SMB sub-path: empty, or folder names separated by `\` or `/`. No empty part (so no separator at
+/// either end), no `.` or `..`, none of `: * ? " < > |` or control characters, and no name ending in a
+/// dot or a space, which Windows would drop.
+///
+/// # Errors
+///
+/// [`Problem::SubPathInvalid`].
+pub fn check_sub_path(sub_path: &str) -> Result<(), Problem> {
+    if sub_path.is_empty() {
+        return Ok(());
+    }
+    let is_folder = |name: &str| {
+        !name.is_empty()
+            && name != "."
+            && name != ".."
+            && !name.ends_with(['.', ' '])
+            && !name.contains(FOLDER_FORBIDDEN)
+            && !name.contains(char::is_control)
+    };
+    if sub_path.split(['\\', '/']).all(is_folder) {
+        Ok(())
+    } else {
+        Err(Problem::SubPathInvalid)
+    }
+}
+
+/// SMB user: 1–104 characters (a user principal name such as `me@corp.example` fits), none of
+/// `" / \ [ ] : ; | = , + * ? < >` or control characters. Spaces are allowed, as Windows has local
+/// accounts with them. `DOMAIN\user` typed in the box is split first, by
+/// [`split_smb_user`](super::split_smb_user).
+///
+/// # Errors
+///
+/// The first thing wrong with it.
+pub fn check_smb_user(user: &str) -> Result<(), Problem> {
+    if user.trim().is_empty() {
+        return Err(Problem::UserRequired);
+    }
+    if user.chars().count() > MAX_SMB_USER_CHARS {
+        return Err(Problem::SmbUserTooLong);
+    }
+    if user.contains(SMB_USER_FORBIDDEN) || user.contains(char::is_control) {
+        return Err(Problem::SmbUserForbiddenCharacter);
+    }
+    Ok(())
+}
+
+/// SMB domain: empty, or a NetBIOS or DNS domain name of at most 255 characters, with no white space
+/// and none of `\ / : * ? " < > | @`. `.` is the server's own accounts.
+///
+/// # Errors
+///
+/// [`Problem::DomainInvalid`].
+pub fn check_domain(domain: &str) -> Result<(), Problem> {
+    let is_valid = domain.is_empty()
+        || (domain.chars().count() <= MAX_DOMAIN_CHARS
+            && !domain.contains(DOMAIN_FORBIDDEN)
+            && !domain.contains(|c: char| c.is_whitespace() || c.is_control()));
+    if is_valid {
+        Ok(())
+    } else {
+        Err(Problem::DomainInvalid)
+    }
 }
 
 /// Port: 1–65535.
@@ -644,7 +817,9 @@ mod tests {
     }
 
     fn sftp(profile: &mut Profile) -> &mut SftpProfile {
-        let Protocol::Sftp(sftp) = &mut profile.protocol;
+        let Protocol::Sftp(sftp) = &mut profile.protocol else {
+            panic!("not SFTP");
+        };
         sftp
     }
 
@@ -1341,5 +1516,268 @@ mod tests {
         assert_eq!(fields.remote_path, "~");
         assert_eq!(fields.cache_ttl_secs, 5);
         assert_eq!(sftp(&mut second).keepalive_secs, 15);
+    }
+
+    // ---- SMB (M3-03). ----
+
+    fn share(auth: SmbAuth) -> Profile {
+        let smb = SmbProfile::new("nas", "media", "marcin", auth);
+        Profile::new("NAS", Protocol::Smb(smb))
+    }
+
+    fn smb(profile: &mut Profile) -> &mut SmbProfile {
+        let Protocol::Smb(smb) = &mut profile.protocol else {
+            panic!("not SMB");
+        };
+        smb
+    }
+
+    #[test]
+    fn a_server_is_a_name_or_an_ipv4_address() {
+        for server in [
+            "nas",
+            "NAS-01",
+            "nas.corp.example",
+            "192.168.1.10",
+            "fe80--1.ipv6-literal.net",
+            "my_nas",
+        ] {
+            assert_eq!(check_server(server), Ok(()), "{server:?}");
+        }
+        for server in [
+            "",
+            " ",
+            "nas host",
+            r"\\nas",
+            "nas/x",
+            "nas:445",
+            "10.0.4.256",
+            "-nas",
+        ] {
+            assert_eq!(
+                check_server(server),
+                Err(Problem::ServerInvalid),
+                "{server:?}"
+            );
+        }
+        assert_eq!(
+            Problem::ServerInvalid.to_string(),
+            "Enter a server name or IP address"
+        );
+    }
+
+    #[test]
+    fn an_ipv6_server_is_asked_for_in_its_literal_net_form() {
+        for server in ["::1", "fe80::1", "2001:db8::10"] {
+            assert_eq!(check_server(server), Err(Problem::ServerIpv6), "{server:?}");
+        }
+    }
+
+    #[test]
+    fn a_share_is_1_to_80_characters_without_the_forbidden_ones() {
+        for share in ["media", "C$", "Team Files", "zdjęcia", &"a".repeat(80)] {
+            assert_eq!(check_share(share), Ok(()), "{share:?}");
+        }
+        assert_eq!(check_share(""), Err(Problem::ShareRequired));
+        assert_eq!(check_share("  "), Err(Problem::ShareRequired));
+        assert_eq!(check_share(&"ż".repeat(81)), Err(Problem::ShareTooLong));
+        for c in [
+            '\\', '/', '[', ']', ':', '|', '<', '>', '+', '=', ';', ',', '?', '*', '"', '\n',
+        ] {
+            let share = format!("a{c}b");
+            assert_eq!(
+                check_share(&share),
+                Err(Problem::ShareForbiddenCharacter),
+                "{share:?}"
+            );
+        }
+        assert_eq!(
+            Problem::ShareForbiddenCharacter.to_string(),
+            r#"A share name cannot contain \ / [ ] : | < > + = ; , ? * ""#
+        );
+    }
+
+    #[test]
+    fn a_sub_path_is_empty_or_folder_names() {
+        for sub_path in [
+            "",
+            "films",
+            r"films\2024",
+            "films/2024",
+            "Nowe filmy",
+            "a.b",
+            "$x",
+        ] {
+            assert_eq!(check_sub_path(sub_path), Ok(()), "{sub_path:?}");
+        }
+        for sub_path in [
+            r"\films",
+            r"films\",
+            r"films\\2024",
+            "films//2024",
+            ".",
+            r"a\..\b",
+            r"a\.\b",
+            "films.",
+            "films ",
+            "a:b",
+            "a*b",
+            "a?b",
+            "a\"b",
+            "a<b",
+            "a>b",
+            "a|b",
+            "a\tb",
+        ] {
+            assert_eq!(
+                check_sub_path(sub_path),
+                Err(Problem::SubPathInvalid),
+                "{sub_path:?}"
+            );
+        }
+        assert_eq!(
+            Problem::SubPathInvalid.to_string(),
+            r"Use folder names separated by \, such as films\2024"
+        );
+    }
+
+    #[test]
+    fn an_smb_user_may_have_spaces_and_a_domain_after_an_at() {
+        for user in [
+            "marcin",
+            "Jan Kowalski",
+            "me@corp.example",
+            "żółw",
+            &"a".repeat(104),
+        ] {
+            assert_eq!(check_smb_user(user), Ok(()), "{user:?}");
+        }
+        assert_eq!(check_smb_user(""), Err(Problem::UserRequired));
+        assert_eq!(check_smb_user(" "), Err(Problem::UserRequired));
+        assert_eq!(
+            check_smb_user(&"a".repeat(105)),
+            Err(Problem::SmbUserTooLong)
+        );
+        for c in [
+            '"', '/', '\\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>', '\0',
+        ] {
+            let user = format!("a{c}b");
+            assert_eq!(
+                check_smb_user(&user),
+                Err(Problem::SmbUserForbiddenCharacter),
+                "{user:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_domain_is_empty_or_a_name() {
+        for domain in [
+            "",
+            "CORP",
+            "corp.example",
+            ".",
+            "my-domain_1",
+            &"a".repeat(255),
+        ] {
+            assert_eq!(check_domain(domain), Ok(()), "{domain:?}");
+        }
+        for domain in [
+            "CO RP",
+            r"CORP\",
+            "a/b",
+            "me@corp",
+            "a:b",
+            "a*b",
+            &"a".repeat(256),
+        ] {
+            assert_eq!(
+                check_domain(domain),
+                Err(Problem::DomainInvalid),
+                "{domain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_whole_smb_profile_is_checked_field_by_field() {
+        assert_eq!(
+            validate_profile(&share(SmbAuth::Ask), &[], &no_file),
+            Validation::default()
+        );
+
+        let mut profile = share(SmbAuth::Password { remember: true });
+        let fields = smb(&mut profile);
+        fields.server = "::1".to_owned();
+        fields.share = String::new();
+        fields.sub_path = r"a\..".to_owned();
+        fields.domain = "CO RP".to_owned();
+        fields.username = String::new();
+        let marked: Vec<_> = validate_profile(&profile, &[], &no_file)
+            .errors
+            .into_iter()
+            .map(|error| (error.field, error.problem))
+            .collect();
+        assert_eq!(
+            marked,
+            [
+                (Field::Server, Problem::ServerIpv6),
+                (Field::Share, Problem::ShareRequired),
+                (Field::SubPath, Problem::SubPathInvalid),
+                (Field::User, Problem::UserRequired),
+                (Field::Domain, Problem::DomainInvalid),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_domain_in_both_boxes_is_marked_on_the_domain() {
+        let mut profile = share(SmbAuth::Ask);
+        smb(&mut profile).username = "me@corp.example".to_owned();
+        assert!(validate_profile(&profile, &[], &no_file).can_save());
+
+        smb(&mut profile).domain = "CORP".to_owned();
+        let result = validate_profile(&profile, &[], &no_file);
+        assert_eq!(result.problem(Field::Domain), Some(Problem::DomainTwice));
+        assert_eq!(result.problem(Field::User), None);
+    }
+
+    /// Single sign-on sends no user, so a blank one, or anything left from another method, is fine.
+    #[test]
+    fn the_windows_user_needs_no_user_or_domain() {
+        let mut profile = share(SmbAuth::WindowsUser);
+        smb(&mut profile).username = String::new();
+        smb(&mut profile).domain = "CO RP".to_owned();
+        assert!(validate_profile(&profile, &[], &no_file).can_save());
+    }
+
+    #[test]
+    fn an_smb_profile_shares_the_name_and_drive_rules() {
+        let mut other = valid();
+        other.drive = letter('M');
+        let mut profile = share(SmbAuth::Ask);
+        profile.name = "production".to_owned();
+        profile.drive = letter('M');
+
+        let result = validate_profile(&profile, &[other], &no_file);
+        assert_eq!(result.problem(Field::Name), Some(Problem::NameTaken));
+        assert_eq!(
+            result.drive_warning,
+            Some(DriveWarning::AlsoUsedBy("Production".to_owned()))
+        );
+    }
+
+    #[test]
+    fn the_unc_and_account_are_put_together_as_windows_writes_them() {
+        let mut profile = share(SmbAuth::Ask);
+        let fields = smb(&mut profile);
+        assert_eq!(fields.unc(), r"\\nas\media");
+        assert_eq!(fields.unc_with_sub_path(), r"\\nas\media");
+        assert_eq!(fields.account(), "marcin");
+
+        fields.sub_path = "films/2024".to_owned();
+        fields.domain = "CORP".to_owned();
+        assert_eq!(fields.unc_with_sub_path(), r"\\nas\media\films\2024");
+        assert_eq!(fields.account(), r"CORP\marcin");
     }
 }

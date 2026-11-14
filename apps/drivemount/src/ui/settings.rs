@@ -110,6 +110,7 @@ mod tests {
             notifications: false,
             notification_sound: true,
             log_level: LogLevel::Debug,
+            show_other_drives: false,
             op_timeout_secs: 30,
             winfsp_threads: 3,
         };

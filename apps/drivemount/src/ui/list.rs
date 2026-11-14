@@ -476,9 +476,13 @@ fn live_letter(state: &MountState, detail: Option<MountDetail>) -> Option<DriveL
     }
 }
 
-/// `user@host:path`, as in the mock-up, with a port other than 22 after the host.
+/// `user@host:path`, as in the mock-up, with a port other than 22 after the host. For SMB, the UNC
+/// path with the sub-path, where Explorer opens.
 fn address_of(profile: &Profile) -> String {
-    let Protocol::Sftp(sftp) = &profile.protocol;
+    let sftp = match &profile.protocol {
+        Protocol::Sftp(sftp) => sftp,
+        Protocol::Smb(smb) => return smb.unc_with_sub_path(),
+    };
     let host = if sftp.host.contains(':') {
         format!("[{}]", sftp.host)
     } else {
@@ -722,7 +726,9 @@ mod tests {
     #[test]
     fn a_profile_that_breaks_a_rule_says_so_and_cannot_be_mounted() {
         let mut broken = profile("a");
-        let Protocol::Sftp(sftp) = &mut broken.protocol;
+        let Protocol::Sftp(sftp) = &mut broken.protocol else {
+            panic!("not SFTP");
+        };
         sftp.keepalive_secs = 9999;
         let id = broken.id;
         let state = state_with(vec![broken]);
@@ -897,19 +903,35 @@ mod tests {
     #[test]
     fn an_address_shows_a_port_only_when_it_is_not_the_usual_one() {
         let mut saved = profile("a");
-        let Protocol::Sftp(sftp) = &mut saved.protocol;
+        let Protocol::Sftp(sftp) = &mut saved.protocol else {
+            panic!("not SFTP");
+        };
         sftp.host = "nas".to_owned();
         sftp.username = "marcin".to_owned();
         assert_eq!(address_of(&saved), "marcin@nas:~");
 
-        let Protocol::Sftp(sftp) = &mut saved.protocol;
+        let Protocol::Sftp(sftp) = &mut saved.protocol else {
+            panic!("not SFTP");
+        };
         sftp.port = 2222;
         sftp.remote_path = "/srv".to_owned();
         assert_eq!(address_of(&saved), "marcin@nas:2222:/srv");
 
-        let Protocol::Sftp(sftp) = &mut saved.protocol;
+        let Protocol::Sftp(sftp) = &mut saved.protocol else {
+            panic!("not SFTP");
+        };
         sftp.port = 22;
         sftp.host = "fe80::1".to_owned();
         assert_eq!(address_of(&saved), "marcin@[fe80::1]:/srv");
+    }
+
+    #[test]
+    fn an_smb_address_is_its_unc_path_with_the_sub_path() {
+        use drivemount_core::profile::{SmbAuth, SmbProfile};
+
+        let mut smb = SmbProfile::new("nas", "media", "marcin", SmbAuth::Ask);
+        smb.sub_path = "films".to_owned();
+        let saved = Profile::new("a", Protocol::Smb(smb));
+        assert_eq!(address_of(&saved), r"\\nas\media\films");
     }
 }

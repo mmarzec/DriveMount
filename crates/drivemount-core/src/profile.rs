@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! What a saved connection is (spec §6.1), its rules (the `validate` submodule, spec §7.3) and
-//! splitting pasted text (the `paste` submodule, FR-PROF-05).
+//! splitting pasted text (the `paste` submodule, FR-PROF-05, FR-SMB-01).
 //!
 //! A profile holds no secrets. They are in Credential Manager, under the profile's [`id`](Profile::id)
 //! (NFR-SEC-01), and `remember` only says whether one is meant to be there.
 
 mod paste;
+mod unc;
 mod validate;
 
 use std::path::PathBuf;
@@ -15,10 +16,12 @@ use drivemount_vfs::DriveLetter;
 use uuid::Uuid;
 
 pub use self::paste::{PastedHost, parse_pasted_host};
+pub use self::unc::{PastedUnc, SmbUser, parse_pasted_unc, split_smb_user};
 pub use self::validate::{
     DriveWarning, Field, FieldError, JumpTarget, Problem, Validation, check_cache_secs,
-    check_drive, check_host, check_keepalive_secs, check_key_file, check_name, check_port,
-    check_remote_path, check_user, drive_warning, parse_cache_secs, parse_drive, parse_jump_host,
+    check_domain, check_drive, check_host, check_keepalive_secs, check_key_file, check_name,
+    check_port, check_remote_path, check_server, check_share, check_smb_user, check_sub_path,
+    check_user, drive_warning, parse_cache_secs, parse_drive, parse_jump_host,
     parse_keepalive_secs, parse_port, read_key_head, validate_profile,
 };
 
@@ -94,11 +97,13 @@ impl Profile {
     }
 }
 
-/// The fields that depend on the protocol. SMB arrives in M3 and NFS in M4.
+/// The fields that depend on the protocol. NFS arrives in M4.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Protocol {
     /// SFTP over SSH.
     Sftp(SftpProfile),
+    /// A Windows share, mapped by Windows itself (FR-SMB).
+    Smb(SmbProfile),
 }
 
 /// The SFTP fields of a profile.
@@ -185,6 +190,84 @@ pub enum JumpAuth {
     },
     /// A password, stored as `DriveMount:<uuid>:jump-password` if the user asks for that.
     Password,
+}
+
+/// The SMB fields of a profile (FR-SMB-01).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmbProfile {
+    /// A name or an IPv4 address, without `\\`. An IPv6 address goes in its `ipv6-literal.net` form.
+    pub server: String,
+    /// The share on the server.
+    pub share: String,
+    /// A folder inside the share, `\`-separated, or empty. Windows cannot map a letter to it, so it is
+    /// where Explorer opens (spec §5.9).
+    pub sub_path: String,
+    /// The user's domain, or empty.
+    pub domain: String,
+    /// The user to log in as. Kept, but unused, with [`SmbAuth::WindowsUser`].
+    pub username: String,
+    /// How to log in.
+    pub auth: SmbAuth,
+}
+
+impl SmbProfile {
+    /// The given share and login, with no sub-path or domain.
+    #[must_use]
+    pub fn new(
+        server: impl Into<String>,
+        share: impl Into<String>,
+        username: impl Into<String>,
+        auth: SmbAuth,
+    ) -> Self {
+        Self {
+            server: server.into(),
+            share: share.into(),
+            sub_path: String::new(),
+            domain: String::new(),
+            username: username.into(),
+            auth,
+        }
+    }
+
+    /// `\\server\share`, what Windows maps.
+    #[must_use]
+    pub fn unc(&self) -> String {
+        format!(r"\\{}\{}", self.server, self.share)
+    }
+
+    /// `\\server\share\sub\path`, where Explorer opens.
+    #[must_use]
+    pub fn unc_with_sub_path(&self) -> String {
+        if self.sub_path.is_empty() {
+            self.unc()
+        } else {
+            format!(r"{}\{}", self.unc(), self.sub_path.replace('/', r"\"))
+        }
+    }
+
+    /// The user name as Windows is given it: `DOMAIN\user`, or the user alone.
+    #[must_use]
+    pub fn account(&self) -> String {
+        if self.domain.is_empty() {
+            self.username.clone()
+        } else {
+            format!(r"{}\{}", self.domain, self.username)
+        }
+    }
+}
+
+/// How to log in to an SMB server (FR-SMB-02).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SmbAuth {
+    /// A password.
+    Password {
+        /// Keep it in Credential Manager; otherwise it is asked for at every mount.
+        remember: bool,
+    },
+    /// A password asked for at every mount, never stored.
+    Ask,
+    /// The signed-in Windows user (Kerberos or NTLM single sign-on): no user or password is sent.
+    WindowsUser,
 }
 
 /// Which letter a profile mounts on.

@@ -111,6 +111,9 @@ mod windows {
 
     use super::{dispatcher_threads, own_slot, sftp_profile};
 
+    /// The factory for SMB profiles comes with their form, in M3-04.
+    const NO_SMB_YET: &str = "SMB drives cannot be mounted by this version yet";
+
     /// `%USERPROFILE%\.ssh\known_hosts` (spec §6.3). `None` if `USERPROFILE` is not set.
     #[must_use]
     pub fn default_known_hosts() -> Option<PathBuf> {
@@ -164,7 +167,9 @@ mod windows {
             profile: &Profile,
             settings: &Settings,
         ) -> Result<Box<dyn MountBackend>, MountError> {
-            let Protocol::Sftp(sftp) = &profile.protocol;
+            let Protocol::Sftp(sftp) = &profile.protocol else {
+                return Err(MountError::Other(NO_SMB_YET.to_owned()));
+            };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
             let connection = sftp_profile(sftp, &self.known_hosts, timeout, |slot| {
                 self.stored(profile.id, slot)
@@ -198,7 +203,9 @@ mod windows {
             typed: Vec<(SecretSlot, Secret<String>)>,
             prompter: &dyn Prompter,
         ) -> Result<Duration, ConnectError> {
-            let Protocol::Sftp(sftp) = &profile.protocol;
+            let Protocol::Sftp(sftp) = &profile.protocol else {
+                return Err(ConnectError::Other(NO_SMB_YET.to_owned()));
+            };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
             let mut typed = typed;
             let connection = sftp_profile(sftp, &self.known_hosts, timeout, |slot| {

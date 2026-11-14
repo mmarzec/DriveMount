@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 use super::{ProfileChangeError, Shared};
 use crate::config::UnreadableProfile;
-use crate::profile::{JumpAuth, Profile, Protocol, SftpAuth, read_key_head, validate_profile};
+use crate::profile::{
+    JumpAuth, Profile, Protocol, SftpAuth, SmbAuth, read_key_head, validate_profile,
+};
 
 /// What FR-PROF-08 locks while a profile is in use. `cache_ttl_secs` and `keepalive_secs` are in the
 /// protocol too: the drive took them when it started, so changing them could only mislead.
@@ -22,28 +24,38 @@ fn connection_changed(old: &Profile, new: &Profile) -> bool {
 }
 
 /// The secrets this profile says it has. Nothing else may stay in the store (spec §6.2), and *Ask
-/// each time* never has any (FR-SSH-05).
+/// each time* never has any (FR-SSH-05), nor has *Current Windows user* (FR-SMB-02).
 fn may_keep(profile: &Profile, slot: SecretSlot) -> bool {
-    let Protocol::Sftp(sftp) = &profile.protocol;
-    match slot {
-        SecretSlot::Password => matches!(sftp.auth, SftpAuth::Password { remember: true }),
-        SecretSlot::Passphrase => matches!(sftp.auth, SftpAuth::KeyFile { remember: true, .. }),
-        SecretSlot::JumpPassword => jump_uses_a_password(profile),
+    match (&profile.protocol, slot) {
+        (Protocol::Sftp(sftp), SecretSlot::Password) => {
+            matches!(sftp.auth, SftpAuth::Password { remember: true })
+        }
+        (Protocol::Sftp(sftp), SecretSlot::Passphrase) => {
+            matches!(sftp.auth, SftpAuth::KeyFile { remember: true, .. })
+        }
+        (Protocol::Smb(smb), SecretSlot::Password) => {
+            smb.auth == SmbAuth::Password { remember: true }
+        }
+        (_, SecretSlot::JumpPassword) => jump_uses_a_password(profile),
+        (Protocol::Smb(_), SecretSlot::Passphrase) => false,
     }
 }
 
 fn jump_uses_a_password(profile: &Profile) -> bool {
-    let Protocol::Sftp(sftp) = &profile.protocol;
-    matches!(
-        sftp.jump.as_ref().map(|jump| &jump.auth),
-        Some(JumpAuth::Password)
-    )
+    match &profile.protocol {
+        Protocol::Sftp(sftp) => matches!(
+            sftp.jump.as_ref().map(|jump| &jump.auth),
+            Some(JumpAuth::Password)
+        ),
+        Protocol::Smb(_) => false,
+    }
 }
 
 /// The passphrase of another key file is of no use, and a wrong one is E-AUTH with no second prompt.
 fn key_file_changed(old: &Profile, new: &Profile) -> bool {
-    let Protocol::Sftp(old) = &old.protocol;
-    let Protocol::Sftp(new) = &new.protocol;
+    let (Protocol::Sftp(old), Protocol::Sftp(new)) = (&old.protocol, &new.protocol) else {
+        return false;
+    };
     matches!(
         (&old.auth, &new.auth),
         (SftpAuth::KeyFile { path: from, .. }, SftpAuth::KeyFile { path: to, .. }) if from != to
@@ -179,20 +191,34 @@ pub(super) fn keep_remembered(
 /// Whether a backend can have had a reason to remember this: `remember` may still be off, as the user
 /// has only now ticked it in the prompt.
 fn has_use_for(profile: &Profile, slot: SecretSlot) -> bool {
-    let Protocol::Sftp(sftp) = &profile.protocol;
-    match slot {
-        SecretSlot::Password => matches!(sftp.auth, SftpAuth::Password { .. }),
-        SecretSlot::Passphrase => matches!(sftp.auth, SftpAuth::KeyFile { .. }),
-        SecretSlot::JumpPassword => jump_uses_a_password(profile),
+    match (&profile.protocol, slot) {
+        (Protocol::Sftp(sftp), SecretSlot::Password) => {
+            matches!(sftp.auth, SftpAuth::Password { .. })
+        }
+        (Protocol::Sftp(sftp), SecretSlot::Passphrase) => {
+            matches!(sftp.auth, SftpAuth::KeyFile { .. })
+        }
+        (Protocol::Smb(smb), SecretSlot::Password) => matches!(smb.auth, SmbAuth::Password { .. }),
+        (_, SecretSlot::JumpPassword) => jump_uses_a_password(profile),
+        (Protocol::Smb(_), SecretSlot::Passphrase) => false,
     }
 }
 
 /// A jump host has no flag: whether its password is stored is all there is.
 const fn tick_remember(profile: &mut Profile, slot: SecretSlot) {
-    let Protocol::Sftp(sftp) = &mut profile.protocol;
-    if let (SecretSlot::Password, SftpAuth::Password { remember })
-    | (SecretSlot::Passphrase, SftpAuth::KeyFile { remember, .. }) = (slot, &mut sftp.auth)
-    {
-        *remember = true;
+    match &mut profile.protocol {
+        Protocol::Sftp(sftp) => {
+            if let (SecretSlot::Password, SftpAuth::Password { remember })
+            | (SecretSlot::Passphrase, SftpAuth::KeyFile { remember, .. }) =
+                (slot, &mut sftp.auth)
+            {
+                *remember = true;
+            }
+        }
+        Protocol::Smb(smb) => {
+            if let (SecretSlot::Password, SmbAuth::Password { remember }) = (slot, &mut smb.auth) {
+                *remember = true;
+            }
+        }
     }
 }
