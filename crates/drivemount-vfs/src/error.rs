@@ -86,6 +86,24 @@ pub struct RevokedHostKey {
     pub line: u32,
 }
 
+/// The other connection to a server that E-SMB-1219 names, as Windows lists it (spec §5.9).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OtherSmbConnection {
+    /// Its drive letter. `None` for a share opened by its `\\server\share` path.
+    pub letter: Option<DriveLetter>,
+    /// The user it was made as, `DOMAIN\user` when Windows gives a domain.
+    pub user: String,
+}
+
+/// The details of E-SMB-1219 (FR-SMB-06).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SmbCredentialConflict {
+    /// The server as the profile gives it.
+    pub server: String,
+    /// The connection to that server that holds other credentials, if the app found it.
+    pub other: Option<OtherSmbConnection>,
+}
+
 /// Why a connection could not be set up.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ConnectError {
@@ -150,6 +168,18 @@ pub enum ConnectError {
     /// E-KEY-FORMAT.
     #[error("unsupported key file format")]
     KeyFormat,
+    /// E-SMB-1219: Windows holds a connection to this server with other credentials (FR-SMB-06).
+    /// Retrying cannot help until that connection goes.
+    #[error("Windows is already connected to {} as a different user", .0.server)]
+    SmbCredentialConflict(Box<SmbCredentialConflict>),
+    /// E-SMB-SHARE-NOT-FOUND.
+    #[error("share {share} not found on {server}")]
+    ShareNotFound {
+        /// The share.
+        share: String,
+        /// The server.
+        server: String,
+    },
     /// E-CONN-LOST: the connection dropped during setup, or a probe found it gone.
     #[error("connection lost")]
     ConnectionLost,
@@ -173,6 +203,10 @@ pub enum MountError {
     /// E-WINFSP-MISSING.
     #[error("WinFsp 2.1 or later is required")]
     WinFspMissing,
+    /// Files are open on the drive, so it was not removed: the cue to ask the user before a
+    /// [forced unmount](crate::MountBackend::unmount_forced) (FR-SMB-04). The drive is as it was.
+    #[error("files are open on drive {0}")]
+    FilesOpen(DriveLetter),
     /// E-INTERNAL, with details for the log.
     #[error("{0}")]
     Other(String),
@@ -202,6 +236,23 @@ mod tests {
         let error = MountError::from(ConnectError::SftpUnavailable);
         assert_eq!(error, MountError::Connect(ConnectError::SftpUnavailable));
         assert_eq!(error.to_string(), "the server does not provide SFTP");
+    }
+
+    #[test]
+    fn smb_errors_name_the_server() {
+        let conflict = ConnectError::SmbCredentialConflict(Box::new(SmbCredentialConflict {
+            server: "nas".to_owned(),
+            other: None,
+        }));
+        assert_eq!(
+            conflict.to_string(),
+            "Windows is already connected to nas as a different user"
+        );
+        let share = ConnectError::ShareNotFound {
+            share: "media".to_owned(),
+            server: "nas".to_owned(),
+        };
+        assert_eq!(share.to_string(), "share media not found on nas");
     }
 
     #[test]

@@ -57,7 +57,8 @@ pub fn shown_error(texts: &Texts<'_>, error: &MountError) -> ShownError {
         MountError::WinFspMissing => {
             ShownError::new("E-WINFSP-MISSING", texts.invoke_winfsp_missing(), None)
         }
-        MountError::Other(_) => internal(texts),
+        // The manager keeps the drive mounted on this; it is no row's error (FR-SMB-04).
+        MountError::FilesOpen(_) | MountError::Other(_) => internal(texts),
     }
 }
 
@@ -135,8 +136,12 @@ pub fn shown_connect_error(texts: &Texts<'_>, error: &ConnectError) -> ShownErro
         ConnectError::ConnectionLost => {
             ShownError::new("E-CONN-LOST", texts.invoke_connection_lost(), None)
         }
-        // Cancelling goes to Disconnected, and has no row of its own in the catalogue.
-        ConnectError::Cancelled | ConnectError::Other(_) => internal(texts),
+        // Cancelling goes to Disconnected, and has no row of its own in the catalogue. The SMB
+        // errors get their texts with the SMB form (M3-04); no SMB profile can be mounted before.
+        ConnectError::Cancelled
+        | ConnectError::SmbCredentialConflict(_)
+        | ConnectError::ShareNotFound { .. }
+        | ConnectError::Other(_) => internal(texts),
     }
 }
 

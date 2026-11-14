@@ -54,8 +54,18 @@ pub trait MountBackend: Send + Sync + 'static {
     /// Connects and makes the drive appear on `letter`.
     async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError>;
 
-    /// Flushes and removes the drive.
+    /// Flushes and removes the drive. A backend may refuse while files are open on it, with
+    /// [`MountError::FilesOpen`] and the drive left as it was, for the user to be asked first
+    /// (FR-SMB-04); [`unmount_forced`](Self::unmount_forced) is what comes after a yes.
     async fn unmount(&self) -> Result<(), MountError>;
+
+    /// Removes the drive even with files open on it, which lose their handles: after the user said
+    /// yes to FR-SMB-04's question, and wherever there is nobody to ask (Quit, sign-out, deleting
+    /// the profile). Never [`MountError::FilesOpen`]. The default is [`unmount`](Self::unmount), for
+    /// a backend that never refuses.
+    async fn unmount_forced(&self) -> Result<(), MountError> {
+        self.unmount().await
+    }
 
     /// Connects again once [`health`](Self::health) has said the connection is lost, keeping the
     /// drive on its letter (FR-REC-02). Files open on the drive carry on over the new connection
@@ -72,6 +82,14 @@ pub trait MountBackend: Send + Sync + 'static {
     /// without waiting for it. The default does nothing, for a backend whose connection Windows looks
     /// after (SMB).
     async fn check_connection(&self) {}
+
+    /// Whether the system reconnects this drive by itself, as Windows' SMB client does (FR-SMB-05).
+    /// Then the manager never unmounts it for a lost connection: it waits in *Reconnecting*, whatever
+    /// the profile's auto-reconnect flag says, and [`reconnect`](Self::reconnect) only checks whether
+    /// the connection is back. The default is `false`.
+    fn reconnects_itself(&self) -> bool {
+        false
+    }
 
     /// Takes what the user asked to remember during [`mount`](Self::mount), for the manager to store
     /// (NFR-SEC-01). Each secret is handed over once. A backend that logs in some other way has none.
