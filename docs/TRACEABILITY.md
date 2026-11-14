@@ -178,7 +178,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | NFR-SEC-04 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-05 | M1-02, M1-07, M1-11, M2-11 | – | – |
 | NFR-SEC-06 | M1-02, M1-07, M1-11, M2-11 | – | – |
-| NFR-SEC-07 | M1-01, M2-11 | CI `cargo deny check`, `cargo audit`. Signing: M2-11 | – |
+| NFR-SEC-07 | M1-01, M2-11 | CI `cargo deny check`, `cargo audit`. Signing: `.github/workflows/release.yml` has SignPath sign the exe, MSI and setup exe, and fails on a tag unless each signature is valid and timestamped; the signed test tag is still to run (H-10) | – |
 
 ## Usability
 

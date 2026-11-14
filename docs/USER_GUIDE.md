@@ -45,6 +45,14 @@ DriveMount goes to `C:\Program Files\DriveMount\` and gets a Start-menu shortcut
 
 The zip holds `drivemount.exe`, the licence and the third-party licences. Unpack it anywhere and run `drivemount.exe`. Install WinFsp yourself first, from <https://winfsp.dev/rel/>.
 
+### Checking the download
+
+The setup exe, the MSI and `drivemount.exe` are digitally signed. In File Explorer, right-click the file, choose **Properties** and open **Digital Signatures**: the signature should be there, valid, and by **SignPath Foundation**, which signs DriveMount for free as an open-source project. Windows shows the same name as the publisher when the installer asks for administrator rights. Each release also lists the files' SHA-256 checksums, in its notes and in `sha256sums.txt`. To compare, run in PowerShell:
+
+```powershell
+Get-FileHash .\DriveMount-1.0.0-setup.exe
+```
+
 The portable copy has no uninstaller. To remove it, quit DriveMount, delete its folder, and if you like, delete the data listed in [section 10](#10-where-drivemount-keeps-things).
 
 ### If WinFsp is missing

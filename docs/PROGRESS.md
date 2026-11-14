@@ -2,6 +2,32 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: M2-11 Signing and release workflow
+
+**Status: written for SignPath and tested locally with a self-signed certificate standing in for it; nothing has run on GitHub. The signed test tag waits on H-10 (the SignPath Foundation application and project setup).**
+
+- **OD-3 decided by the owner (2026-11-14): SignPath**, through SignPath Foundation's free programme for open source. Windows shows *SignPath Foundation* as the publisher, not us. Every release-signing request needs manual approval in SignPath, and every job before it must run on GitHub-hosted runners (origin verification).
+- **Signing order and requests.** SignPath signs on its own servers and knows nothing of WiX bundles, so `package.ps1` now runs in steps (`-Step Build|Bundle|Detach|Attach|Finish`, all by default) and the workflow sends **three signing requests**, so **three approvals per release**:
+  1. `drivemount.exe` and the MSI: SignPath signs the loose exe (for the zip), the exe inside the MSI, then the MSI;
+  2. the setup exe's engine, taken out with `insignia -ib`;
+  3. the setup exe, after `insignia -ab` has put the signed engine back.
+  The engine is signed on its own so the copy Windows keeps in the package cache for uninstalling is signed too. Dropping request 2 would save one approval, but uninstalling would then run an unsigned exe.
+- **Added:**
+  - `.github/workflows/release.yml`: on a tag `vX.Y.Z` (equal to `drivemount`'s version) or by hand. Windows, no cache; WinFsp, cargo-about 0.9.3, cargo-wix 0.3.9, then the steps and requests above; checks the signatures (on a tag: valid and timestamped); uploads the artefacts; on a tag drafts a GitHub release with the checksums and SignPath's attribution line. A tag uses the signing policy `release-signing`; a run by hand uses `test-signing` (no approval, test certificate, no release). Settings: secret `SIGNPATH_API_TOKEN`, variables `SIGNPATH_ORGANIZATION_ID`, `SIGNPATH_PROJECT_SLUG`. Without the organisation id it builds unsigned and a tag's draft says so at the top. Skipped on Gitea.
+  - `.github/actions/signpath/action.yml`: one request: copies the files into a folder, `actions/upload-artifact@v4`, `signpath/github-action-submit-signing-request@v3` (waits up to an hour, approval included), copies the signed files back and checks each came back signed.
+  - `packaging/signpath/artifact-configuration.xml`: one configuration for all three requests (each element `min-matches="0"`), with deep signing of the exe inside the MSI. SignPath keeps its own copy: paste it into the project's default artifact configuration, and try it with *Upload an artifact sample*, above all the `**/drivemount.exe` path inside the MSI.
+  - `scripts/get-release-tools.ps1`: WiX 3.14.1 binaries and the WinFsp 2.2.26286 MSI, pinned by SHA-256; writes `WIX` and `DRIVEMOUNT_WINFSP_MSI` to `GITHUB_ENV`.
+  - `scripts/sign.ps1`: local signing with a certificate in the Windows store, for `package.ps1 -Sign` (all steps with signing between them). Not used by the workflow.
+  - `package.ps1` always writes `sha256sums.txt` (`sha256sum -c` format, LF). `-WinFspMsi` also comes from `DRIVEMOUNT_WINFSP_MSI`.
+  - README: *Releases*, and the *Code signing policy* section SignPath Foundation asks for (attribution, team roles, privacy). User guide §1: *Checking the download*.
+- **Tested here** with a self-signed certificate (removed afterwards): the steps one by one with `sign.ps1` between them, as the workflow runs them, and `-Sign` in one go. All signatures made and timestamped. In the earlier run, the exe inside the MSI and the zip and the MSI inside the setup exe carried the signature, and the signed setup exe ran (`-layout -quiet`, exit 0). `sha256sum -c` passes.
+- **Not tested:** the workflow and the composite action (they run only on GitHub); SignPath itself, including the artifact configuration and whether it signs a Burn bundle as a plain PE file without harm; SmartScreen.
+- **To do for H-10:**
+  - Apply to SignPath Foundation (signpath.org); set up the project, the `release-signing` and `test-signing` policies with a CI user as submitter and the owner as approver, the artifact configuration above, and the repository's secret and variables. MFA for everyone in it.
+  - SignPath Foundation asks that product name and version attributes are set and the same in every build. `drivemount.exe` has **no version resource** (nor icon, M2-10's note), so its metadata restrictions may have nothing to check, or reject it. Adding a `VERSIONINFO` resource (ProductName *DriveMount*, version from Cargo) is likely needed.
+  - SignPath may in future require that signed packages hold only signed files; WinFsp's MSI is signed by its publisher, and our MSI holds only `drivemount.exe` and text files.
+- **Next:** H-10; then run the workflow by hand (test-signing) to check the whole path, then a test tag for M2-11's acceptance. The tag must equal the workspace version and an MSI version is three numbers, so `v0.1.0` as things stand; delete the draft and the tag afterwards. H-11 and the user guide check from M2-10 are still open.
+
 ## 2026-11-13: M2-10 Installer (branch `feat/m2-10-installer`)
 
 **Status: done locally, not committed; H-11 (the owner on a clean Windows 11 Pro) is still to do.** `scripts/test-installer.ps1` passes all 33 checks on the dev machine. `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check licenses` and the tests of `drivemount` (240) and `drivemount-win` (62) pass.

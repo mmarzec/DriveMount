@@ -76,7 +76,11 @@ The workspace also builds on Linux, where the Windows-only crates (`drivemount-w
 - the [WiX Toolset 3.14](https://github.com/wixtoolset/wix3/releases) binaries, unzipped; give the folder with `-Wix` or the `WIX` variable;
 - the unmodified WinFsp MSI from [winfsp.dev](https://winfsp.dev/rel/) (`-WinFspMsi`), which the setup exe installs when WinFsp is missing.
 
-`-TargetDir target\dist` builds in a folder of its own, which leaves a running `target\release\drivemount.exe` alone. `scripts\test-installer.ps1` installs, upgrades and uninstalls two such builds on this PC from an elevated PowerShell; its help says how.
+`-TargetDir target\dist` builds in a folder of its own, which leaves a running `target\release\drivemount.exe` alone. `scripts\test-installer.ps1` installs, upgrades and uninstalls two such builds on this PC from an elevated PowerShell; its help says how. `scripts\get-release-tools.ps1` downloads pinned copies of WiX and the WinFsp MSI.
+
+### Releases
+
+Pushing a tag `vX.Y.Z` that matches `drivemount`'s version runs [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub. It builds everything, has [SignPath](https://about.signpath.io) sign the exe, the MSI and the setup exe, writes `sha256sums.txt` and drafts a release, which is published by hand. Running the workflow by hand signs with SignPath's test certificate and drafts nothing. The file's header lists the settings it needs. `scripts\package.ps1 -Sign` signs locally with a certificate in the Windows store, such as a self-signed test one; `scripts\sign.ps1` says how.
 
 ### Checks
 
@@ -184,6 +188,19 @@ cargo test -p drivemount-winfsp --test explorer -- --ignored --test-threads=1
 | [docs/TRACEABILITY.md](docs/TRACEABILITY.md) | Requirements traced to tasks and tests |
 | [docs/adr](docs/adr) | Architecture decision records |
 | [docs/spikes](docs/spikes) | Results of the M0 spikes |
+
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+Only the files built from this repository are signed: `drivemount.exe`, the MSI and the setup exe, by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners. The WinFsp installer inside the setup exe is WinFsp's own, signed by its publisher.
+
+Team roles:
+
+- Committers and reviewers: [mmarzec](https://github.com/mmarzec)
+- Approvers: [mmarzec](https://github.com/mmarzec)
+
+Privacy: this program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it. DriveMount connects only to the servers you add to it.
 
 ## Licence
 
