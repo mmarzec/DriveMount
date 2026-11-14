@@ -377,6 +377,7 @@ drivemount-vfs ◀── drivemount-sftp, drivemount-nfs                 (portab
 drivemount-vfs ◀── drivemount-core                          (portable)
 drivemount-vfs ◀── drivemount-winfsp, drivemount-smb, drivemount-win      (Windows; empty crates on other platforms)
 drivemount-win ◀── drivemount-winfsp                        (the Explorer label and notifications)
+drivemount-win ◀── drivemount-smb                           (the WNet and Net API calls, `drivemount_win::wnet`)
 apps/drivemount ──▶ all of the above
 ```
 
@@ -436,9 +437,11 @@ pub trait Connector: Send + Sync + 'static {
 #[async_trait]
 pub trait MountBackend: Send + Sync + 'static {
     async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError>;
-    async fn unmount(&self) -> Result<(), MountError>;
+    async fn unmount(&self) -> Result<(), MountError>;   // may refuse with FilesOpen (SMB, FR-SMB-04)
+    async fn unmount_forced(&self) -> Result<(), MountError>;   // never refuses; default: unmount
     async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError>;   // same drive, new session
     fn health(&self) -> watch::Receiver<Health>;   // Ok | Lost(reason): Lost once per loss, until a reconnect works
+    fn reconnects_itself(&self) -> bool;   // Windows reconnects it (SMB); default: false
     fn take_remembered(&self) -> Vec<(SecretSlot, Secret<String>)>;   // what the user ticked Remember for
 }
 
@@ -485,6 +488,8 @@ What the table leaves open (`drivemount_core::manager`):
 - **A user cancelling a prompt** goes to *Disconnected*, as Cancel does. It is not an error.
 - **Commands that do not fit the state:** Mount on a profile connecting or mounted is refused, with no event. Unmount while *Connecting* is a cancel, as that is what *Unmount all* means. Unmount and Cancel otherwise do nothing where there is nothing to stop. While *Unmounting*, commands wait, so a Mount right after an Unmount works.
 - **A failed unmount** goes to *Error* with its reason, and lets go of the backend all the same.
+- **Open files** (SMB, FR-SMB-04): the user's Unmount calls `unmount`, which an SMB drive refuses with `FilesOpen` while files are open on it. The profile goes from *Unmounting* back to *Mounted* (or *Reconnecting*), keeping its backend and letter, for the UI to ask; `force_unmount` is the yes, and calls `unmount_forced`. Where there is nobody to ask (Delete, Quit, sign-out, a reconnect that stopped, a lost connection without auto-reconnect) the manager always calls `unmount_forced`, so no SMB mapping outlives the app (FR-SMB-07).
+- **A drive Windows reconnects** (`reconnects_itself`, SMB, FR-SMB-05) is never unmounted for a lost connection: it goes to *Reconnecting* whatever `auto_reconnect` says, and `reconnect` only checks whether Windows has its server back.
 - **`auto_reconnect`** is read when the connection is lost, as it can change while mounted.
 - **Reconnecting.** The first attempt goes at once, on the same backend, whose connector remembers what was typed and a key trusted once, so nothing is asked again (FR-SSH-02). After each failure it waits 1, 2, 4, 8, 16, 32, then 60 s (FR-REC-02). A secret ticked *Remember* in a prompt during a reconnect is kept, as after a mount. The row keeps its letter, and the event carries it.
 - **What stops the retries** is what the next attempt would meet again: E-AUTH, a changed, revoked or rejected host key, and E-KEY-FORMAT. The drive is unmounted and the profile goes to *Error* (FR-REC-06). A prompt the user cancels during a reconnect unmounts too, to *Disconnected*. Anything else, such as E-DNS, E-HOST-UNREACHABLE or E-PATH-NOT-FOUND, is tried again: a network or a NAS volume can come back.
@@ -712,12 +717,13 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
   - **The provider is always named**, from `WNetGetProviderNameW(WNNC_NET_LANMAN)`. Without it every network provider is asked (WinFsp's first), errors merge into 1203 `ERROR_NO_NET_OR_BAD_PATH`, and a call to a host that does not answer takes 47 s instead of 27 (spike M3-01 §3).
   - The call runs under `spawn_blocking` and cannot be cancelled; against a host that does not answer it returns after about 27 s.
 - A sub-path is handled by mapping the share and opening Explorer at the sub-folder. Windows cannot map a drive letter to a sub-folder of a share; the UI states this next to the field.
-- **Unmount:** `WNetCancelConnection2W(L"Z:", 0, force)`. 2401 `ERROR_OPEN_FILES` without force is the cue for FR-SMB-04's question; 2250 `ERROR_NOT_CONNECTED` counts as done.
+- **Unmount:** `WNetCancelConnection2W(L"Z:", 0, force)`. 2401 `ERROR_OPEN_FILES` without force is `MountError::FilesOpen`, the cue for FR-SMB-04's question (§5.5); 2250 `ERROR_NOT_CONNECTED` counts as done. A backend dropped while its drive is still mapped removes it, forced: a local call of about 15 ms.
+- **Where the code is:** the Win32 calls in `drivemount_win::wnet` (`unsafe` stays in `drivemount-win`); `SmbBackend`, the error mapping and `other_drives()` in `drivemount-smb`. A password goes once the mapping is made (NFR-SEC-03); its UTF-16 copy for the call is zeroed after it.
 - **Health:**
   - re-checked on Windows network events and before *Open in Explorer*;
   - `GetDiskFreeSpaceExW` on the share root runs on its own thread with a timeout of 5 s, one call per mount at a time. During an outage the call blocks for 36–82 s before it fails, so no answer in time counts as a failure;
   - a failure sets the row to *Disconnected (Windows will reconnect)*;
-  - there is no app-side reconnect loop, because the Windows SMB client handles it. The mapping survives a server reboot; Windows notices a returned server up to about 30 s late. Files open across a server reboot are lost (59 `ERROR_UNEXP_NET_ERR`); across a network outage they are kept.
+  - there is no app-side reconnect, because the Windows SMB client handles it. The manager's *Reconnecting* (§5.5) only repeats the check with its backoff until it answers. The mapping survives a server reboot; Windows notices a returned server up to about 30 s late. Files open across a server reboot are lost (59 `ERROR_UNEXP_NET_ERR`); across a network outage they are kept.
 - **Error mapping** for WNet calls (spike M3-01 §3):
 
   | Win32 | Code |

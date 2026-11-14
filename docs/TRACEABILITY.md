@@ -126,13 +126,13 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 |---|---|---|---|
 | FR-SMB-01 | M3-01 … M3-05 | – | – |
 | FR-SMB-02 | M3-01 … M3-05 | – | – |
-| FR-SMB-03 | M3-01 … M3-05 | – | – |
-| FR-SMB-04 | M3-01 … M3-05 | – | – |
-| FR-SMB-05 | M3-01 … M3-05 | – | – |
-| FR-SMB-06 | M3-01 … M3-05 | – | – |
-| FR-SMB-07 | M3-01 … M3-05 | – | – |
+| FR-SMB-03 | M3-01 … M3-05 | `drivemount-smb` `tests/samba.rs` `a_share_maps_temporarily_and_unmaps` (`#[ignore]`, Samba): mapped through the API, not in the remembered list; no process started | – |
+| FR-SMB-04 | M3-01 … M3-05 | Backend: `tests/samba.rs` `open_files_refuse_an_unmount_until_it_is_forced`; manager: `manager::tests::an_unmount_refused_for_open_files_keeps_the_drive_until_forced`. The question itself: M3-04 | – |
+| FR-SMB-05 | M3-01 … M3-05 | `tests/samba.rs` `health_is_lost_during_an_outage_and_back_after` (`#[ignore]`, root in WSL); manager: `a_drive_windows_reconnects_waits_for_it_without_auto_reconnect` | – |
+| FR-SMB-06 | M3-01 … M3-05 | Mapping: `tests/samba.rs` `another_user_on_the_same_server_is_e_smb_1219_naming_the_first`, `errors::tests`. The text: M3-04 | – |
+| FR-SMB-07 | M3-01 … M3-05 | `tests/samba.rs` `a_backend_dropped_while_mapped_removes_its_drive`; manager: `shutdown_and_delete_unmount_even_with_files_open`. Quit and sign-out in the app: M3-04/M3-05 | – |
 | FR-SMB-08 | M3-01 … M3-05 | – | – |
-| FR-SMB-09 | M3-01 (§11), M3-02, M3-04 | – | – |
+| FR-SMB-09 | M3-01 (§11), M3-02, M3-04 | `other_drives()`: `other::tests` (merge and filter from the spike's listings), `tests/samba.rs` `a_net_use_drive_is_listed_as_another_drive`. The rows: M3-04 | – |
 
 ## NFS backend
 

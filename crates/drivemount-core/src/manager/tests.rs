@@ -70,6 +70,12 @@ struct Mock {
     gone_on_check: AtomicBool,
     /// Whether a question waits until it is dropped, like a dialog nobody answers.
     questions_hang: AtomicBool,
+    /// Whether a plain unmount says files are open, as an SMB drive can (FR-SMB-04).
+    files_open: AtomicBool,
+    /// Calls of `MountBackend::unmount_forced`, also counted in `unmounts`.
+    forced_unmounts: AtomicUsize,
+    /// What `MountBackend::reconnects_itself` says.
+    reconnects_itself: AtomicBool,
 }
 
 impl Default for Mock {
@@ -95,6 +101,9 @@ impl Default for Mock {
             checks: AtomicUsize::default(),
             gone_on_check: AtomicBool::new(false),
             questions_hang: AtomicBool::new(false),
+            files_open: AtomicBool::new(false),
+            forced_unmounts: AtomicUsize::default(),
+            reconnects_itself: AtomicBool::new(false),
         }
     }
 }
@@ -134,6 +143,10 @@ impl Mock {
 
     fn unmounts(&self) -> usize {
         self.unmounts.load(Ordering::SeqCst)
+    }
+
+    fn forced_unmounts(&self) -> usize {
+        self.forced_unmounts.load(Ordering::SeqCst)
     }
 
     /// NFR-SEC-03: a backend holds what was typed, so none may outlive the news that it has ended.
@@ -185,10 +198,26 @@ impl MountBackend for MockBackend {
 
     async fn unmount(&self) -> Result<(), MountError> {
         self.0.unmounts.fetch_add(1, Ordering::SeqCst);
+        if self.0.files_open.load(Ordering::SeqCst) {
+            return Err(MountError::FilesOpen(letter('Z')));
+        }
         match self.0.next_unmount.lock().unwrap().take() {
             Some(error) => Err(error),
             None => Ok(()),
         }
+    }
+
+    async fn unmount_forced(&self) -> Result<(), MountError> {
+        self.0.unmounts.fetch_add(1, Ordering::SeqCst);
+        self.0.forced_unmounts.fetch_add(1, Ordering::SeqCst);
+        match self.0.next_unmount.lock().unwrap().take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn reconnects_itself(&self) -> bool {
+        self.0.reconnects_itself.load(Ordering::SeqCst)
     }
 
     async fn reconnect(&self, prompter: &dyn Prompter) -> Result<(), MountError> {
@@ -1283,6 +1312,96 @@ async fn shutdown_while_reconnecting_unmounts() {
     timeout(PATIENCE, world.manager.shutdown()).await.unwrap();
     assert_eq!(world.mock.unmounts(), 1);
     assert_eq!(world.mock.alive(), 0);
+}
+
+// Drives Windows looks after (SMB, FR-SMB-04, FR-SMB-05, FR-SMB-07).
+
+#[tokio::test]
+async fn an_unmount_refused_for_open_files_keeps_the_drive_until_forced() {
+    let profile = named("Media");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    let mounted = world.mounted(id).await;
+    world.mock.files_open.store(true, Ordering::SeqCst);
+
+    world.manager.unmount(id).await;
+    assert_eq!(world.next_state().await, MountState::Unmounting);
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Mounted);
+    assert_eq!(event.detail, mounted.detail);
+    assert_eq!(world.mock.alive(), 1);
+    assert_eq!(world.mock.forced_unmounts(), 0);
+
+    world.manager.force_unmount(id).await;
+    assert_eq!(world.next_state().await, MountState::Unmounting);
+    assert_eq!(world.next_state().await, MountState::Disconnected);
+    assert_eq!(world.mock.forced_unmounts(), 1);
+    assert_eq!(world.mock.alive(), 0);
+}
+
+#[tokio::test]
+async fn shutdown_and_delete_unmount_even_with_files_open() {
+    let first = named("Media");
+    let second = named("Photos");
+    let (first_id, second_id) = (first.id, second.id);
+    let mut world = world(vec![first, second]);
+    world.mounted(first_id).await;
+    world.mounted(second_id).await;
+    world.mock.files_open.store(true, Ordering::SeqCst);
+
+    world.manager.delete(first_id).await.unwrap();
+    assert_eq!(world.mock.forced_unmounts(), 1);
+    timeout(PATIENCE, world.manager.shutdown()).await.unwrap();
+    assert_eq!(world.mock.forced_unmounts(), 2);
+    assert_eq!(world.mock.alive(), 0);
+}
+
+#[tokio::test]
+async fn a_drive_windows_reconnects_waits_for_it_without_auto_reconnect() {
+    let mut profile = named("Media");
+    profile.auto_reconnect = false;
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mock.reconnects_itself.store(true, Ordering::SeqCst);
+    let mounted = world.mounted(id).await;
+
+    world.mock.health.send_replace(lost());
+
+    let event = world.next_event().await;
+    assert_eq!(event.state, MountState::Reconnecting);
+    assert_eq!(event.detail, mounted.detail);
+    assert_eq!(world.next_state().await, MountState::Mounted);
+    assert_eq!(world.mock.unmounts(), 0);
+    world.unmounted(id).await;
+}
+
+#[tokio::test]
+async fn files_open_while_reconnecting_go_back_to_reconnecting() {
+    let profile = named("Media");
+    let id = profile.id;
+    let mut world = world(vec![profile]);
+    world.mock.reconnects_itself.store(true, Ordering::SeqCst);
+    world.mounted(id).await;
+    for _ in 0..50 {
+        world
+            .mock
+            .script_reconnect(NextMount::Fail(MountError::Connect(
+                ConnectError::ConnectionLost,
+            )));
+    }
+    world.mock.health.send_replace(lost());
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    world.mock.files_open.store(true, Ordering::SeqCst);
+
+    world.manager.unmount(id).await;
+    assert_eq!(world.next_state().await, MountState::Unmounting);
+    assert_eq!(world.next_state().await, MountState::Reconnecting);
+    assert_eq!(world.mock.alive(), 1);
+
+    world.manager.force_unmount(id).await;
+    assert_eq!(world.next_state().await, MountState::Unmounting);
+    assert_eq!(world.next_state().await, MountState::Disconnected);
+    assert_eq!(world.mock.forced_unmounts(), 1);
 }
 
 /// The flag stays editable while mounted (FR-PROF-08), so what counts is its value when it happens.

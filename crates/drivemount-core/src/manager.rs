@@ -370,10 +370,24 @@ impl MountManager {
 
     /// Unmounts a drive (FR-MNT-10), or cancels a mount in progress, which is what someone asking
     /// for everything to be unmounted means. For a profile doing neither, it does nothing.
+    ///
+    /// A backend may refuse while files are open on the drive (SMB, FR-SMB-04): the profile goes
+    /// from *Unmounting* back to *Mounted*, and [`force_unmount`](Self::force_unmount) is what to
+    /// send once the user has said yes.
     pub async fn unmount(&self, id: Uuid) {
+        self.send_unmount(id, false).await;
+    }
+
+    /// Unmounts a drive even with files open on it, which lose their handles (FR-SMB-04).
+    /// Otherwise as [`unmount`](Self::unmount).
+    pub async fn force_unmount(&self, id: Uuid) {
+        self.send_unmount(id, true).await;
+    }
+
+    async fn send_unmount(&self, id: Uuid, force: bool) {
         if let Some(inbox) = self.inbox(id) {
             // A closed inbox is a profile that has just been deleted.
-            let _ = inbox.send(Message::Unmount).await;
+            let _ = inbox.send(Message::Unmount { force }).await;
         }
     }
 

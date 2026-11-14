@@ -14,3 +14,12 @@ workspace = true
 
 [dependencies]
 drivemount-vfs = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+drivemount-win = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[target.'cfg(windows)'.dev-dependencies]
+tokio = { workspace = true }
+drivemount-win = { workspace = true }

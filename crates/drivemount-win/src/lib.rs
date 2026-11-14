@@ -21,6 +21,7 @@ pub mod startup;
 pub mod toast;
 pub mod tray;
 pub mod winfsp;
+pub mod wnet;
 
 #[cfg(test)]
 mod test_support;

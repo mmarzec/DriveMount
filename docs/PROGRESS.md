@@ -2,6 +2,27 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: M3-02 `drivemount-smb`
+
+**Status: done locally, not committed.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass; the 8 Samba tests (`crates/drivemount-smb/tests/samba.rs`, `#[ignore]`) pass against the test server, the outage one in 21 s. The owner's own mappings (`W:`–`Z:`) and the iptables rules were as before afterwards.
+
+- **Where the code is:** the Win32 calls in a new `drivemount_win::wnet` (map, unmap, free space, the two WNet listings, `NetUseEnum`), as `unsafe` stays in `drivemount-win`; so `drivemount-smb` now depends on `drivemount-win`, like `drivemount-winfsp` (spec §5.2). `drivemount-smb` has `SmbBackend` (with `SmbTarget`, `SmbAuth`), the error mapping, and `other_drives()`.
+- **New in `drivemount-vfs`:**
+  - `ConnectError::SmbCredentialConflict` (E-SMB-1219, boxed details with the other connection's letter and user, found through `NetUseEnum` after a 1219, a lettered use first) and `ConnectError::ShareNotFound`;
+  - `MountError::FilesOpen(letter)`;
+  - `MountBackend::unmount_forced` (default: `unmount`) and `MountBackend::reconnects_itself` (default: false).
+- **Manager:**
+  - the user's Unmount calls `unmount`; `FilesOpen` sends the profile from *Unmounting* back to *Mounted* (or *Reconnecting*), backend and letter kept. New `MountManager::force_unmount` for after the question. Delete, Quit, sign-out, a stopped reconnect and a lost connection without auto-reconnect call `unmount_forced` (FR-SMB-07).
+  - A backend that `reconnects_itself` (SMB) is never unmounted for a lost connection, whatever `auto_reconnect` says: it waits in *Reconnecting*, where `reconnect` only repeats the health check with the usual backoff.
+- **Health check:** `GetDiskFreeSpaceExW` on `Z:\` on a thread of its own (`smb-check-Z`), 5 s timeout, one at a time per drive: a check asked for while one is still blocked waits for that one's answer. `check_connection` runs it in a task and returns at once.
+- **Safety net:** a backend dropped while its drive is mapped removes it, forced (about 15 ms, never waits for the server).
+- **Passwords:** a stored one is used once and dropped after the call; a missing one is asked for with *Remember* offered and handed over by `take_remembered` only after the mapping worked; *Ask each time* never remembers. The UTF-16 copy passed to Windows is zeroed.
+- **The app:** the two SMB errors and `FilesOpen` show as E-INTERNAL for now (`ui/errors.rs`); no SMB profile can exist before M3-03. Nothing in the UI changed.
+- **Left for M3-03/M3-04** (added to the plan's M3-04 row): the factory for SMB profiles, FR-SMB-04's question (*Unmounting* → *Mounted* after an Unmount is the cue; *Unmount anyway* sends `force_unmount`), the E-SMB texts, the *Disconnected (Windows will reconnect)* row text for an SMB profile in *Reconnecting*, the external rows.
+- **Not tested here:** *Current Windows user* against a server that accepts it (the local `\\127.0.0.1` share needs the owner's: M3-05), Quit and sign-out in the real app (the app cannot make an SMB profile yet), the CI runner.
+- **Run them:** `tests\docker\servers.ps1 up`, then `cargo test -p drivemount-smb --test samba -- --ignored --test-threads=1`. The outage test needs root in WSL (iptables `DOCKER-USER`).
+- **Next:** M3-03.
+
 ## 2026-11-14: FR-SMB-09, other network drives (spike M3-01 §11)
 
 **Status: specified, not built.** Drives mapped outside DriveMount are shown in the list for visibility only, as dimmed *External* rows with no button (spec FR-SMB-09, FR-SET-09, §5.9, §7.1, §7.3, §7.8). Plan M3-02, M3-03 and M3-04 carry the work.
@@ -21,7 +42,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **1219** also happens for the same user with another password, or with the user name written another way. A second address or name for the server avoids it. Null credentials reuse whatever session to that server already exists.
 - **Not done:** the CI runner (nothing runs on GitHub from here); Explorer showing the new letter (needs eyes, add to H-06 in M3-04).
 - Spike gotchas: in WSL, drop container traffic with the `DOCKER-USER` chain, not `INPUT`. Removing files on mapped letters is blocked by the agent's sandbox, so use new file names.
-- **Next:** M3-02.
+- **Next:** M3-02 (done, above).
 
 ## 2026-11-14: M2-11 Signing and release workflow
 

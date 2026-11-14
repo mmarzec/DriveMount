@@ -33,7 +33,10 @@ pub(super) enum Message {
     Mount {
         reply: oneshot::Sender<Result<(), MountRefused>>,
     },
-    Unmount,
+    /// `force` removes the drive even with files open on it (FR-SMB-04).
+    Unmount {
+        force: bool,
+    },
     Save {
         profile: Box<Profile>,
         secrets: Vec<(SecretSlot, Secret<String>)>,
@@ -59,7 +62,10 @@ struct Connected {
 
 /// Why a profile in use is to stop being in use.
 enum Leaving {
-    Unmount,
+    /// The user's Unmount, which may be refused with files open unless `force`.
+    Unmount {
+        force: bool,
+    },
     Delete(oneshot::Sender<Result<(), ProfileChangeError>>),
     Shutdown(oneshot::Sender<()>),
     ManagerGone,
@@ -144,7 +150,7 @@ impl Actor {
         while let Some(message) = self.inbox.recv().await {
             let flow = match message {
                 Message::Mount { reply } => self.mount(reply).await,
-                Message::Unmount => Flow::Continue,
+                Message::Unmount { .. } => Flow::Continue,
                 Message::Save {
                     profile,
                     secrets,
@@ -212,7 +218,7 @@ impl Actor {
             loop {
                 tokio::select! {
                     biased;
-                    () = token.cancelled() => break Err(Leaving::Unmount),
+                    () = token.cancelled() => break Err(Leaving::Unmount { force: false }),
                     connected = &mut connecting => break Ok(connected),
                     message = self.inbox.recv() => {
                         if let Some(leaving) = self.while_in_use(message).await {
@@ -274,8 +280,9 @@ impl Actor {
         let mut health = connected.backend.health();
         let mut health_open = true;
         let leaving = loop {
-            if health_open && matches!(*health.borrow_and_update(), Health::Lost(_)) {
-                if !self.auto_reconnect().await {
+            let leaving = if health_open && matches!(*health.borrow_and_update(), Health::Lost(_)) {
+                // A drive Windows reconnects stays whatever the flag says (FR-SMB-05).
+                if !connected.backend.reconnects_itself() && !self.auto_reconnect().await {
                     return self.lost(connected).await;
                 }
                 match self.reconnecting(&connected, detail).await {
@@ -287,26 +294,46 @@ impl Actor {
                         continue;
                     }
                     Reconnected::Stopped(error) => return self.stopped(connected, error).await,
-                    Reconnected::Leaving(leaving) => break leaving,
+                    Reconnected::Leaving(leaving) => leaving,
                 }
-            }
-            tokio::select! {
-                message = self.inbox.recv() => {
-                    if matches!(message, Some(Message::NetworkChanged)) {
-                        // A connection the change broke says so as health, which the next round sees.
-                        connected.backend.check_connection().await;
-                    } else if let Some(leaving) = self.while_in_use(message).await {
-                        break leaving;
+            } else {
+                let message = tokio::select! {
+                    message = self.inbox.recv() => message,
+                    changed = health.changed(), if health_open => {
+                        health_open = changed.is_ok();
+                        continue;
                     }
+                };
+                if matches!(message, Some(Message::NetworkChanged)) {
+                    // A connection the change broke says so as health, which the next round sees.
+                    connected.backend.check_connection().await;
+                    continue;
                 }
-                changed = health.changed(), if health_open => {
-                    health_open = changed.is_ok();
-                }
-            }
-        };
+                let Some(leaving) = self.while_in_use(message).await else {
+                    continue;
+                };
+                leaving
+            };
 
-        self.set(MountState::Unmounting, Some(detail));
-        let unmounted = connected.backend.unmount().await;
+            self.set(MountState::Unmounting, Some(detail));
+            let unmounted = if let Leaving::Unmount { force: false } = leaving {
+                connected.backend.unmount().await
+            } else {
+                // Nobody is there to ask about open files.
+                connected.backend.unmount_forced().await
+            };
+            if let Err(MountError::FilesOpen(letter)) = unmounted {
+                // The drive is as it was, for the user to be asked (FR-SMB-04). One whose
+                // connection is lost goes back to *Reconnecting* in the next round.
+                info!(id = %self.id, %letter, "not unmounted: files are open");
+                if *health.borrow() == Health::Ok {
+                    self.set(MountState::Mounted, Some(detail));
+                }
+                continue;
+            }
+            break (leaving, unmounted);
+        };
+        let (leaving, unmounted) = leaving;
         drop(connected);
         match unmounted {
             Ok(()) => self.set(MountState::Disconnected, None),
@@ -412,7 +439,7 @@ impl Actor {
     /// *Reconnecting* to *Error*, or to *Disconnected* if the user cancelled a prompt, with the drive
     /// gone (FR-REC-06).
     async fn stopped(&self, connected: Connected, error: MountError) -> Flow {
-        if let Err(unmounting) = connected.backend.unmount().await {
+        if let Err(unmounting) = connected.backend.unmount_forced().await {
             warn!(id = %self.id, error = %unmounting, "unmount failed after reconnecting stopped");
         }
         drop(connected);
@@ -426,7 +453,7 @@ impl Actor {
 
     /// *Mounted* to *Error (Connection lost)*, with no reconnect to wait for (FR-REC-07).
     async fn lost(&self, connected: Connected) -> Flow {
-        if let Err(error) = connected.backend.unmount().await {
+        if let Err(error) = connected.backend.unmount_forced().await {
             warn!(id = %self.id, %error, "unmount failed after losing the connection");
         }
         drop(connected);
@@ -445,7 +472,7 @@ impl Actor {
                 answer(reply, Err(MountRefused::Busy));
                 None
             }
-            Message::Unmount => Some(Leaving::Unmount),
+            Message::Unmount { force } => Some(Leaving::Unmount { force }),
             Message::Save {
                 profile,
                 secrets,
@@ -475,7 +502,7 @@ impl Actor {
     /// Back at *Disconnected* or *Error*, with whatever came next done.
     async fn after_use(&mut self, leaving: Leaving) -> Flow {
         match leaving {
-            Leaving::Unmount => Flow::Continue,
+            Leaving::Unmount { .. } => Flow::Continue,
             Leaving::Delete(reply) => self.delete(reply).await,
             Leaving::Shutdown(reply) => {
                 answer(reply, ());

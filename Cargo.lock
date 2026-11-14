@@ -1433,6 +1433,9 @@ name = "drivemount-smb"
 version = "0.1.0"
 dependencies = [
  "drivemount-vfs",
+ "drivemount-win",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
