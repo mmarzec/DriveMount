@@ -43,7 +43,7 @@ jobs:
       PACKAGE: ${{ github.workspace }}\target\package
       RELEASE_EXE: ${{ github.workspace }}\target\release\drivemount.exe
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install the pinned toolchain
         run: rustup toolchain install
@@ -150,7 +150,7 @@ jobs:
           }
 
       - name: Keep the artefacts on the run
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: drivemount-${{ steps.version.outputs.version }}
           path: |
