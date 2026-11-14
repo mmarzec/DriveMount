@@ -3,10 +3,10 @@
 | | |
 |---|---|
 | Risk | How `WNetAddConnection2W` behaves: credentials, error 1219, server reboots, and what we can test against |
-| Code | `spikes/m3-01-smb/` (throw-away): `src/main.rs`, a command-line tool that calls `WNetAddConnection2W`, `WNetCancelConnection2W`, `WNetGetConnectionW` and `GetDiskFreeSpaceExW` and prints the Win32 result and how long each call took. Test server: `tests/docker/samba/` (service `samba` in `tests/docker-compose.yml`) |
+| Code | `spikes/m3-01-smb/` (throw-away): `src/main.rs`, a command-line tool that calls `WNetAddConnection2W`, `WNetCancelConnection2W`, `WNetGetConnectionW` and `GetDiskFreeSpaceExW` and prints the Win32 result and how long each call took. For §11 also `WNetOpenEnumW`, `NetUseEnum`, and a window that prints `WM_DEVICECHANGE` and shell change notifications. Test server: `tests/docker/samba/` (service `samba` in `tests/docker-compose.yml`) |
 | Machine | Windows 10 Home 22H2 (10.0.19045), Polish UI, Rust 1.99.1, `windows` 0.61. Server: Samba 4.17.12 (Debian bookworm) in Docker Engine 24.0.6 in WSL2; Windows' own server for `\\127.0.0.1` |
 | Date | 2026-11-14 |
-| Result | **Go**, with spec changes. `WNetAddConnection2W` does everything FR-SMB needs, but only with the network provider named in the call; without it, errors blur into 1203 and a call can take 47 s. The health check must have a timeout of its own: during an outage `GetDiskFreeSpaceExW` blocks for 36–82 s. Not tested: the CI runner (§8). |
+| Result | **Go**, with spec changes. `WNetAddConnection2W` does everything FR-SMB needs, but only with the network provider named in the call; without it, errors blur into 1203 and a call can take 47 s. The health check must have a timeout of its own: during an outage `GetDiskFreeSpaceExW` blocks for 36–82 s. Not tested: the CI runner (§8). Addendum (§11): other mappings can be listed in 2 ms without touching any server, also during an outage, but Windows sends no event when they change, so the list is polled. |
 
 ## 1. What was tried
 
@@ -133,4 +133,48 @@ For **M3-02 (`drivemount-smb`)** and the spec (§5.9, updated with this spike):
 
 ## 10. Data
 
-Raw output was not kept as files; the numbers above are from single runs, 2026-11-14, on the machine in the header. To repeat: `cargo build --release` in `spikes/m3-01-smb`, start the server with `tests\docker\servers.ps1 up`, and run `target\release\m3-01-smb.exe` with no arguments for its commands.
+Raw output was not kept as files; the numbers above are from single runs, 2026-11-14, on the machine in the header. To repeat: `cargo build --release` in `spikes/m3-01-smb`, start the server with `tests\docker\servers.ps1 up`, and run `target\release\m3-01-smb.exe` with no arguments for its commands. §11 uses the commands `list`, `list-loop` and `notify`, added for it.
+
+## 11. Addendum: listing the mappings DriveMount did not make
+
+Asked for FR-SMB-09 (show other network drives, read only). Same machine and day. The owner's mappings were `W:` and `X:` (connected), `Z:` (persistent, its server off) and `Y:` (`\\wsl$\…`, WSL's Plan 9 provider).
+
+**What lists what**
+
+| Call | Gives | Cost |
+|---|---|---|
+| `WNetOpenEnumW(RESOURCE_CONNECTED, RESOURCETYPE_DISK)` | Every mapped letter of the logon session, any provider: SMB, Plan 9, WinFsp. Letter, UNC, provider name | 10–19 ms for the first call in a process, 1–2 ms after |
+| `WNetOpenEnumW(RESOURCE_REMEMBERED, …)` | The persistent ones (`HKCU\Network`), connected or not | under 1 ms |
+| `NetUseEnum` level 2 | SMB uses only (no Plan 9, no WinFsp), with their status and the user name each was made with | under 1 ms |
+
+- **"Remembered, not connected"** is a letter in the remembered list and not in the connected one. Made by `net use T: … /persistent:yes` and then `WNetCancelConnection2W` without `CONNECT_UPDATE_PROFILE`: `T:` left `GetLogicalDrives`, stayed in the remembered list, and `WNetGetConnectionW` gave **1201** `ERROR_CONNECTION_UNAVAIL` with the UNC. That is the state of a persistent mapping whose server was off at sign-in.
+- **A remembered mapping whose server is off can still be "connected".** `Z:` was in the connected list, in `GetLogicalDrives` (type 4, remote) and `WNetGetConnectionW` returned 0, while `net use` called it *Disconnected*. Only `NetUseEnum`'s `ui2_status` tells: `USE_DISCONN` (2), with `USE_RECONN` (5) for a moment each time Windows tries again.
+- **A temporary mapping is never remembered**: `S:` (our `CONNECT_TEMPORARY`) was only in the connected list, as §2 found through the registry.
+- **DriveMount's own WinFsp drives** are in the connected list as `\\drivemount\<slug>`, provider `WinFsp.Np` (a test drive from `drivemount-winfsp`'s test support, `V:`). Not in `NetUseEnum`. Its SMB drives are in all but the remembered list, like any temporary mapping. So the app tells its own apart by the letters it holds, and drops `\\drivemount\…` too in case one is mid-mount or mid-unmount.
+- Another WinFsp application's drives (`\\sshfs\…` from SSHFS-Win, say) would come out as their provider, `WinFsp.Np`; not tried.
+
+**During an outage.** `S:` mapped to Samba as `smbuser1`; packets dropped from 5 s to 60 s (`iptables … DROP`, §1); `list-loop` every 250 ms; from 10 s a `watch` on `S:\` every second.
+
+| Time | Listings | `NetUseEnum` status of `S:` | `GetDiskFreeSpaceExW` on `S:\` |
+|---|---|---|---|
+| 0–29 s | 2 ms or less | OK (0) | started at 10 s, blocked |
+| 29–65 s | 2 ms or less | **RECONN (5)** | still blocked |
+| 65 s on | 2 ms or less | OK (0) | returned OK at 65 s, after **55 s** |
+
+- **No listing call blocked, at any point.** They read what the redirector already knows and never touch the server. They can run on the UI's timer without a thread of their own, unlike the health check (§6).
+- The status lags: *OK* for about 24 s after the network went, *reconnecting* until about 5 s after it came back. It is only ever what Windows last found, and a drive no one uses can show *OK* for as long as the server is gone. So the app shows it as Windows' view, not as a check.
+
+**Change notifications: none.** A hidden top-level window (message-only windows get no broadcasts) listened 20–35 s while `S:` was mapped and removed through WNet and `T:` through `net use`, temporary and persistent:
+
+- no `WM_DEVICECHANGE` at all (no `DBT_DEVICEARRIVAL` with `DBTF_NET`);
+- no shell notification through `SHChangeNotifyRegister` (all sources, `SHCNE_DRIVEADD`, `DRIVEREMOVED`, `NETSHARE`, `NETUNSHARE`, `SERVERDISCONNECT`, `MEDIA*`, `UPDATEITEM`), though the same window caught an `SHCNE_DRIVEADD` that a test sent with `SHChangeNotify` 0.5 s later. Mappings made by Explorer's own dialog may send one; not tried, and the app cannot count on it.
+
+So the list is refreshed by polling. At 2 ms a call, every few seconds while the window is shown, plus on the events the app already handles (network change, its own mount and unmount, the window shown), costs nothing worth measuring.
+
+**Consequences for the spec** (FR-SMB-09, §5.9, §7.1):
+
+1. List with `WNetOpenEnumW`, connected then remembered, merged by letter; status from `NetUseEnum` for SMB letters: *Mapped* (0), *Reconnecting* (5, also 4), *Disconnected* (2, 3); a remembered letter that is not connected is *Not connected*. Others (Plan 9, other WinFsp) show *Mapped*.
+2. Drop the letters the app holds and every `\\drivemount\…` UNC.
+3. Never call anything on the drive itself (no free space, no `GetDiskFreeSpaceExW`): the listing is safe, the drive is not.
+4. Poll every 5 s while the window is visible, and refresh on the events above; nothing while it is hidden.
+5. The user name in `NetUseEnum` lets E-SMB-1219 name the drive *and* the user it was made as.

@@ -2,6 +2,15 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-14: FR-SMB-09, other network drives (spike M3-01 §11)
+
+**Status: specified, not built.** Drives mapped outside DriveMount are shown in the list for visibility only, as dimmed *External* rows with no button (spec FR-SMB-09, FR-SET-09, §5.9, §7.1, §7.3, §7.8). Plan M3-02, M3-03 and M3-04 carry the work.
+
+- **Spike addendum** (report §11, tool commands `list`, `list-loop`, `notify`): `WNetOpenEnumW` lists every mapped letter in 2 ms or less without reaching any server, also during an outage; `NetUseEnum` gives SMB status and user. DriveMount's WinFsp drives appear as `\\drivemount\<slug>` and are left out by that and by the letters the app holds.
+- **No change events:** neither `WM_DEVICECHANGE` nor the shell's notifications fire when `net use` or the WNet API maps a drive, so the list is polled every 5 s while the window is shown.
+- **`net use` "Disconnected" is not visible to WNet:** such a drive is still "connected" in `WNetOpenEnumW` and `WNetGetConnectionW`; only `NetUseEnum`'s status shows it.
+- The app never touches an external drive's server (no free-space call): the status shown is Windows' own and can lag (24 s in the outage test).
+
 ## 2026-11-14: M3-01 SMB spike (branch `spike/m3-01-smb`)
 
 **Status: done, go.** Report: `docs/spikes/m3-01-smb.md`; tool: `spikes/m3-01-smb/`; spec §5.9 updated.

@@ -118,6 +118,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SET-06 | M1-14, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The page: `every_setting_goes_to_the_form_and_comes_back` (`ui/settings.rs`), `each_change_is_saved_at_once_and_in_use_before`, `the_latest_change_is_the_one_that_stays`, `a_file_that_will_not_save_puts_the_page_and_the_run_value_back`, `a_read_only_file_has_a_page_that_cannot_be_changed` (`app/engine_tests.rs`); `saved_settings_are_in_the_file_and_the_profiles_stay` (`drivemount-core`). In use at once: `the_level_changes_while_the_log_is_written` (`logging.rs`). *Open logs folder*: H-08, passed 2026-11-13 | – |
 | FR-SET-07 | M2-05 | `the_winfsp_line_has_the_version` (`ui/settings.rs`). By eye: H-08, passed 2026-11-13 | – |
 | FR-SET-08 | M2-04, M2-05 | The value in the file: `settings_come_back`, `a_bad_setting_gets_its_default_and_the_file_stays_usable` (`drivemount-core`). The toast: `toasts_are_silent_unless_the_sound_is_on` (`apps/drivemount/src/ui/tests/toasts.rs`), `a_silent_toast_says_so` (`crates/drivemount-win/src/toast.rs`). The checkbox: `the_settings_page_turns_toasts_off_and_the_sound_on_at_once`. Hearing it: H-08, passed 2026-11-13 | – |
+| FR-SET-09 | M3-03, M3-04 | – | – |
 
 ## SMB backend
 
@@ -131,6 +132,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 | FR-SMB-06 | M3-01 … M3-05 | – | – |
 | FR-SMB-07 | M3-01 … M3-05 | – | – |
 | FR-SMB-08 | M3-01 … M3-05 | – | – |
+| FR-SMB-09 | M3-01 (§11), M3-02, M3-04 | – | – |
 
 ## NFS backend
 
