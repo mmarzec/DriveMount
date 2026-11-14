@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! From a saved profile to something the manager can mount: SFTP through WinFsp, and the system's
-//! drive letters. Turning one crate's `SftpProfile` into the other's is the only part that does not
+//! From a saved profile to something the manager can mount: SFTP through WinFsp, SMB through Windows
+//! itself, and the system's drive letters. Turning one crate's `SftpProfile` into the other's is the only part that does not
 //! need Windows.
 
 use std::path::Path;
@@ -85,7 +85,7 @@ pub fn dispatcher_threads(setting: u32, cores: Option<u32>) -> u32 {
 }
 
 #[cfg(windows)]
-pub use self::windows::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
+pub use self::windows::{DriveFactory, SystemDriveLetters, default_known_hosts, smb_target};
 
 #[cfg(windows)]
 mod windows {
@@ -98,8 +98,9 @@ mod windows {
 
     use drivemount_core::config::Settings;
     use drivemount_core::manager::{BackendFactory, DriveLetters};
-    use drivemount_core::profile::{Profile, Protocol};
+    use drivemount_core::profile::{Profile, Protocol, SmbAuth as SavedSmbAuth, SmbProfile};
     use drivemount_sftp::connector::SftpConnector;
+    use drivemount_smb::{SmbAuth, SmbBackend, SmbTarget};
     use drivemount_vfs::{
         ConnectError, Connector, DriveLetter, Health, MountBackend, MountError, Prompter, RemoteFs,
         Secret, SecretSlot, SecretStore, async_trait,
@@ -111,8 +112,24 @@ mod windows {
 
     use super::{dispatcher_threads, own_slot, sftp_profile};
 
-    /// The factory for SMB profiles comes with their form, in M3-04.
-    const NO_SMB_YET: &str = "SMB drives cannot be mounted by this version yet";
+    /// What Windows is to map for an SMB profile. `secret` gives a stored or typed password, and is
+    /// only asked for with *Password*.
+    pub fn smb_target(
+        saved: &SmbProfile,
+        secret: impl FnOnce(SecretSlot) -> Option<Secret<String>>,
+    ) -> SmbTarget {
+        SmbTarget {
+            server: saved.server.clone(),
+            share: saved.share.clone(),
+            domain: saved.domain.clone(),
+            user: saved.username.clone(),
+            auth: match saved.auth {
+                SavedSmbAuth::Password { .. } => SmbAuth::Password(secret(SecretSlot::Password)),
+                SavedSmbAuth::Ask => SmbAuth::Ask,
+                SavedSmbAuth::WindowsUser => SmbAuth::WindowsUser,
+            },
+        }
+    }
 
     /// `%USERPROFILE%\.ssh\known_hosts` (spec §6.3). `None` if `USERPROFILE` is not set.
     #[must_use]
@@ -131,13 +148,13 @@ mod windows {
         }
     }
 
-    /// Makes SFTP drives. NFS and SMB join it at M3 and M4.
-    pub struct SftpWinFspFactory {
+    /// Makes SFTP drives through WinFsp and SMB drives through Windows. NFS joins it at M4.
+    pub struct DriveFactory {
         secrets: Arc<dyn SecretStore>,
         known_hosts: PathBuf,
     }
 
-    impl SftpWinFspFactory {
+    impl DriveFactory {
         /// A factory that reads what is remembered from `secrets`, and checks host keys against
         /// `known_hosts`.
         #[must_use]
@@ -161,14 +178,19 @@ mod windows {
     }
 
     #[async_trait]
-    impl BackendFactory for SftpWinFspFactory {
+    impl BackendFactory for DriveFactory {
         fn create(
             &self,
             profile: &Profile,
             settings: &Settings,
         ) -> Result<Box<dyn MountBackend>, MountError> {
-            let Protocol::Sftp(sftp) = &profile.protocol else {
-                return Err(MountError::Other(NO_SMB_YET.to_owned()));
+            let sftp = match &profile.protocol {
+                Protocol::Sftp(sftp) => sftp,
+                // Needs no WinFsp (FR-SMB-08).
+                Protocol::Smb(smb) => {
+                    let target = smb_target(smb, |slot| self.stored(profile.id, slot));
+                    return Ok(Box::new(SmbBackend::new(target)));
+                }
             };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
             let connection = sftp_profile(sftp, &self.known_hosts, timeout, |slot| {
@@ -203,11 +225,21 @@ mod windows {
             typed: Vec<(SecretSlot, Secret<String>)>,
             prompter: &dyn Prompter,
         ) -> Result<Duration, ConnectError> {
-            let Protocol::Sftp(sftp) = &profile.protocol else {
-                return Err(ConnectError::Other(NO_SMB_YET.to_owned()));
+            let mut typed = typed;
+            let sftp = match &profile.protocol {
+                Protocol::Sftp(sftp) => sftp,
+                Protocol::Smb(smb) => {
+                    let target = smb_target(smb, |slot| {
+                        let from_the_dialog = typed.iter().position(|(typed, _)| *typed == slot);
+                        match from_the_dialog {
+                            Some(position) => Some(typed.swap_remove(position).1),
+                            None => self.stored(profile.id, slot),
+                        }
+                    });
+                    return SmbBackend::new(target).test(&smb.sub_path, prompter).await;
+                }
             };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
-            let mut typed = typed;
             let connection = sftp_profile(sftp, &self.known_hosts, timeout, |slot| {
                 let from_the_dialog = typed.iter().position(|(typed, _)| *typed == slot);
                 match from_the_dialog {
@@ -454,5 +486,48 @@ mod tests {
         assert_eq!(dispatcher_threads(0, None), 8);
         assert_eq!(dispatcher_threads(2, Some(16)), 2);
         assert_eq!(dispatcher_threads(32, Some(16)), 8);
+    }
+}
+
+#[cfg(all(test, windows))]
+mod smb_tests {
+    use drivemount_core::profile::{SmbAuth as SavedSmbAuth, SmbProfile};
+    use drivemount_smb::SmbAuth;
+    use drivemount_vfs::{Secret, SecretSlot};
+
+    use super::smb_target;
+
+    fn saved(auth: SavedSmbAuth) -> SmbProfile {
+        let mut smb = SmbProfile::new("nas", "media", "anna", auth);
+        smb.domain = "CORP".to_owned();
+        smb.sub_path = "films".to_owned();
+        smb
+    }
+
+    #[test]
+    fn the_share_and_account_carry_over_and_the_sub_path_does_not() {
+        let target = smb_target(&saved(SavedSmbAuth::Ask), |_| None);
+        assert_eq!(target.unc(), r"\\nas\media");
+        assert_eq!(target.account(), r"CORP\anna");
+        assert!(matches!(target.auth, SmbAuth::Ask));
+    }
+
+    #[test]
+    fn only_the_password_method_looks_for_a_password() {
+        let mut asked = Vec::new();
+        let target = smb_target(&saved(SavedSmbAuth::Password { remember: true }), |slot| {
+            asked.push(slot);
+            Some(Secret::new("pw".to_owned()))
+        });
+        assert_eq!(asked, [SecretSlot::Password]);
+        let SmbAuth::Password(Some(password)) = target.auth else {
+            panic!("no password");
+        };
+        assert_eq!(password.expose_secret(), "pw");
+
+        for auth in [SavedSmbAuth::Ask, SavedSmbAuth::WindowsUser] {
+            let target = smb_target(&saved(auth), |_| panic!("asked for a secret"));
+            assert!(!matches!(target.auth, SmbAuth::Password(_)));
+        }
     }
 }

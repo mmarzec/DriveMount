@@ -328,11 +328,21 @@ impl Engine {
             UiCommand::Unmount(id) => {
                 tokio::spawn(async move { manager.unmount(id).await });
             }
+            UiCommand::ForceUnmount(id) => {
+                tokio::spawn(async move { manager.force_unmount(id).await });
+            }
             UiCommand::Cancel(id) => manager.cancel(id),
-            UiCommand::OpenInExplorer(letter) => {
+            UiCommand::OpenInExplorer(letter, folder) => {
                 on_a_thread_of_its_own(move || {
-                    if let Err(error) = shell::open_in_explorer(letter) {
+                    if let Err(error) = shell::open_in_explorer(letter, &folder) {
                         warn!(%letter, %error, "could not open a drive in Explorer");
+                    }
+                });
+            }
+            UiCommand::CopyText(text) => {
+                on_a_thread_of_its_own(move || {
+                    if let Err(error) = shell::copy_text(&text) {
+                        warn!(%error, "could not copy to the clipboard");
                     }
                 });
             }

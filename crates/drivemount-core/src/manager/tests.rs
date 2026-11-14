@@ -1523,6 +1523,21 @@ async fn a_letter_comes_free_when_its_drive_goes() {
     assert_eq!(second.detail.map(|d| d.letter), Some(letter('Z')));
 }
 
+/// FR-SMB-09: what the list of other network drives leaves out, from the start of a mount to its end.
+#[tokio::test]
+async fn the_held_letters_are_those_of_mounts_under_way_and_up() {
+    let (one, two) = (named("One"), named("Two"));
+    let (one_id, two_id) = (one.id, two.id);
+    let mut world = world(vec![one, two]);
+    assert_eq!(world.manager.held_letters(), []);
+    world.hanging(one_id).await;
+    assert_eq!(world.manager.held_letters(), [letter('Z')]);
+    world.mounted(two_id).await;
+    assert_eq!(world.manager.held_letters(), [letter('Y'), letter('Z')]);
+    world.unmounted(two_id).await;
+    assert_eq!(world.manager.held_letters(), [letter('Z')]);
+}
+
 #[tokio::test]
 async fn a_mounted_drive_keeps_its_letter_from_other_profiles() {
     let (one, mut two) = (named("One"), named("Two"));

@@ -11,6 +11,8 @@ export enum LoginKind { password, key-file, agent, ask, windows-user }
 
 export struct PageView {
     kind: EntryKind,
+    // An SMB share (FR-SMB): Windows maps it and reconnects it, and it has no SSH lines.
+    smb: bool,
     name: string,
     status: RowStatus,
     letter: string,
@@ -56,6 +58,7 @@ export component ConnectionPage {
     property <string> status-line: !root.is-profile ? @tr("Cannot be read")
         : root.view.status == RowStatus.mounted ? (root.view.letter != "" ? @tr("Mounted on {}", root.view.letter) : @tr("Mounted"))
         : root.view.status == RowStatus.connecting ? @tr("Connecting…")
+        : root.view.status == RowStatus.reconnecting && root.view.smb ? @tr("Disconnected (Windows will reconnect)")
         : root.view.status == RowStatus.reconnecting ? (root.view.letter != "" ? @tr("Reconnecting… (on {})", root.view.letter) : @tr("Reconnecting…"))
         : root.view.status == RowStatus.unmounting ? @tr("Unmounting…")
         : root.view.status == RowStatus.error ? @tr("Failed")
@@ -189,16 +192,16 @@ export component ConnectionPage {
                     padding-bottom: 2px;
 
                     Field {
-                        label: @tr("Host");
+                        label: root.view.smb ? @tr("Server") : @tr("Host");
                         value: root.view.host;
                     }
 
-                    Field {
+                    if !root.view.smb: Field {
                         label: @tr("Port");
                         value: root.view.port;
                     }
 
-                    Field {
+                    if !root.view.smb || root.view.login != LoginKind.windows-user: Field {
                         label: @tr("User");
                         value: root.view.user;
                     }
@@ -213,7 +216,7 @@ export component ConnectionPage {
                     }
 
                     Field {
-                        label: @tr("Remote path");
+                        label: root.view.smb ? @tr("Share") : @tr("Remote path");
                         value: root.view.remote-path;
                     }
 
@@ -230,24 +233,26 @@ export component ConnectionPage {
                     Field {
                         label: @tr("Mount at start");
                         value: root.view.mount-on-start ? root.yes : root.no;
+                        last: root.view.smb;
                     }
 
-                    Field {
+                    // Windows reconnects a share itself, and maps it as the server allows.
+                    if !root.view.smb: Field {
                         label: @tr("Reconnect");
                         value: root.view.auto-reconnect ? root.yes : root.no;
                     }
 
-                    Field {
+                    if !root.view.smb: Field {
                         label: @tr("Read-only");
                         value: root.view.read-only ? root.yes : root.no;
                     }
 
-                    Field {
+                    if !root.view.smb: Field {
                         label: @tr("Cache");
                         value: @tr("{} s", root.view.cache);
                     }
 
-                    Field {
+                    if !root.view.smb: Field {
                         label: @tr("Keep-alive");
                         value: root.view.keep-alive == "0" ? @tr("Off") : @tr("{} s", root.view.keep-alive);
                         last: true;

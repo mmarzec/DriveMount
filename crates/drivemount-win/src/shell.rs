@@ -217,14 +217,15 @@ pub fn is_on_a_monitor(x: i32, y: i32, width: u32, height: u32) -> bool {
     !monitor.is_invalid()
 }
 
-/// Opens the drive's root in a new Explorer window (FR-MNT-12).
+/// Opens the drive's root in a new Explorer window (FR-MNT-12), or `folder` on it (`films\2024`):
+/// an SMB profile's sub-path, as Windows cannot map a letter to a folder inside a share (spec §5.9).
 ///
 /// # Errors
 /// If Explorer cannot be started. Explorer's own complaints, such as a drive that is not there,
 /// appear in its window, not here.
-pub fn open_in_explorer(letter: DriveLetter) -> io::Result<()> {
+pub fn open_in_explorer(letter: DriveLetter, folder: &str) -> io::Result<()> {
     let explorer = wide(explorer_path()?);
-    let root = wide(root_of(letter));
+    let root = wide(folder_of(letter, folder));
     // SAFETY: all strings are nul-terminated and outlive the call.
     let result = unsafe {
         ShellExecuteW(
@@ -245,6 +246,50 @@ pub fn open_in_explorer(letter: DriveLetter) -> io::Result<()> {
             "ShellExecuteW could not start Explorer: code {code}"
         )))
     }
+}
+
+/// The clipboard's Unicode text format (`CF_UNICODETEXT`). The `windows` crate has it only under
+/// `System::Ole`.
+const CF_UNICODETEXT: u32 = 13;
+
+/// Puts `text` on the clipboard: *Copy path* on an external drive's row (spec §7.1).
+///
+/// # Errors
+/// The clipboard is held by another program, or memory could not be had.
+pub fn copy_text(text: &str) -> io::Result<()> {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
+
+    let units = wide(text);
+    let bytes = units.len() * size_of::<u16>();
+    // SAFETY: a fresh allocation of `bytes`, written through the pointer `GlobalLock` gives for it
+    // and no further; once `SetClipboardData` takes it, the system owns it and it is not freed here.
+    unsafe {
+        let memory = GlobalAlloc(GMEM_MOVEABLE, bytes).map_err(io::Error::other)?;
+        let target = GlobalLock(memory).cast::<u16>();
+        if target.is_null() {
+            let _ = GlobalFree(Some(memory));
+            return Err(io::Error::last_os_error());
+        }
+        std::ptr::copy_nonoverlapping(units.as_ptr(), target, units.len());
+        // Unlocking the last lock "fails" with NO_ERROR, which is success here.
+        let _ = GlobalUnlock(memory);
+        if let Err(error) = OpenClipboard(None) {
+            let _ = GlobalFree(Some(memory));
+            return Err(io::Error::other(error));
+        }
+        let set = EmptyClipboard()
+            .and_then(|()| SetClipboardData(CF_UNICODETEXT, Some(HANDLE(memory.0))));
+        let _ = CloseClipboard();
+        if let Err(error) = set {
+            let _ = GlobalFree(Some(memory));
+            return Err(io::Error::other(error));
+        }
+    }
+    Ok(())
 }
 
 /// Opens the folder a file is in, with the file selected: *Open file location* (spec §7.4.3).
@@ -433,6 +478,11 @@ fn root_of(letter: DriveLetter) -> String {
     format!("{letter}\\")
 }
 
+/// `Z:\`, or `Z:\films\2024` for a folder on it.
+fn folder_of(letter: DriveLetter, folder: &str) -> String {
+    format!("{}{folder}", root_of(letter))
+}
+
 /// Explorer by its full path, as `ShellExecuteW` looks in the current directory first.
 fn explorer_path() -> io::Result<PathBuf> {
     // SAFETY: with no buffer, this only returns the size needed.
@@ -470,6 +520,12 @@ mod tests {
     #[test]
     fn a_root_has_its_backslash() {
         assert_eq!(root_of(letter('z')), r"Z:\");
+    }
+
+    #[test]
+    fn a_folder_goes_after_the_root() {
+        assert_eq!(folder_of(letter('z'), ""), r"Z:\");
+        assert_eq!(folder_of(letter('z'), r"films\2024"), r"Z:\films\2024");
     }
 
     #[test]
@@ -581,7 +637,7 @@ otepad.exe",
         let _letters = lock_letters();
         let target = tempfile::tempdir().unwrap();
         let drive = SubstDrive::new(target.path());
-        open_in_explorer(drive.letter()).unwrap();
+        open_in_explorer(drive.letter(), "").unwrap();
 
         let drive_letter = drive.letter().as_char();
         let script = format!(

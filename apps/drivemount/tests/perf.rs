@@ -34,7 +34,7 @@ use tracing::span::{Attributes, Id};
 use tracing_subscriber::layer::{Context, Layer, SubscriberExt as _};
 use tracing_subscriber::registry::{LookupSpan, Registry};
 
-use drivemount_app::backend::{SftpWinFspFactory, SystemDriveLetters};
+use drivemount_app::backend::{DriveFactory, SystemDriveLetters};
 use drivemount_core::config::{Config, ConfigStore};
 use drivemount_core::manager::{ManagerParts, MountEvent, MountManager, MountState};
 use drivemount_core::profile::{Profile, Protocol, SftpAuth, SftpProfile};
@@ -109,7 +109,7 @@ impl World {
         let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecretStore::new());
         let manager = MountManager::new(ManagerParts {
             store,
-            factory: Arc::new(SftpWinFspFactory::new(
+            factory: Arc::new(DriveFactory::new(
                 Arc::clone(&secrets),
                 folder.path().join("known_hosts"),
             )),

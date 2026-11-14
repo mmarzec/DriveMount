@@ -11,12 +11,12 @@ import { Theme, Icons, Icon, AppIcon, AppButton, Card } from "theme.slint";
 import { EntryKind, ListEntry, PrimaryAction, ProfileRow, RowStatus } from "rows.slint";
 import { LoginKind, PageView, ConnectionPage } from "connection_page.slint";
 import { Texts } from "texts.slint";
-import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog } from "dialog.slint";
+import { AuthChoice, DialogForm, DialogMarks, DialogView, KeyFileBox, ProfileDialog, ProtocolChoice, SmbAuthChoice } from "dialog.slint";
 import { PromptInput, PromptKind, PromptPanel, PromptView } from "prompts.slint";
 import { SettingsForm, SettingsPage, SettingsView, WinFspState } from "settings_page.slint";
 import { InfoPage, InfoView } from "info_page.slint";
 
-export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, InfoView, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, RowStatus, SettingsForm, SettingsView, Texts, WinFspState }
+export { AuthChoice, DialogForm, DialogMarks, DialogView, EntryKind, InfoView, KeyFileBox, ListEntry, LoginKind, PageView, PrimaryAction, PromptInput, PromptKind, PromptView, ProtocolChoice, RowStatus, SettingsForm, SettingsView, SmbAuthChoice, Texts, WinFspState }
 
 export enum ThemeChoice { system, light, dark }
 
@@ -230,6 +230,7 @@ export component MainWindow inherits Window {
     callback row-pressed(index: int);
     callback row-primary(index: int);
     callback row-open(index: int);
+    callback row-copy-path(index: int);
     callback row-edit(index: int);
     callback row-delete(index: int);
 
@@ -261,6 +262,8 @@ export component MainWindow inherits Window {
 
     callback form-edited();
     callback host-edited(text: string);
+    callback server-edited(text: string);
+    callback user-edited(text: string);
     callback browse-key-file(which: KeyFileBox);
     callback test-pressed();
     callback cancel-test-pressed();
@@ -318,6 +321,8 @@ export component MainWindow inherits Window {
     // The tooltip of the row under the mouse. Its timer runs only while a row is hovered and the tip
     // is not yet up, so nothing wakes up at idle (NFR-PERF-05).
     property <int> tip-index: -1;
+    // The empty state's height when external rows show below it.
+    property <length> empty-height: 150px;
     property <bool> tip-shown;
     property <length> tip-top;
     property <length> tip-bottom;
@@ -563,7 +568,10 @@ export component MainWindow inherits Window {
             Rectangle {
                 vertical-stretch: 1;
 
+                // External rows (FR-SMB-09) show below the empty state, which counts profiles only.
                 list := ScrollView {
+                    y: root.no-connections && root.entries.length > 0 ? root.empty-height : 0;
+                    height: parent.height - self.y;
                     visible: root.showing-list;
                     enabled: root.interactive && root.showing-list;
                     content-width: self.visible-width;
@@ -596,6 +604,9 @@ export component MainWindow inherits Window {
                             open => {
                                 root.row-open(index);
                             }
+                            copy-path => {
+                                root.row-copy-path(index);
+                            }
                             edit => {
                                 root.row-edit(index);
                             }
@@ -627,6 +638,8 @@ export component MainWindow inherits Window {
                 }
 
                 if root.no-connections && root.showing-list: VerticalLayout {
+                    y: 0;
+                    height: root.entries.length > 0 ? root.empty-height : parent.height;
                     alignment: center;
                     spacing: 10px;
 
@@ -740,6 +753,12 @@ export component MainWindow inherits Window {
                     }
                     host-edited(text) => {
                         root.host-edited(text);
+                    }
+                    server-edited(text) => {
+                        root.server-edited(text);
+                    }
+                    user-edited(text) => {
+                        root.user-edited(text);
                     }
                     browse(which) => {
                         root.browse-key-file(which);

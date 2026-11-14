@@ -63,7 +63,7 @@ DriveMount still starts, and you can add and edit connections. A banner at the t
 
 ## 2. Adding a connection
 
-Choose **Add** on the toolbar (or press Ctrl+N). The *Add connection* page takes the place of the list.
+Choose **Add** on the toolbar (or press Ctrl+N). The *Add connection* page takes the place of the list. **Type** at the top chooses **SSH** (a server you reach over SSH/SFTP, below) or **SMB** (a Windows or Samba share, see [Windows shares (SMB)](#windows-shares-smb)).
 
 | Field | What to enter |
 |---|---|
@@ -78,9 +78,26 @@ Choose **Add** on the toolbar (or press Ctrl+N). The *Add connection* page takes
 
 **Pasting an address.** You can paste a whole address into **Host**, such as `deploy@10.0.4.21:2222/var/www` or `sftp://deploy@10.0.4.21:2222/var/www`, and DriveMount fills in user, host, port and path. `user@host:/path` and `user@host:~` work too. A password inside the address (`user:secret@host`) is dropped and goes in no field.
 
+### Windows shares (SMB)
+
+With **Type** set to **SMB**, Windows itself maps the share, so it works without WinFsp.
+
+| Field | What to enter |
+|---|---|
+| **Server** | The server's name or IPv4 address. Pasting `\\nas\media\films`, `//nas/media/films` or `smb://nas/media/films` fills Server, Share and Sub-path. An IPv6 address goes in Windows' `fe80--1.ipv6-literal.net` form. |
+| **Share** | The share's name, such as `media`. |
+| **Sub-path** | Optional: a folder in the share, such as `films\2024`. Windows maps the whole share on the letter; **Open in Explorer** opens at this folder. |
+| **Auth** | *Password*, *Ask each time*, or *Current Windows user* (your Windows sign-in, with no password asked, as on a company domain). |
+| **User**, **Domain** | Not with *Current Windows user*. Typing `CORP\anna` in User fills both. Leave Domain empty for `anna@corp.example`, and use `.` for the server's own accounts. |
+| **Password** | With *Password*; **Remember password** keeps it in Windows Credential Manager. |
+
+Drive and *Mount when DriveMount starts* are as for SSH. There is no **Advanced**: Windows reconnects a share by itself, and a share is as writable as the server allows.
+
+**Unmount with files open.** If a program has a file open on the share, **Unmount** asks first. **Unmount anyway** removes the drive; programs using those files may lose unsaved changes.
+
 ### Advanced
 
-Choose **Advanced** to see:
+Choose **Advanced** (SSH only) to see:
 
 | Field | What it does | Default |
 |---|---|---|
@@ -92,7 +109,7 @@ Choose **Advanced** to see:
 
 ### Test and save
 
-**Test connection** logs in and checks that the remote path is a folder, without mounting. It says *✓ Connected (12 ms)* or shows what went wrong (see [section 9](#9-troubleshooting)). Any edit stops a test under way.
+**Test connection** logs in and checks that the remote path (for SMB, the sub-path) is a folder, without mounting. It says *✓ Connected (12 ms)* or shows what went wrong (see [section 9](#9-troubleshooting)). Any edit stops a test under way.
 
 Fields with a problem are marked in red, and **Save** stays disabled until they are corrected. **Cancel** or Esc leaves without saving.
 
@@ -184,6 +201,10 @@ The drive appears in Explorer under *Network locations*, named after the connect
 
 **Unmount** finishes any writes still under way and removes the drive. It does not wait for programs that have files open on it; those programs get an error the next time they use the file.
 
+### Drives mapped by other programs
+
+The list also shows network drives mapped outside DriveMount, by `net use`, Explorer or another program, so you can see every letter in use. They are dimmed, marked **External**, and have no button: DriveMount never changes them. Hover for what Windows says about them. Ctrl+Enter or the right-click menu opens one in Explorer, and **Copy path** copies its `\\server\share`. Remove one where it was made, for example with `net use W: /delete`. The list is read again every 5 seconds while the window is open. Turn this off in Settings: **Show other network drives**.
+
 ### When the drive letter is taken
 
 If the connection's letter is in use when it mounts, DriveMount by default uses the next free letter and tells you: the row says, for example, *Y: (Z: was in use)*. You can make it stop instead, in Settings: *When a drive letter is in use → Don't mount*.
@@ -249,6 +270,7 @@ The gear button on the toolbar opens Settings. Changes take effect at once.
 | **Close button hides to tray** | The window's × hides it, and the drives stay. Off: × quits, as **Quit** does. | on |
 | **Theme** | *System*, *Light* or *Dark*. | System |
 | **When a drive letter is in use** | *Use another free letter*, or *Don't mount*. | Use another free letter |
+| **Show other network drives** | Lists drives mapped outside DriveMount, marked *External*. | on |
 | **Show notifications** | Windows notifications for failures and moved letters. Errors still show in the window when this is off. | on |
 | **Notification sound** | Plays Windows' sound with a notification. | off |
 | **Log level** | How much goes into the log: *Error*, *Warning*, *Info* or *Debug*. **Open logs folder** opens the folder. | Info |
@@ -342,6 +364,14 @@ The server offers only old encryption or signature methods that DriveMount does 
 #### Drive …: is already in use. (E-LETTER-TAKEN)
 
 The connection's letter was taken and *When a drive letter is in use* is set to *Don't mount*. Choose another letter, set **Drive** to *Auto*, or free the letter. A letter held by a disconnected `net use` mapping counts as taken; remove it with `net use Z: /delete`.
+
+#### Windows is already connected to … as a different user. (E-SMB-1219)
+
+Windows allows one user per server at a time, and another connection to that server (a mapped drive, or a share opened in Explorer) uses another user name or password. The message names that connection when DriveMount finds it. Disconnect it (for a letter, in Explorer or with `net use W: /delete`), or put the server's IP address, or another name for it, in this connection: Windows counts that as another server.
+
+#### Share … not found on …. (E-SMB-SHARE-NOT-FOUND)
+
+The server has no share of that name, or does not show it to this user. Check the **Share** field.
 
 #### No free drive letter. (E-NO-FREE-LETTER)
 

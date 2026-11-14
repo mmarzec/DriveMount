@@ -403,6 +403,13 @@ impl MountManager {
         }
     }
 
+    /// Every drive letter a mount holds now, from when it is chosen until the mount ends (spec §5.5):
+    /// those the list of other network drives leaves out (FR-SMB-09, spec §5.9). Never waits.
+    #[must_use]
+    pub fn held_letters(&self) -> Vec<DriveLetter> {
+        self.inner.shared.allocator.held()
+    }
+
     /// Windows resumed from sleep or a network interface changed (FR-REC-03). Every *Reconnecting*
     /// profile tries again at once, giving up an attempt that started before unless it is asking the
     /// user something, and its waits start again from a second. Every *Mounted* one checks its

@@ -4,6 +4,7 @@
 //! no screen. What the list holds is tested in `list.rs`, and the profile dialog in `tests/dialog.rs`.
 
 mod dialog;
+mod external;
 mod lifecycle;
 mod toasts;
 mod tray;
@@ -479,7 +480,7 @@ fn the_shortcuts_of_the_table_work() {
     fixture.ctrl(Key::Return);
     assert_eq!(
         fixture.take_sent(),
-        [UiCommand::OpenInExplorer(letter('Q'))]
+        [UiCommand::OpenInExplorer(letter('Q'), String::new())]
     );
 
     // With no tray to come back from, Esc minimizes.
@@ -743,7 +744,7 @@ fn the_page_shows_the_settings_and_follows_the_state() {
     fixture.ctrl(Key::Return);
     assert_eq!(
         fixture.take_sent(),
-        [UiCommand::OpenInExplorer(letter('X'))]
+        [UiCommand::OpenInExplorer(letter('X'), String::new())]
     );
 
     fixture.set_state(

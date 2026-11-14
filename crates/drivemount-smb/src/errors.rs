@@ -24,7 +24,8 @@ pub const ERROR_OPEN_FILES: u32 = 2401;
 
 /// What the mount is of, for the error texts.
 pub struct Mapping<'a> {
-    pub letter: DriveLetter,
+    /// None for a connection without a drive (Test connection).
+    pub letter: Option<DriveLetter>,
     pub server: &'a str,
     pub share: &'a str,
     /// The user name as the error shows it.
@@ -50,9 +51,10 @@ pub fn mount_error(error: &WNetError, mapping: &Mapping<'_>) -> MountError {
             port: SMB_PORT,
         }
         .into(),
-        ERROR_ALREADY_ASSIGNED | ERROR_DEVICE_ALREADY_REMEMBERED => {
-            MountError::LetterTaken(mapping.letter)
-        }
+        ERROR_ALREADY_ASSIGNED | ERROR_DEVICE_ALREADY_REMEMBERED => match mapping.letter {
+            Some(letter) => MountError::LetterTaken(letter),
+            None => MountError::Other(format!("WNetAddConnection2W: {error}")),
+        },
         ERROR_SESSION_CREDENTIAL_CONFLICT => credential_conflict(mapping.server, &[]),
         _ => MountError::Other(format!("WNetAddConnection2W: {error}")),
     }
@@ -91,7 +93,7 @@ mod tests {
 
     fn mapping() -> Mapping<'static> {
         Mapping {
-            letter: letter('S'),
+            letter: Some(letter('S')),
             server: "nas",
             share: "media",
             user: "marcin",

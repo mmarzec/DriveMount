@@ -5,10 +5,13 @@
 //! which need a real connection, see `examples/connect.rs`.
 //!
 //! ```text
-//! cargo run -p drivemount --example main_window -- [--empty] [--no-winfsp] [--read-only] [--light|--dark] [--many] [--showcase]
+//! cargo run -p drivemount --example main_window -- [--empty] [--no-winfsp] [--read-only] [--light|--dark] [--many] [--showcase] [--real-drives]
 //! ```
 //!
 //! `--showcase` swaps the edge cases for a tidy set of connections, as in the README's screenshot.
+//! The list shows two made-up drives mapped outside DriveMount (FR-SMB-09), or with `--real-drives`
+//! the ones this PC really has, read every 5 s as the app does. Unmounting the SMB profile pretends
+//! that files are open on it, to show FR-SMB-04's question.
 //!
 //! Set `SLINT_SCALE_FACTOR=1.5` to see it at 150% without changing the display's settings. Esc and the
 //! close button end it, as there is no tray yet. Its size and place are kept in a file in the temp
@@ -33,6 +36,7 @@ mod preview {
     use drivemount_app::ui::{MainUi, UiCommand};
     use drivemount_core::config::{Config, ConfigStore, Theme};
     use drivemount_core::manager::{MountDetail, MountEvent, MountState};
+    use drivemount_smb::{DriveStatus, OtherDrive};
     use drivemount_vfs::{ConnectError, DriveLetter, MountError};
     use drivemount_win::drives::is_letter_free;
     use drivemount_win::shell::pick_file;
@@ -96,6 +100,18 @@ host = "invalid"
 username = "me"
 auth = "agent"
 keepalive_secs = 9999
+
+[[profiles]]
+id = "00000000-0000-4000-8000-000000000008"
+name = "NAS media"
+protocol = "smb"
+server = "nas"
+share = "media"
+sub_path = 'films\2024'
+username = "marcin"
+auth = "password"
+remember = true
+drive_letter = "M"
 
 [[profiles]]
 id = "00000000-0000-4000-8000-000000000007"
@@ -208,6 +224,37 @@ drive_letter = "M"
         Ok(ConfigStore::open(path))
     }
 
+    /// Two drives as `net use` and WSL would have mapped them.
+    #[expect(clippy::unnecessary_wraps, reason = "the lister's type")]
+    fn made_up_drives() -> Option<Vec<OtherDrive>> {
+        let drive = |letter, unc: &str, provider: &str, status, user: Option<&str>| {
+            Some(OtherDrive {
+                letter: DriveLetter::new(letter)?,
+                unc: unc.to_owned(),
+                provider: provider.to_owned(),
+                status,
+                user: user.map(str::to_owned),
+            })
+        };
+        let drives = [
+            drive(
+                'P',
+                r"\\nas\photos",
+                "Microsoft Windows Network",
+                DriveStatus::Mapped,
+                Some(r"NAS\marcin"),
+            ),
+            drive(
+                'U',
+                r"\\wsl.localhost\Ubuntu-with-a-rather-long-name\home\marcin\projects",
+                "Plan 9 Network Provider",
+                DriveStatus::Disconnected,
+                None,
+            ),
+        ];
+        Some(drives.into_iter().flatten().collect())
+    }
+
     /// Pretends to be the manager: mounting takes a moment, and one profile always fails.
     fn handle(ui: &Rc<MainUi>, config: &Rc<std::cell::RefCell<Config>>, command: UiCommand) {
         eprintln!("{command:?}");
@@ -230,7 +277,15 @@ drive_letter = "M"
             UiCommand::Cancel(cancelled) => {
                 ui.apply_event(&event(cancelled, MountState::Disconnected, None));
             }
-            UiCommand::Unmount(unmounting) => {
+            // The SMB profile pretends that files are open on it, once (FR-SMB-04).
+            UiCommand::Unmount(unmounting) if unmounting == id(8) => {
+                ui.apply_event(&event(unmounting, MountState::Unmounting, Some('M')));
+                let ui = Rc::clone(ui);
+                Timer::single_shot(Duration::from_millis(300), move || {
+                    ui.apply_event(&event(unmounting, MountState::Mounted, Some('M')));
+                });
+            }
+            UiCommand::Unmount(unmounting) | UiCommand::ForceUnmount(unmounting) => {
                 ui.apply_event(&event(unmounting, MountState::Unmounting, Some('V')));
                 let ui = Rc::clone(ui);
                 Timer::single_shot(Duration::from_millis(500), move || {
@@ -276,7 +331,8 @@ drive_letter = "M"
             }
             UiCommand::CancelTest { .. }
             | UiCommand::OpenFileLocation(_)
-            | UiCommand::OpenInExplorer(_)
+            | UiCommand::OpenInExplorer(..)
+            | UiCommand::CopyText(_)
             | UiCommand::SaveSettings(_)
             | UiCommand::OpenLogsFolder
             | UiCommand::OpenLicences
@@ -330,6 +386,11 @@ drive_letter = "M"
             ui.apply_event(&event(id(4), MountState::Error(error), None));
         }
 
+        if has("--real-drives") {
+            ui.set_other_drives(|| drivemount_smb::other_drives(&[]).ok());
+        } else if !has("--showcase") {
+            ui.set_other_drives(made_up_drives);
+        }
         ui.show()?;
         slint::run_event_loop_until_quit()?;
         Ok(())

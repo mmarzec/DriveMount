@@ -24,7 +24,7 @@ mod tray;
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,19 +33,22 @@ use drivemount_core::config::{
 };
 use drivemount_core::manager::{MountEvent, MountState, ProfileChangeError};
 use drivemount_core::profile::Profile;
+use drivemount_smb::{DriveStatus, OtherDrive};
 use drivemount_vfs::{ConnectError, DriveLetter, HostKeyDecision, MountError, Secret, SecretSlot};
 use drivemount_win::toast::{Toast, Toasts};
 use drivemount_win::tray::{Tray, TrayContent, TrayEvent};
 use drivemount_win::winfsp::WinFspStatus;
 use slint::{
     CloseRequestResponse, ComponentHandle, LogicalSize, Model, ModelRc, PhysicalPosition,
-    PlatformError, SharedString, VecModel,
+    PlatformError, SharedString, Timer, TimerMode, VecModel,
 };
 use uuid::Uuid;
 
 use self::dialog::{Dialog, Room};
-use self::errors::{read_only_text, setting_problems_text, shown_error};
-use self::list::{Body, Item, Key, Line, ListState, Primary, ProfileItem};
+use self::errors::{read_only_text, setting_problems_text, shown_error_among};
+use self::list::{
+    Body, ExternalDrive, ExternalStatus, Item, Key, Line, ListState, Primary, ProfileItem,
+};
 use self::notices::Notice;
 use self::page::{Details, Login};
 pub use self::prompts::UiPrompter;
@@ -155,10 +158,14 @@ pub enum UiCommand {
     Mount(Uuid),
     /// Unmount a profile. *Unmount all* sends one of these for each.
     Unmount(Uuid),
+    /// Unmount even with files open, after the user said yes (FR-SMB-04).
+    ForceUnmount(Uuid),
     /// Cancel a mount in progress.
     Cancel(Uuid),
-    /// Open a drive's root (FR-MNT-12).
-    OpenInExplorer(DriveLetter),
+    /// Open a drive in Explorer (FR-MNT-12): its root, or the folder on it (an SMB sub-path).
+    OpenInExplorer(DriveLetter, String),
+    /// Put this on the clipboard: an external drive's path (spec §7.1).
+    CopyText(String),
     /// Save the settings, changed on the settings page (FR-SET). They are in use in the window
     /// already. Answer a failure with [`MainUi::set_config`] and [`MainUi::set_action_failure`].
     SaveSettings(Box<Settings>),
@@ -214,6 +221,8 @@ enum Asking {
     Delete(Key),
     /// Quitting with drives up (FR-APP-04).
     Quit,
+    /// Unmounting a drive with files open on it (FR-SMB-04).
+    FilesOpen(Uuid),
 }
 
 struct Inner {
@@ -248,7 +257,23 @@ struct Inner {
     tray: RefCell<Option<Box<dyn TraySink>>>,
     tray_ids: RefCell<TrayIds>,
     toasts: RefCell<Option<Box<dyn ToastSink>>>,
+    /// Itself, for the timer that lists other network drives.
+    me: Weak<Inner>,
+    /// Lists the network drives mapped outside DriveMount (FR-SMB-09). `None` until the app gives
+    /// one; the listing is `None` when Windows could not give it.
+    other_drives: RefCell<Option<OtherDrives>>,
+    /// Lists them again every 5 s while the window is shown (spec §5.9).
+    other_drives_timer: Timer,
 }
+
+/// What lists the other network drives: `drivemount_smb::other_drives` with the letters the manager
+/// holds, in the app.
+type OtherDrives = Box<dyn Fn() -> Option<Vec<OtherDrive>>>;
+
+/// How often the list of other network drives is read while the window is shown (spec §5.9).
+const OTHER_DRIVES_EVERY: Duration = Duration::from_secs(5);
+/// A UNC path longer than this is cut in the middle in its row (spec §7.1).
+const LONGEST_SHOWN_UNC: usize = 48;
 
 /// The main window, and what it needs to keep showing the right thing. Dropping it closes the window,
 /// and answers what the prompter still has waiting with a cancel.
@@ -302,7 +327,10 @@ impl MainUi {
                 tracing::debug!(%error, "the window could not be told about a prompt");
             }
         }));
-        let inner = Rc::new(Inner {
+        let inner = Rc::new_cyclic(|me| Inner {
+            me: me.clone(),
+            other_drives: RefCell::new(None),
+            other_drives_timer: Timer::default(),
             window: window.as_weak(),
             commands: Box::new(commands),
             entries,
@@ -338,7 +366,9 @@ impl MainUi {
     /// The window cannot be shown.
     pub fn show(&self) -> Result<(), PlatformError> {
         self.inner.restore_placement();
-        self.window.show()
+        self.window.show()?;
+        self.inner.watch_other_drives();
+        Ok(())
     }
 
     /// Shows the window in front, wherever it was: hidden, minimized or behind others. Another start
@@ -378,9 +408,17 @@ impl MainUi {
         self.inner.dialog_follows_list();
     }
 
+    /// What lists the network drives mapped outside DriveMount (FR-SMB-09). It runs on the UI thread,
+    /// so it must not reach any server: `drivemount_smb::other_drives` does not.
+    pub fn set_other_drives(&self, lister: impl Fn() -> Option<Vec<OtherDrive>> + 'static) {
+        *self.inner.other_drives.borrow_mut() = Some(Box::new(lister));
+        self.inner.watch_other_drives();
+    }
+
     /// A profile's new state. A changed host key brings up its dialog (spec §7.4.3).
     /// A failure or a moved letter is a toast, if they are on (FR-NOT-01, FR-NOT-03).
     pub fn apply_event(&self, event: &MountEvent) {
+        let before = self.inner.list.borrow().state_of(event.id);
         let notice = self.inner.list.borrow_mut().apply(event);
         self.inner.refresh();
         self.inner.dialog_follows_list();
@@ -391,6 +429,23 @@ impl MainUi {
             &event.state
         {
             self.inner.show_changed_key(details.clone());
+        }
+        // The manager's cue that the drive refused for open files (spec §5.5): nothing else takes an
+        // unmount back to a mounted drive.
+        // The letters the app holds changed (spec §5.9).
+        if before != event.state
+            && matches!(
+                event.state,
+                MountState::Mounted | MountState::Disconnected | MountState::Error(_)
+            )
+        {
+            self.inner.poll_other_drives();
+        }
+        let refused = before == MountState::Unmounting
+            && matches!(event.state, MountState::Mounted | MountState::Reconnecting);
+        if refused {
+            self.inner
+                .ask_files_open(event.id, event.detail.map(|detail| detail.letter));
         }
     }
 
@@ -568,6 +623,7 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_row_pressed(on_row(Inner::open_page_at));
     window.on_row_primary(on_row(Inner::primary_of));
     window.on_row_open(on_row(Inner::open_of));
+    window.on_row_copy_path(on_row(Inner::copy_path_of));
     window.on_row_edit(on_row(Inner::edit_of));
     window.on_row_delete(on_row(Inner::ask_to_delete_at));
 
@@ -607,6 +663,10 @@ fn connect(window: &MainWindow, inner: &Rc<Inner>) {
     window.on_form_edited(on(Inner::form_edited));
     let handler = Rc::clone(inner);
     window.on_host_edited(move |text| handler.host_edited(&text));
+    let handler = Rc::clone(inner);
+    window.on_server_edited(move |text| handler.server_edited(&text));
+    let handler = Rc::clone(inner);
+    window.on_user_edited(move |text| handler.user_edited(&text));
     let handler = Rc::clone(inner);
     window.on_browse_key_file(move |which| handler.browse_key_file(which));
     window.on_test_pressed(on(Inner::start_test));
@@ -786,6 +846,60 @@ impl Inner {
 
     /// The list item on this line. The model is only changed here on this thread, so it is the one the
     /// user acted on.
+    /// Lists the other network drives now, and every 5 s while the window is shown (spec §5.9).
+    fn watch_other_drives(&self) {
+        if self.other_drives.borrow().is_none() {
+            return;
+        }
+        self.poll_other_drives();
+        if self.other_drives_timer.running() {
+            return;
+        }
+        let me = self.me.clone();
+        self.other_drives_timer
+            .start(TimerMode::Repeated, OTHER_DRIVES_EVERY, move || {
+                let Some(inner) = me.upgrade() else {
+                    return;
+                };
+                if inner.is_shown() {
+                    inner.poll_other_drives();
+                } else {
+                    // Nothing wakes up while it is hidden; showing it starts this again.
+                    inner.other_drives_timer.stop();
+                }
+            });
+    }
+
+    fn is_shown(&self) -> bool {
+        self.window
+            .upgrade()
+            .is_some_and(|window| window.window().is_visible())
+    }
+
+    /// Reads the other network drives, and redraws the list only if they changed. Nothing while the
+    /// window is hidden, or FR-SET-09 is off.
+    pub(super) fn poll_other_drives(&self) {
+        if !self.is_shown() || !self.list.borrow().shows_externals() {
+            return;
+        }
+        let listed = {
+            let lister = self.other_drives.borrow();
+            let Some(lister) = lister.as_ref() else {
+                return;
+            };
+            lister()
+        };
+        // What could not be listed this time keeps what was there.
+        let Some(listed) = listed else {
+            return;
+        };
+        let externals = listed.into_iter().map(external_of).collect();
+        let changed = self.list.borrow_mut().set_externals(externals);
+        if changed {
+            self.refresh();
+        }
+    }
+
     fn item(&self, index: usize) -> Option<Item> {
         self.list.borrow().items().into_iter().nth(index)
     }
@@ -804,7 +918,8 @@ impl Inner {
             list.select_place(index);
             list.selected().cloned()
         };
-        if key.is_some() {
+        // An external drive has no page: a click only selects it (spec §7.1).
+        if key.is_some() && !matches!(key, Some(Key::External(_))) {
             *self.page.borrow_mut() = key;
             self.make_room();
         }
@@ -813,7 +928,7 @@ impl Inner {
 
     fn open_page_selected(&self) {
         let key = self.list.borrow().selected().cloned();
-        if key.is_some() {
+        if key.is_some() && !matches!(key, Some(Key::External(_))) {
             *self.page.borrow_mut() = key;
             self.make_room();
             self.refresh();
@@ -930,7 +1045,7 @@ impl Inner {
     fn open(&self, row: &ProfileItem) -> bool {
         match row.letter {
             Some(letter) if row.can_open => {
-                self.send(UiCommand::OpenInExplorer(letter));
+                self.send(UiCommand::OpenInExplorer(letter, row.folder.clone()));
                 true
             }
             _ => false,
@@ -938,12 +1053,21 @@ impl Inner {
     }
 
     fn open_of(&self, index: usize) {
-        if let Some(Item {
-            body: Body::Profile(row),
-            ..
-        }) = self.item(index)
-        {
-            self.open(&row);
+        match self.item(index).map(|item| item.body) {
+            Some(Body::Profile(row)) => {
+                self.open(&row);
+            }
+            Some(Body::External(drive)) => {
+                self.send(UiCommand::OpenInExplorer(drive.letter, String::new()));
+            }
+            _ => {}
+        }
+    }
+
+    /// *Copy path* on an external drive's row: its UNC path.
+    fn copy_path_of(&self, index: usize) {
+        if let Some(Body::External(drive)) = self.item(index).map(|item| item.body) {
+            self.send(UiCommand::CopyText(drive.unc));
         }
     }
 
@@ -964,8 +1088,14 @@ impl Inner {
     }
 
     fn open_selected(&self) {
-        if let Some(Body::Profile(row)) = self.selected_item().map(|item| item.body) {
-            self.open(&row);
+        match self.selected_item().map(|item| item.body) {
+            Some(Body::Profile(row)) => {
+                self.open(&row);
+            }
+            Some(Body::External(drive)) => {
+                self.send(UiCommand::OpenInExplorer(drive.letter, String::new()));
+            }
+            _ => {}
         }
     }
 
@@ -994,6 +1124,8 @@ impl Inner {
         };
         let texts = window.global::<Texts>();
         let question = match &item.body {
+            // Removed where it was made (spec §7.1).
+            Body::External(_) => return,
             Body::Profile(row) if !row.can_delete => return,
             Body::Profile(row) => {
                 let name = SharedString::from(&row.name);
@@ -1024,6 +1156,27 @@ impl Inner {
         window.set_question(question);
     }
 
+    /// FR-SMB-04: the drive is still there, and the user is asked whether to remove it anyway. A
+    /// question already on screen stays, and the drive with it: Unmount asks again.
+    fn ask_files_open(&self, id: Uuid, letter: Option<DriveLetter>) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if self.asking.borrow().is_some() {
+            return;
+        }
+        let Some(name) = self.list.borrow().profile(id).map(|p| p.name.clone()) else {
+            return;
+        };
+        let texts = window.global::<Texts>();
+        let letter = letter.map(|letter| letter.to_string()).unwrap_or_default();
+        *self.asking.borrow_mut() = Some(Asking::FilesOpen(id));
+        window.set_question_yes(texts.invoke_files_open_yes());
+        window.set_question(texts.invoke_files_open_question(name.into(), letter.into()));
+        // An Unmount from the tray may have no window on screen to ask in.
+        self.bring_to_front();
+    }
+
     fn answer(&self, yes: bool) {
         let asking = self.asking.borrow_mut().take();
         if let Some(window) = self.window.upgrade() {
@@ -1036,6 +1189,10 @@ impl Inner {
             Some(Asking::Delete(key)) => Some(key),
             Some(Asking::Quit) => {
                 self.send(UiCommand::Quit);
+                return;
+            }
+            Some(Asking::FilesOpen(id)) => {
+                self.send(UiCommand::ForceUnmount(id));
                 return;
             }
             None => None,
@@ -1052,7 +1209,7 @@ impl Inner {
                 let entry = self.list.borrow().unreadable(place).cloned();
                 entry.map(UiCommand::DeleteUnreadable)
             }
-            None => None,
+            Some(Key::External(_)) | None => None,
         };
         if let Some(command) = command {
             self.send(command);
@@ -1133,6 +1290,7 @@ impl Inner {
         let list = self.list.borrow();
         let items = list.items();
         let selected = list.selected_place();
+        let own = list.live_letters();
 
         let mut top = 0.0;
         let mut selected_top = 0.0;
@@ -1142,7 +1300,7 @@ impl Inner {
             .enumerate()
             .map(|(place, item)| {
                 let height = item.height();
-                let entry = list_entry(&texts, item, top, height);
+                let entry = list_entry(&texts, item, top, height, &own);
                 if selected == Some(place) {
                     selected_top = top;
                     selected_height = height;
@@ -1224,7 +1382,13 @@ fn update_model(model: &VecModel<ListEntry>, entries: Vec<ListEntry>) {
     }
 }
 
-fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntry {
+fn list_entry(
+    texts: &Texts<'_>,
+    item: &Item,
+    top: f32,
+    height: f32,
+    own: &[DriveLetter],
+) -> ListEntry {
     let placed = ListEntry {
         top,
         height,
@@ -1232,7 +1396,7 @@ fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntr
     };
     match &item.body {
         Body::Profile(row) => {
-            let (line, line_is_problem) = line_text(texts, &row.line);
+            let (line, line_is_problem) = line_text(texts, &row.line, own);
             ListEntry {
                 kind: EntryKind::Profile,
                 name: (&row.name).into(),
@@ -1266,6 +1430,22 @@ fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntr
                 ..placed
             }
         }
+        Body::External(drive) => ListEntry {
+            kind: EntryKind::External,
+            name: shortened_unc(&drive.unc).into(),
+            letter: drive.letter.to_string().into(),
+            letter_is_live: true,
+            // Filled while Windows has it connected.
+            status: match drive.status {
+                ExternalStatus::Mapped | ExternalStatus::Reconnecting => RowStatus::Mounted,
+                ExternalStatus::Disconnected | ExternalStatus::NotConnected => {
+                    RowStatus::Disconnected
+                }
+            },
+            line: external_tip(texts, drive),
+            can_open: true,
+            ..placed
+        },
         Body::Unreadable {
             name,
             problem,
@@ -1286,7 +1466,8 @@ fn list_entry(texts: &Texts<'_>, item: &Item, top: f32, height: f32) -> ListEntr
 
 /// The connection page's view of a list item.
 fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
-    let entry = list_entry(texts, item, 0.0, 0.0);
+    let own = list.live_letters();
+    let entry = list_entry(texts, item, 0.0, 0.0, &own);
     let mut view = PageView {
         kind: entry.kind,
         name: entry.name,
@@ -1304,19 +1485,20 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
             match &row.line {
                 Line::None => {}
                 Line::Failed(error) => {
-                    let shown = shown_error(texts, error);
+                    let shown = shown_error_among(texts, error, &own);
                     view.problem = shown.text;
                     view.problem_hint = shown.hint;
                     view.problem_is_error = true;
                 }
                 line => {
-                    let (text, is_problem) = line_text(texts, line);
+                    let (text, is_problem) = line_text(texts, line, &own);
                     view.problem = text;
                     view.problem_is_error = is_problem;
                 }
             }
             if let Some(profile) = list.profile(row.id) {
                 let details = Details::of(profile);
+                view.smb = details.smb;
                 view.host = details.host.into();
                 view.port = details.port.to_string().into();
                 view.user = details.user.into();
@@ -1348,11 +1530,56 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
             view.problem = entry.line;
             view.problem_is_error = true;
         }
+        // Never opened (spec §7.1).
+        Body::External(_) => {}
     }
     view
 }
 
-fn line_text(texts: &Texts<'_>, line: &Line) -> (SharedString, bool) {
+/// `\\nas\photos`, cut in the middle when it is long, as its end tells shares apart.
+fn shortened_unc(unc: &str) -> String {
+    let chars: Vec<char> = unc.chars().collect();
+    if chars.len() <= LONGEST_SHOWN_UNC {
+        return unc.to_owned();
+    }
+    let keep = (LONGEST_SHOWN_UNC - 1) / 2;
+    let start: String = chars[..keep].iter().collect();
+    let end: String = chars[chars.len() - keep..].iter().collect();
+    format!("{start}…{end}")
+}
+
+/// An external drive's tooltip (spec §7.1): what it is, then what Windows says of it.
+fn external_tip(texts: &Texts<'_>, drive: &ExternalDrive) -> SharedString {
+    let status = match drive.status {
+        ExternalStatus::Mapped => texts.invoke_external_mapped(),
+        ExternalStatus::Reconnecting => texts.invoke_external_reconnecting(),
+        ExternalStatus::Disconnected => texts.invoke_external_disconnected(),
+        ExternalStatus::NotConnected => texts.invoke_external_not_connected(),
+    };
+    let mut facts = vec![status.to_string(), drive.provider.clone()];
+    if let Some(user) = &drive.user {
+        facts.push(texts.invoke_external_user(user.into()).to_string());
+    }
+    format!("{}\n{}", texts.invoke_external_tip(), facts.join(" · ")).into()
+}
+
+/// What `drivemount_smb` lists, as the list shows it.
+fn external_of(drive: OtherDrive) -> ExternalDrive {
+    ExternalDrive {
+        letter: drive.letter,
+        unc: drive.unc,
+        provider: drive.provider,
+        status: match drive.status {
+            DriveStatus::Mapped => ExternalStatus::Mapped,
+            DriveStatus::Reconnecting => ExternalStatus::Reconnecting,
+            DriveStatus::Disconnected => ExternalStatus::Disconnected,
+            DriveStatus::NotConnected => ExternalStatus::NotConnected,
+        },
+        user: drive.user,
+    }
+}
+
+fn line_text(texts: &Texts<'_>, line: &Line, own: &[DriveLetter]) -> (SharedString, bool) {
     match line {
         Line::None => (SharedString::new(), false),
         Line::LetterMoved { letter, wanted } => (
@@ -1360,7 +1587,7 @@ fn line_text(texts: &Texts<'_>, line: &Line) -> (SharedString, bool) {
             false,
         ),
         Line::NeedsCorrecting => (texts.invoke_needs_correcting(), true),
-        Line::Failed(error) => (shown_error(texts, error).line(), true),
+        Line::Failed(error) => (shown_error_among(texts, error, own).line(), true),
     }
 }
 

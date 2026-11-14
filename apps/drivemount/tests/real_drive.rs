@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
-use drivemount_app::backend::{SftpWinFspFactory, SystemDriveLetters};
+use drivemount_app::backend::{DriveFactory, SystemDriveLetters};
 use drivemount_core::config::{Config, ConfigStore};
 use drivemount_core::manager::{ManagerParts, MountEvent, MountManager, MountState};
 use drivemount_core::profile::{Profile, Protocol, SftpAuth, SftpProfile};
@@ -127,7 +127,7 @@ fn world(profiles: Vec<Profile>, typist: Typist) -> World {
     let known_hosts = folder.path().join("known_hosts");
     let manager = MountManager::new(ManagerParts {
         store,
-        factory: Arc::new(SftpWinFspFactory::new(
+        factory: Arc::new(DriveFactory::new(
             Arc::clone(&secrets) as Arc<dyn SecretStore>,
             known_hosts,
         )),

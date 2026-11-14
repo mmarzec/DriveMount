@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use self::engine::{StartWithWindows, Surroundings, UiAction};
-use crate::backend::{SftpWinFspFactory, SystemDriveLetters, default_known_hosts};
+use crate::backend::{DriveFactory, SystemDriveLetters, default_known_hosts};
 use crate::crash;
 use crate::logging::{self, LogGuard, LogLevelControl};
 use crate::ui::{MainUi, TrayIcon};
@@ -425,7 +425,7 @@ fn run_logged(
         let _inside = runtime.enter();
         MountManager::new(ManagerParts {
             store,
-            factory: Arc::new(SftpWinFspFactory::new(
+            factory: Arc::new(DriveFactory::new(
                 Arc::clone(&setup.secrets),
                 setup.known_hosts,
             )),
@@ -434,6 +434,13 @@ fn run_logged(
             prompter: ui.prompter(),
         })
     };
+    // FR-SMB-09: reaches no server, so it may run on the UI thread (spec §5.9).
+    let holder = manager.clone();
+    ui.set_other_drives(move || {
+        drivemount_smb::other_drives(&holder.held_letters())
+            .inspect_err(|error| tracing::debug!(%error, "could not list the other network drives"))
+            .ok()
+    });
     let licences = std::env::current_exe()
         .ok()
         .and_then(|exe| Some(exe.parent()?.join("THIRD-PARTY-LICENSES.html")));

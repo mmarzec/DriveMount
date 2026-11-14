@@ -25,8 +25,8 @@ use uuid::Uuid;
 
 use super::errors::{read_only_text, shown_connect_error};
 use super::form::{
-    Base, Checked, KeyChecks, check, fill_from_paste, form_of, looks_pasted, new_form,
-    typed_secrets,
+    Base, Checked, KeyChecks, check, fill_from_paste, fill_from_smb_user, fill_from_unc_paste,
+    form_of, looks_pasted, new_form, typed_secrets,
 };
 use super::generated::{
     DialogForm, DialogMarks, DialogView, KeyFileBox, PromptInput, PromptKind, PromptView, Texts,
@@ -49,6 +49,7 @@ pub(super) struct Dialog {
     /// Key files that have gone to be looked at.
     asked: Vec<PathBuf>,
     last_host: SharedString,
+    last_server: SharedString,
     free_letters: Option<Vec<DriveLetter>>,
     testing: Option<u64>,
     test_text: SharedString,
@@ -86,12 +87,6 @@ impl Inner {
                     let Some(profile) = list.profile(id) else {
                         return;
                     };
-                    // The form has SSH fields only until M3-04, and saving it would make the share
-                    // an SFTP profile.
-                    if matches!(profile.protocol, Protocol::Smb(_)) {
-                        tracing::debug!(%id, "SMB profiles cannot be edited in this version yet");
-                        return;
-                    }
                     (Some(profile.clone()), list.is_in_use(id))
                 }
                 None => (None, false),
@@ -105,6 +100,7 @@ impl Inner {
 
         *self.dialog.borrow_mut() = Some(Dialog {
             last_host: form.host.clone(),
+            last_server: form.server.clone(),
             base,
             keys: KeyChecks::default(),
             asked: Vec::new(),
@@ -200,6 +196,47 @@ impl Inner {
         self.form_edited();
     }
 
+    /// The SMB Server box, which also splits a UNC path or `smb://` URL pasted into it (FR-SMB-01).
+    pub(super) fn server_edited(&self, text: &str) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        let was_pasted = {
+            let mut dialog = self.dialog.borrow_mut();
+            let Some(dialog) = dialog.as_mut() else {
+                return;
+            };
+            let was_pasted = looks_pasted(&dialog.last_server, text);
+            dialog.last_server = text.into();
+            was_pasted
+        };
+        if was_pasted {
+            let mut form = window.get_form();
+            if fill_from_unc_paste(&mut form, text) {
+                if let Some(dialog) = self.dialog.borrow_mut().as_mut() {
+                    dialog.last_server = form.server.clone();
+                }
+                window.set_form(form);
+            }
+        }
+        self.form_edited();
+    }
+
+    /// The SMB User box: `DOMAIN\user` goes into Domain and User (spec §7.3).
+    pub(super) fn user_edited(&self, text: &str) {
+        let Some(window) = self.window.upgrade() else {
+            return;
+        };
+        if self.dialog.borrow().is_none() {
+            return;
+        }
+        let mut form = window.get_form();
+        if fill_from_smb_user(&mut form, text) {
+            window.set_form(form);
+        }
+        self.form_edited();
+    }
+
     /// What the boxes add up to now.
     fn checked(&self, window: &MainWindow) -> Option<Checked> {
         let dialog = self.dialog.borrow();
@@ -237,11 +274,13 @@ impl Inner {
             }
 
             let form = window.get_form();
-            let boxes: [(Field, &str); 4] = [
+            let boxes: [(Field, &str); 6] = [
                 (Field::Name, form.name.as_str()),
                 (Field::Host, form.host.as_str()),
                 (Field::User, form.user.as_str()),
                 (Field::KeyFile, form.key_file.as_str()),
+                (Field::Server, form.server.as_str()),
+                (Field::Share, form.share.as_str()),
             ];
             for (field, text) in boxes {
                 if !text.is_empty() && !dialog.filled.contains(&field) {
@@ -254,7 +293,15 @@ impl Inner {
                 .map(|(field, _)| *field)
                 .filter(|field| is_new && !dialog.filled.contains(field))
                 .collect();
-            window.set_marks(marks_of(&checked, &dialog.refused, &untouched, &texts));
+            let mut marks = marks_of(&checked, &dialog.refused, &untouched, &texts);
+            // From M3, a letter another program has mapped warns too (spec §7.3).
+            if marks.drive_warning.is_empty()
+                && let DriveChoice::Letter(letter) = checked.profile.drive
+                && let Some(drive) = self.list.borrow().external(letter)
+            {
+                marks.drive_warning = texts.invoke_drive_used_outside(drive.unc.as_str().into());
+            }
+            window.set_marks(marks);
             let saved_password = dialog
                 .base
                 .original
@@ -720,6 +767,7 @@ impl Inner {
         let window = window.window();
         window.set_minimized(false);
         window.with_winit_window(winit::window::Window::focus_window);
+        self.watch_other_drives();
     }
 
     fn show_current_prompt(&self) {
@@ -956,6 +1004,10 @@ fn marks_of(
         jump_host: text_of(Field::JumpHost),
         jump_key_file: text_of(Field::JumpKeyFile),
         jump_password: too_long(checked.jump_password_too_long),
+        server: text_of(Field::Server),
+        share: text_of(Field::Share),
+        sub_path: text_of(Field::SubPath),
+        domain: text_of(Field::Domain),
     }
 }
 

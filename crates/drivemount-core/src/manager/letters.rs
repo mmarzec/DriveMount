@@ -73,6 +73,11 @@ impl Allocator {
         }
     }
 
+    /// Every letter a mount holds now, from when it was chosen until the mount ends.
+    pub(super) fn held(&self) -> Vec<DriveLetter> {
+        lock(&self.reserved).iter().copied().collect()
+    }
+
     /// A letter for `choice`, not one of `tried`, which are those the backend has found taken.
     ///
     /// *Auto* is the highest free letter. A profile's own letter that is taken goes by `conflict`,

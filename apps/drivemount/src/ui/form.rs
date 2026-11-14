@@ -11,14 +11,14 @@ use std::path::{Path, PathBuf};
 use drivemount_core::profile::{
     DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_PORT, DEFAULT_REMOTE_PATH, DriveChoice,
     DriveWarning, Field, FieldError, JumpAuth, JumpHost, Problem, Profile, Protocol, SftpAuth,
-    SftpProfile, SmbAuth, parse_cache_secs, parse_jump_host, parse_keepalive_secs,
-    parse_pasted_host, parse_port, validate_profile,
+    SftpProfile, SmbAuth, SmbProfile, parse_cache_secs, parse_jump_host, parse_keepalive_secs,
+    parse_pasted_host, parse_pasted_unc, parse_port, split_smb_user, validate_profile,
 };
 use drivemount_vfs::{DriveLetter, Secret, SecretSlot};
 use drivemount_win::credentials::MAX_SECRET_UNITS;
 use uuid::Uuid;
 
-use super::generated::{AuthChoice, DialogForm};
+use super::generated::{AuthChoice, DialogForm, ProtocolChoice, SmbAuthChoice};
 
 const JUMP_BY_AGENT: i32 = 0;
 const JUMP_BY_KEY_FILE: i32 = 1;
@@ -102,23 +102,11 @@ pub(super) fn new_form() -> DialogForm {
     }
 }
 
-/// The boxes of a saved profile. A secret is never put in a box.
-///
-/// The dialog is not opened on an SMB profile until M3-04, which gives it SMB fields: such a profile
-/// gives a new form with its name.
+/// The boxes of a saved profile. A secret is never put in a box. The other protocol's boxes are a new
+/// form's, for when the user switches.
 pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
-    let Protocol::Sftp(sftp) = &profile.protocol else {
-        return DialogForm {
-            name: (&profile.name).into(),
-            ..new_form()
-        };
-    };
-    let mut form = DialogForm {
+    let common = DialogForm {
         name: (&profile.name).into(),
-        host: (&sftp.host).into(),
-        port: sftp.port.to_string().into(),
-        user: (&sftp.username).into(),
-        remote_path: (&sftp.remote_path).into(),
         drive_index: drives
             .iter()
             .position(|drive| *drive == profile.drive)
@@ -127,11 +115,21 @@ pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
         mount_on_start: profile.mount_on_start,
         auto_reconnect: profile.auto_reconnect,
         read_only: profile.read_only,
+        ..new_form()
+    };
+    let sftp = match &profile.protocol {
+        Protocol::Sftp(sftp) => sftp,
+        Protocol::Smb(smb) => return smb_form(smb, common),
+    };
+    let mut form = DialogForm {
+        protocol: ProtocolChoice::Ssh,
+        host: (&sftp.host).into(),
+        port: sftp.port.to_string().into(),
+        user: (&sftp.username).into(),
+        remote_path: (&sftp.remote_path).into(),
         cache: sftp.cache_ttl_secs.to_string().into(),
         keep_alive: sftp.keepalive_secs.to_string().into(),
-        remember_password: true,
-        remember_passphrase: true,
-        ..DialogForm::default()
+        ..common
     };
     match &sftp.auth {
         SftpAuth::Password { remember } => {
@@ -158,6 +156,25 @@ pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
         }
     }
     form
+}
+
+fn smb_form(smb: &SmbProfile, common: DialogForm) -> DialogForm {
+    let (smb_auth, remember_password) = match smb.auth {
+        SmbAuth::Password { remember } => (SmbAuthChoice::Password, remember),
+        SmbAuth::Ask => (SmbAuthChoice::Ask, true),
+        SmbAuth::WindowsUser => (SmbAuthChoice::WindowsUser, true),
+    };
+    DialogForm {
+        protocol: ProtocolChoice::Smb,
+        server: (&smb.server).into(),
+        share: (&smb.share).into(),
+        sub_path: (&smb.sub_path).into(),
+        domain: (&smb.domain).into(),
+        user: (&smb.username).into(),
+        smb_auth,
+        remember_password,
+        ..common
+    }
 }
 
 /// `[user@]host[:port]`, as the Jump host box takes it, with no port if it is the usual one.
@@ -307,6 +324,37 @@ fn build(form: &DialogForm, base: &Base, errors: &mut Vec<FieldError>) -> Profil
         };
     }
 
+    let drive = usize::try_from(form.drive_index)
+        .ok()
+        .and_then(|place| base.drives.get(place).copied())
+        .unwrap_or(DriveChoice::Auto);
+    if form.protocol == ProtocolChoice::Smb {
+        let auth = match form.smb_auth {
+            SmbAuthChoice::Password => SmbAuth::Password {
+                remember: form.remember_password,
+            },
+            SmbAuthChoice::Ask => SmbAuth::Ask,
+            SmbAuthChoice::WindowsUser => SmbAuth::WindowsUser,
+        };
+        return Profile {
+            id: base.id,
+            name,
+            protocol: Protocol::Smb(SmbProfile {
+                server: form.server.trim().to_owned(),
+                share: form.share.trim().to_owned(),
+                // Stored with `\`, as Windows writes it (spec §7.3).
+                sub_path: form.sub_path.trim().replace('/', "\\"),
+                domain: form.domain.trim().to_owned(),
+                username: form.user.trim().to_owned(),
+                auth,
+            }),
+            drive,
+            read_only: form.read_only,
+            mount_on_start: form.mount_on_start,
+            auto_reconnect: form.auto_reconnect,
+        };
+    }
+
     let mut parsed = |field, result: Result<u64, Problem>, default| {
         result.unwrap_or_else(|problem| {
             errors.push(FieldError { field, problem });
@@ -374,10 +422,7 @@ fn build(form: &DialogForm, base: &Base, errors: &mut Vec<FieldError>) -> Profil
             keepalive_secs,
             jump,
         }),
-        drive: usize::try_from(form.drive_index)
-            .ok()
-            .and_then(|place| base.drives.get(place).copied())
-            .unwrap_or(DriveChoice::Auto),
+        drive,
         read_only: form.read_only,
         mount_on_start: form.mount_on_start,
         auto_reconnect: form.auto_reconnect,
@@ -460,6 +505,36 @@ pub(super) fn fill_from_paste(form: &mut DialogForm, text: &str) -> bool {
     if let Some(path) = pasted.path {
         form.remote_path = path.into();
     }
+    true
+}
+
+/// Splits a UNC path or `smb://` URL pasted into the Server box (FR-SMB-01). All or nothing: text that
+/// does not make sense as a whole stays, and the Server rule marks it. Returns whether anything
+/// changed.
+pub(super) fn fill_from_unc_paste(form: &mut DialogForm, text: &str) -> bool {
+    let Some(pasted) = parse_pasted_unc(text) else {
+        return false;
+    };
+    form.server = pasted.server.into();
+    form.share = pasted.share.into();
+    form.sub_path = pasted.sub_path.into();
+    if let Some(domain) = pasted.domain {
+        form.domain = domain.into();
+    }
+    if let Some(user) = pasted.user {
+        form.user = user.into();
+    }
+    true
+}
+
+/// Splits `DOMAIN\user` in the User box into Domain and User, when both parts pass their rules
+/// (spec §7.3). Returns whether anything changed.
+pub(super) fn fill_from_smb_user(form: &mut DialogForm, text: &str) -> bool {
+    let Some(split) = split_smb_user(text) else {
+        return false;
+    };
+    form.domain = split.domain.into();
+    form.user = split.user.into();
     true
 }
 
@@ -1008,5 +1083,187 @@ mod tests {
         assert_eq!(jump_text(&jump("h", 2200, Some("u"))), "u@h:2200");
         assert_eq!(jump_text(&jump("::1", 22, None)), "::1");
         assert_eq!(jump_text(&jump("::1", 2200, Some("u"))), "u@[::1]:2200");
+    }
+
+    fn smb_saved(name: &str, auth: SmbAuth) -> Profile {
+        let mut smb = SmbProfile::new("nas", "media", "marcin", auth);
+        smb.sub_path = r"films\2024".to_owned();
+        smb.domain = "CORP".to_owned();
+        Profile::new(name, Protocol::Smb(smb))
+    }
+
+    fn valid_smb_form() -> DialogForm {
+        DialogForm {
+            protocol: ProtocolChoice::Smb,
+            name: "Share".into(),
+            server: "nas".into(),
+            share: "media".into(),
+            user: "marcin".into(),
+            ..new_form()
+        }
+    }
+
+    #[test]
+    fn every_kind_of_smb_profile_comes_back_from_the_boxes_as_it_was() {
+        let mut lettered = smb_saved("A", SmbAuth::Password { remember: false });
+        lettered.drive = DriveChoice::Letter(DriveLetter::new('M').unwrap());
+        lettered.mount_on_start = true;
+        for profile in [
+            lettered,
+            smb_saved("B", SmbAuth::Password { remember: true }),
+            smb_saved("C", SmbAuth::Ask),
+            smb_saved("D", SmbAuth::WindowsUser),
+        ] {
+            let checked = round_trip(&profile);
+            assert_eq!(checked.errors, [], "{}", profile.name);
+            assert_eq!(checked.profile, profile);
+        }
+    }
+
+    #[test]
+    fn a_new_smb_form_makes_an_smb_profile_with_a_remembered_password() {
+        let checked = check(
+            &valid_smb_form(),
+            &Base::new(None, false),
+            &[],
+            &KeyChecks::default(),
+        );
+        assert_eq!(checked.errors, []);
+        let Protocol::Smb(smb) = &checked.profile.protocol else {
+            panic!("not SMB");
+        };
+        assert_eq!(smb.unc(), r"\\nas\media");
+        assert_eq!(smb.auth, SmbAuth::Password { remember: true });
+        assert!(checked.can_test());
+    }
+
+    #[test]
+    fn the_smb_boxes_are_marked_by_their_rules() {
+        let cases = [
+            (
+                DialogForm {
+                    server: "a b".into(),
+                    ..valid_smb_form()
+                },
+                Field::Server,
+                Problem::ServerInvalid,
+            ),
+            (
+                DialogForm {
+                    share: "".into(),
+                    ..valid_smb_form()
+                },
+                Field::Share,
+                Problem::ShareRequired,
+            ),
+            (
+                DialogForm {
+                    sub_path: r"a\..".into(),
+                    ..valid_smb_form()
+                },
+                Field::SubPath,
+                Problem::SubPathInvalid,
+            ),
+            (
+                DialogForm {
+                    user: "".into(),
+                    ..valid_smb_form()
+                },
+                Field::User,
+                Problem::UserRequired,
+            ),
+            (
+                DialogForm {
+                    user: "me@corp.example".into(),
+                    domain: "CORP".into(),
+                    ..valid_smb_form()
+                },
+                Field::Domain,
+                Problem::DomainTwice,
+            ),
+        ];
+        for (form, field, problem) in cases {
+            let checked = check(&form, &Base::new(None, false), &[], &KeyChecks::default());
+            assert_eq!(problem_of(&checked, field), Some(problem), "{field:?}");
+            assert_eq!(checked.errors.len(), 1, "{field:?}: {:?}", checked.errors);
+        }
+    }
+
+    /// Spec §7.3: they are kept for when the method changes back.
+    #[test]
+    fn the_windows_user_needs_no_user_and_keeps_what_was_typed() {
+        let form = DialogForm {
+            user: "".into(),
+            domain: "not a domain".into(),
+            smb_auth: SmbAuthChoice::WindowsUser,
+            ..valid_smb_form()
+        };
+        let checked = check(&form, &Base::new(None, false), &[], &KeyChecks::default());
+        assert_eq!(checked.errors, []);
+        let Protocol::Smb(smb) = &checked.profile.protocol else {
+            panic!("not SMB");
+        };
+        assert_eq!(smb.domain, "not a domain");
+    }
+
+    #[test]
+    fn an_smb_password_is_typed_only_with_the_password_method() {
+        let base = Base::new(None, false);
+        let form = DialogForm {
+            password: "pw".into(),
+            ..valid_smb_form()
+        };
+        let profile = check(&form, &base, &[], &KeyChecks::default()).profile;
+        let typed = typed_secrets(&form, &profile, false);
+        assert_eq!(typed.len(), 1);
+        assert_eq!(typed[0].0, SecretSlot::Password);
+
+        let ask = DialogForm {
+            smb_auth: SmbAuthChoice::Ask,
+            ..form
+        };
+        let profile = check(&ask, &base, &[], &KeyChecks::default()).profile;
+        assert!(typed_secrets(&ask, &profile, false).is_empty());
+    }
+
+    #[test]
+    fn a_sub_path_with_slashes_is_stored_with_backslashes() {
+        let form = DialogForm {
+            sub_path: "films/2024".into(),
+            ..valid_smb_form()
+        };
+        let checked = check(&form, &Base::new(None, false), &[], &KeyChecks::default());
+        let Protocol::Smb(smb) = &checked.profile.protocol else {
+            panic!("not SMB");
+        };
+        assert_eq!(smb.sub_path, r"films\2024");
+    }
+
+    /// FR-SMB-01's acceptance case.
+    #[test]
+    fn pasting_a_unc_path_fills_server_share_and_sub_path() {
+        let mut form = valid_smb_form();
+        assert!(fill_from_unc_paste(&mut form, r"\\nas\media\films"));
+        assert_eq!(form.server, "nas");
+        assert_eq!(form.share, "media");
+        assert_eq!(form.sub_path, "films");
+        assert_eq!(form.user, "marcin", "a UNC path names no user");
+
+        let mut form = valid_smb_form();
+        assert!(fill_from_unc_paste(&mut form, "smb://CORP;anna@nas/media"));
+        assert_eq!((form.domain.as_str(), form.user.as_str()), ("CORP", "anna"));
+
+        let before = valid_smb_form();
+        let mut form = before.clone();
+        assert!(!fill_from_unc_paste(&mut form, r"\\nas"));
+        assert_eq!(form, before);
+    }
+
+    #[test]
+    fn domain_and_user_typed_together_are_split() {
+        let mut form = valid_smb_form();
+        assert!(fill_from_smb_user(&mut form, r"CORP\anna"));
+        assert_eq!((form.domain.as_str(), form.user.as_str()), ("CORP", "anna"));
+        assert!(!fill_from_smb_user(&mut form, "anna@corp.example"));
     }
 }

@@ -30,6 +30,8 @@ pub(super) enum Login {
 /// A profile's settings, as the page lists them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Details {
+    /// An SMB share: `host` is its server and `remote_path` its UNC path, with the sub-path.
+    pub smb: bool,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -47,8 +49,8 @@ pub(super) struct Details {
 }
 
 impl Details {
-    /// What the page says about this profile. An SMB profile fills the SSH lines as best it can
-    /// until M3-04 gives the page its own: the server, port 445, the account, and the UNC path.
+    /// What the page says about this profile. For an SMB profile: the server, the account, and the
+    /// UNC path with the sub-path; the page leaves out what only SSH has.
     pub(super) fn of(profile: &Profile) -> Self {
         let drive = match profile.drive {
             DriveChoice::Auto => None,
@@ -58,6 +60,7 @@ impl Details {
             Protocol::Sftp(sftp) => sftp,
             Protocol::Smb(smb) => {
                 return Self {
+                    smb: true,
                     host: smb.server.clone(),
                     port: SMB_PORT,
                     user: smb.account(),
@@ -78,6 +81,7 @@ impl Details {
             }
         };
         Self {
+            smb: false,
             host: sftp.host.clone(),
             port: sftp.port,
             user: sftp.username.clone(),
@@ -130,6 +134,7 @@ mod tests {
         profile.read_only = true;
 
         let details = Details::of(&profile);
+        assert!(!details.smb);
         assert_eq!(details.host, "nas");
         assert_eq!(details.port, 2222);
         assert_eq!(details.user, "marcin");
@@ -157,6 +162,7 @@ mod tests {
         smb.domain = "CORP".to_owned();
         smb.sub_path = "films".to_owned();
         let details = Details::of(&Profile::new("NAS", Protocol::Smb(smb)));
+        assert!(details.smb);
         assert_eq!(details.host, "nas");
         assert_eq!(details.port, 445);
         assert_eq!(details.user, r"CORP\marcin");

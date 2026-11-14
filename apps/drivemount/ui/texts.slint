@@ -89,6 +89,25 @@ export global Texts {
     public pure function internal-hint() -> string {
         return @tr("See the log for details.");
     }
+    // E-SMB-1219 (FR-SMB-06).
+    public pure function smb-conflict(server: string) -> string {
+        return @tr("Windows is already connected to {} as a different user.", server);
+    }
+    public pure function smb-conflict-on(server: string, user: string, letter: string) -> string {
+        return @tr("Windows is already connected to {} as {}, on {}.", server, user, letter);
+    }
+    public pure function smb-conflict-no-letter(server: string, user: string) -> string {
+        return @tr("Windows is already connected to {} as {}, without a drive letter.", server, user);
+    }
+    public pure function smb-conflict-hint() -> string {
+        return @tr("Disconnect the other connection, or use the server's IP address in this connection.");
+    }
+    public pure function smb-conflict-letter-hint(letter: string) -> string {
+        return @tr("Disconnect {} in Explorer, or use the server's IP address in this connection.", letter);
+    }
+    public pure function share-not-found(share: string, server: string) -> string {
+        return @tr("Share {} not found on {}.", share, server);
+    }
 
     // The second line of a row.
     public pure function letter-moved(letter: string, wanted: string) -> string {
@@ -290,6 +309,36 @@ export global Texts {
     }
     public pure function quit-yes() -> string {
         return @tr("Unmount and quit");
+    }
+    // The Drive box (spec 7.3).
+    public pure function drive-used-outside(unc: string) -> string {
+        return @tr("In use by {}, mapped outside DriveMount", unc);
+    }
+    // External rows (FR-SMB-09, spec 7.1).
+    public pure function external-tip() -> string {
+        return @tr("Mapped outside DriveMount. DriveMount only shows it.");
+    }
+    public pure function external-mapped() -> string {
+        return @tr("Mapped");
+    }
+    public pure function external-reconnecting() -> string {
+        return @tr("Reconnecting");
+    }
+    public pure function external-disconnected() -> string {
+        return @tr("Disconnected");
+    }
+    public pure function external-not-connected() -> string {
+        return @tr("Not connected");
+    }
+    public pure function external-user(user: string) -> string {
+        return @tr("as {}", user);
+    }
+    // FR-SMB-04.
+    public pure function files-open-question(name: string, letter: string) -> string {
+        return @tr("Files are open on {} (\"{}\"). Unmount anyway? Programs using them may lose unsaved changes.", letter, name);
+    }
+    public pure function files-open-yes() -> string {
+        return @tr("Unmount anyway");
     }
 
     // The last run ended in a crash (FR-APP-07).

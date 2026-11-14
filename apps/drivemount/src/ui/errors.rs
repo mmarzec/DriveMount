@@ -4,7 +4,7 @@
 //! `ui/texts.slint`, as `@tr` is only there. M2-04's toasts should take theirs from here.
 
 use drivemount_core::config::{ReadOnlyReason, SettingProblem};
-use drivemount_vfs::{ConnectError, MountError};
+use drivemount_vfs::{ConnectError, DriveLetter, MountError, SmbCredentialConflict};
 use slint::SharedString;
 
 use super::Texts;
@@ -43,8 +43,15 @@ impl ShownError {
 /// What spec §7.8 has for this error.
 #[must_use]
 pub fn shown_error(texts: &Texts<'_>, error: &MountError) -> ShownError {
+    shown_error_among(texts, error, &[])
+}
+
+/// As [`shown_error`], knowing the letters DriveMount's own drives are on: E-SMB-1219 tells the user
+/// to disconnect a letter in Explorer only when it is not one of them (spec §7.8).
+#[must_use]
+pub fn shown_error_among(texts: &Texts<'_>, error: &MountError, own: &[DriveLetter]) -> ShownError {
     match error {
-        MountError::Connect(error) => shown_connect_error(texts, error),
+        MountError::Connect(error) => shown_connect_error_among(texts, error, own),
         MountError::LetterTaken(letter) => ShownError::new(
             "E-LETTER-TAKEN",
             texts.invoke_letter_taken(letter.to_string().into()),
@@ -73,6 +80,16 @@ fn internal(texts: &Texts<'_>) -> ShownError {
 /// What spec §7.8 has for this error, as Test connection reports it too.
 #[must_use]
 pub fn shown_connect_error(texts: &Texts<'_>, error: &ConnectError) -> ShownError {
+    shown_connect_error_among(texts, error, &[])
+}
+
+/// As [`shown_connect_error`], knowing the letters of DriveMount's own drives.
+#[must_use]
+pub fn shown_connect_error_among(
+    texts: &Texts<'_>,
+    error: &ConnectError,
+    own: &[DriveLetter],
+) -> ShownError {
     match error {
         ConnectError::Auth { user, host } => ShownError::new(
             "E-AUTH",
@@ -136,13 +153,45 @@ pub fn shown_connect_error(texts: &Texts<'_>, error: &ConnectError) -> ShownErro
         ConnectError::ConnectionLost => {
             ShownError::new("E-CONN-LOST", texts.invoke_connection_lost(), None)
         }
-        // Cancelling goes to Disconnected, and has no row of its own in the catalogue. The SMB
-        // errors get their texts with the SMB form (M3-04); no SMB profile can be mounted before.
-        ConnectError::Cancelled
-        | ConnectError::SmbCredentialConflict(_)
-        | ConnectError::ShareNotFound { .. }
-        | ConnectError::Other(_) => internal(texts),
+        ConnectError::SmbCredentialConflict(conflict) => smb_conflict(texts, conflict, own),
+        ConnectError::ShareNotFound { share, server } => ShownError::new(
+            "E-SMB-SHARE-NOT-FOUND",
+            texts.invoke_share_not_found(share.into(), server.into()),
+            None,
+        ),
+        // Cancelling goes to Disconnected, and has no row of its own in the catalogue.
+        ConnectError::Cancelled | ConnectError::Other(_) => internal(texts),
     }
+}
+
+/// E-SMB-1219, naming the other connection when the app found it (FR-SMB-06, spec §5.9).
+fn smb_conflict(
+    texts: &Texts<'_>,
+    conflict: &SmbCredentialConflict,
+    own: &[DriveLetter],
+) -> ShownError {
+    let server = SharedString::from(conflict.server.as_str());
+    let text = match &conflict.other {
+        None => texts.invoke_smb_conflict(server),
+        Some(other) => match other.letter {
+            Some(letter) => texts.invoke_smb_conflict_on(
+                server,
+                other.user.as_str().into(),
+                letter.to_string().into(),
+            ),
+            None => texts.invoke_smb_conflict_no_letter(server, other.user.as_str().into()),
+        },
+    };
+    let elsewhere = conflict
+        .other
+        .as_ref()
+        .and_then(|other| other.letter)
+        .filter(|letter| !own.contains(letter));
+    let hint = match elsewhere {
+        Some(letter) => texts.invoke_smb_conflict_letter_hint(letter.to_string().into()),
+        None => texts.invoke_smb_conflict_hint(),
+    };
+    ShownError::new("E-SMB-1219", text, Some(hint))
 }
 
 /// The banner for a file that cannot be written (NFR-REL-05). Of a damaged file's detail only the

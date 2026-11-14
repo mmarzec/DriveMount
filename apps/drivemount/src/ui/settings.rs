@@ -43,6 +43,7 @@ pub(super) fn form_of(settings: &Settings) -> SettingsForm {
         notifications: settings.notifications,
         notification_sound: settings.notification_sound,
         log_index: index_of(&LOG_LEVELS, &settings.log_level),
+        show_other_drives: settings.show_other_drives,
     }
 }
 
@@ -57,6 +58,7 @@ pub(super) fn settings_from(form: &SettingsForm, settings: &Settings) -> Setting
         notifications: form.notifications,
         notification_sound: form.notification_sound,
         log_level: choice_at(&LOG_LEVELS, form.log_index, settings.log_level),
+        show_other_drives: form.show_other_drives,
         ..settings.clone()
     }
 }

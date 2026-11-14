@@ -19,6 +19,8 @@ export struct SettingsForm {
     notification-sound: bool,
     // Error, Warning, Info, Debug.
     log-index: int,
+    // FR-SET-09.
+    show-other-drives: bool,
 }
 
 export enum WinFspState { ready, too-old, missing }
@@ -199,6 +201,17 @@ export component SettingsPage {
                                 enabled: root.editable;
                                 accessible-label: @tr("When a drive letter is in use");
                                 selected => {
+                                    root.changed();
+                                }
+                            }
+                        }
+
+                        CheckRow {
+                            CheckBox {
+                                text: @tr("Show other network drives");
+                                checked <=> root.form.show-other-drives;
+                                enabled: root.editable;
+                                toggled => {
                                     root.changed();
                                 }
                             }

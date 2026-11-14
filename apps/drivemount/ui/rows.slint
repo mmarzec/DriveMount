@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-// One line of the list: a profile, or an entry of the file that cannot be read (spec 7.1). Rust
+// One line of the list: a profile, an entry of the file that cannot be read, or a network drive mapped
+// outside DriveMount, which is only shown (spec 7.1, FR-SMB-09). Rust
 // decides what each shows: see `drivemount_app::ui::list`. A click opens the connection page; the details a
 // row has no room for are on that page and in a tooltip.
 
 import { Theme, Icons, Icon, AppButton } from "theme.slint";
 
-export enum EntryKind { profile, unreadable }
+export enum EntryKind { profile, unreadable, external }
 export enum RowStatus { disconnected, connecting, mounted, reconnecting, unmounting, error }
 export enum PrimaryAction { none, mount, cancel, unmount, retry }
 
@@ -32,6 +33,7 @@ export struct ListEntry {
 export global RowTexts {
     public pure function status(kind: EntryKind, status: RowStatus) -> string {
         return kind == EntryKind.unreadable ? @tr("cannot be read")
+            : kind == EntryKind.external ? @tr("mapped outside DriveMount")
             : status == RowStatus.mounted ? @tr("mounted")
             : status == RowStatus.connecting ? @tr("connecting")
             : status == RowStatus.reconnecting ? @tr("reconnecting")
@@ -60,19 +62,23 @@ export component StatusIcon {
     height: root.size;
     accessible-role: none;
 
+    // An external drive: filled while Windows has it connected, hollow otherwise (status `mounted`
+    // or not).
     Icon {
         size: root.size;
-        source: root.kind == EntryKind.unreadable ? Icons.triangle-alert
+        source: root.kind == EntryKind.external ? (root.status == RowStatus.mounted ? Icons.hard-drive-link-filled : Icons.hard-drive-link)
+            : root.kind == EntryKind.unreadable ? Icons.triangle-alert
             : root.status == RowStatus.mounted ? Icons.circle-check
             : root.status == RowStatus.error ? Icons.circle-alert
             : root.busy ? Icons.loader
             : Icons.circle;
-        colour: root.kind == EntryKind.unreadable ? Theme.red
+        colour: root.kind == EntryKind.external ? Theme.grey
+            : root.kind == EntryKind.unreadable ? Theme.red
             : root.status == RowStatus.mounted ? Theme.green
             : root.status == RowStatus.error ? Theme.red
             : root.busy ? Theme.amber
             : Theme.grey;
-        opacity: root.status == RowStatus.connecting ? 0.6 + 0.4 * Math.sin(360deg * animation-tick() / 1.2s) : 1;
+        opacity: root.kind == EntryKind.external ? 1 : root.status == RowStatus.connecting ? 0.6 + 0.4 * Math.sin(360deg * animation-tick() / 1.2s) : 1;
     }
 }
 
@@ -88,8 +94,10 @@ export component ProfileRow {
     callback open();
     callback edit();
     callback delete();
+    callback copy-path();
     callback hover-changed(hovering: bool);
 
+    property <bool> external: root.entry.kind == EntryKind.external;
     property <string> status-text: RowTexts.status(entry.kind, entry.status);
     property <string> primary-text: RowTexts.primary(entry.primary);
 
@@ -109,7 +117,7 @@ export component ProfileRow {
     menu := ContextMenuArea {
         enabled: root.interactive;
         Menu {
-            MenuItem {
+            if !root.external: MenuItem {
                 title: @tr("Details");
                 activated => {
                     root.pressed();
@@ -121,14 +129,21 @@ export component ProfileRow {
                     root.open();
                 }
             }
-            MenuItem {
+            // An external drive is removed where it was made (spec 7.1).
+            if root.external: MenuItem {
+                title: @tr("Copy path");
+                activated => {
+                    root.copy-path();
+                }
+            }
+            if !root.external: MenuItem {
                 title: @tr("Edit…");
                 enabled: root.entry.can-edit;
                 activated => {
                     root.edit();
                 }
             }
-            MenuItem {
+            if !root.external: MenuItem {
                 title: @tr("Delete…");
                 enabled: root.entry.can-delete;
                 activated => {
@@ -160,8 +175,10 @@ export component ProfileRow {
             padding-right: 8px;
             spacing: 12px;
 
+            // The whole row is dimmed for an external drive, but its letter (spec 7.1).
             VerticalLayout {
                 alignment: center;
+                opacity: root.external ? 0.6 : 1;
 
                 StatusIcon {
                     status: root.entry.status;
@@ -175,13 +192,31 @@ export component ProfileRow {
                 horizontal-stretch: 1;
                 overflow: elide;
                 vertical-alignment: center;
-                color: Theme.text;
+                color: root.external ? Theme.text-muted : Theme.text;
                 accessible-role: none;
             }
 
             VerticalLayout {
                 alignment: center;
                 width: 96px;
+
+                if root.external: HorizontalLayout {
+                    alignment: center;
+
+                    Rectangle {
+                        border-radius: 4px;
+                        background: Theme.hover;
+                        width: tag.preferred-width + 12px;
+                        height: tag.preferred-height + 4px;
+
+                        tag := Text {
+                            text: @tr("External");
+                            font-size: Theme.small-size;
+                            color: Theme.text-muted;
+                            accessible-role: none;
+                        }
+                    }
+                }
 
                 if root.entry.primary != PrimaryAction.none: AppButton {
                     text: root.primary-text;
@@ -212,11 +247,12 @@ export component ProfileRow {
                 alignment: center;
                 width: 16px;
 
+                // An external drive has no page to go to.
                 Icon {
                     source: Icons.chevron-right;
                     size: 16px;
                     colour: Theme.text-muted;
-                    opacity: touch.has-hover || root.selected ? 1 : 0;
+                    opacity: !root.external && (touch.has-hover || root.selected) ? 1 : 0;
                 }
             }
         }

@@ -717,6 +717,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
   - **The provider is always named**, from `WNetGetProviderNameW(WNNC_NET_LANMAN)`. Without it every network provider is asked (WinFsp's first), errors merge into 1203 `ERROR_NO_NET_OR_BAD_PATH`, and a call to a host that does not answer takes 47 s instead of 27 (spike M3-01 §3).
   - The call runs under `spawn_blocking` and cannot be cancelled; against a host that does not answer it returns after about 27 s.
 - A sub-path is handled by mapping the share and opening Explorer at the sub-folder. Windows cannot map a drive letter to a sub-folder of a share; the UI states this next to the field.
+- **Test connection** (FR-PROF-06): `WNetAddConnection2W` with no local name (a connection without a drive, with the same credentials and errors as a mount), then the sub-path is looked up as `\\server\share\sub` (E-PATH-NOT-FOUND, E-PATH-NOT-DIR), then `WNetCancelConnection2W` on the UNC path, not forced. The time shown is that of the connection. A password typed at its prompt is never remembered.
 - **Unmount:** `WNetCancelConnection2W(L"Z:", 0, force)`. 2401 `ERROR_OPEN_FILES` without force is `MountError::FilesOpen`, the cue for FR-SMB-04's question (§5.5); 2250 `ERROR_NOT_CONNECTED` counts as done. A backend dropped while its drive is still mapped removes it, forced: a local call of about 15 ms.
 - **Where the code is:** the Win32 calls in `drivemount_win::wnet` (`unsafe` stays in `drivemount-win`); `SmbBackend`, the error mapping and `other_drives()` in `drivemount-smb`. A password goes once the mapping is made (NFR-SEC-03); its UTF-16 copy for the call is zeroed after it.
 - **Health:**
@@ -739,7 +740,7 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - **Other network drives (FR-SMB-09)**, from spike M3-01 §11. `drivemount-smb` has `other_drives() -> Vec<OtherDrive>` (letter, UNC, provider name, status, and for SMB the user it was made as), which only reads what Windows already knows and never reaches a server: 2 ms or less a call, also during an outage.
   - **Listing:** `WNetOpenEnumW(RESOURCE_CONNECTED, RESOURCETYPE_DISK)`, then `RESOURCE_REMEMBERED`, merged by letter. Any provider counts: SMB, WSL's `\\wsl$\…` (Plan 9), another WinFsp program's drives. Only lettered drives are rows.
   - **Status:** for SMB letters, `NetUseEnum` level 2's `ui2_status`: 0 → *Mapped*; 4 or 5 → *Reconnecting*; 2 or 3 → *Disconnected*. A remembered letter that is not connected is *Not connected* (Windows reconnects it when it is next opened). Other providers' letters are *Mapped*. This is Windows' own view and lags: an outage showed *Mapped* for about 24 s, and a drive no one uses can keep it for as long as its server is gone. The app shows it as Windows reports it and never checks these drives itself: no `GetDiskFreeSpaceExW` or any other call on the drive, as that can block for over a minute (spike M3-01 §6).
-  - **The app's own drives are left out:** every letter the mount manager holds (§5.5, from when it is chosen until the mount ends), and every UNC starting `\\drivemount\` (its WinFsp drives, §5.8).
+  - **The app's own drives are left out:** every letter the mount manager holds (§5.5, from when it is chosen until the mount ends; `MountManager::held_letters`), and every UNC starting `\\drivemount\` (its WinFsp drives, §5.8).
   - **Refresh:** Windows sends nothing when another program maps or removes a drive (no `WM_DEVICECHANGE`, no shell notification; spike M3-01 §11), so the list is polled: every 5 s while the main window is shown, and at once when it is shown, on the network events of FR-SMB-05, and after each of the app's own mounts and unmounts. Nothing while it is hidden. The call runs on the UI thread's timer; a row is only redrawn when it changed.
   - **E-SMB-1219** uses it: after a 1219, the app lists `NetUseEnum` again and looks for a use whose server part of the UNC equals the profile's server, ignoring case. If it finds one, the message names its letter (or says it has none) and its user (§7.8). Uses without a letter (a share opened in Explorer by its `\\server\share` path) cause 1219 too and are only seen here, not as rows.
 
@@ -956,7 +957,7 @@ This page replaces the list inside the main window, as the settings page does. A
 - **Header:** the state icon, the name, the state in words ("Mounted on Z:", "Connecting…", "Failed", "Not mounted"), and the row's primary button. There is no *Open in Explorer* button: Ctrl+Enter and the row's right-click menu do that.
 - **Size:** the settings are at 14 px, one tight line each, and the buttons come right under them. Opening the page grows the window to at least 600 × 680 so that nothing scrolls, as §7.2 does.
 - **Problem:** what happened and what to do (§7.8). It is red for an error, and amber for a moved letter or a profile that needs correcting.
-- **Settings:** read-only. No secret is ever shown.
+- **Settings:** read-only. No secret is ever shown. An SMB profile shows Server, User (not with *Current Windows user*), Authentication, Share (the UNC path with the sub-path), Drive and *Mount at start*; its *Reconnecting* state reads "Disconnected (Windows will reconnect)" (§5.9).
 - **Edit** opens the Add/Edit page (§7.2) in its place, and Cancel or Save returns to it. **Delete** asks first (FR-PROF-07), and the page closes when the profile is gone.
 - An entry of the file that cannot be read shows why it cannot be read, and offers only *Delete*.
 
@@ -972,7 +973,8 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 - **Hint "Unmount to change"** shows at the top, and locked fields are disabled. If a mount starts with the page open, the locked fields go back to what is saved.
 
 - **v1:** shows SSH fields only.
-- **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it.
+- **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it. NFS is hidden until M4. Switching keeps what was typed in the other protocol's boxes; Name, User, the password, Drive and *Mount when DriveMount starts* are shared.
+- **SMB fields (M3):** Server (a UNC path or `smb://` URL pasted into it is split, §7.3), Share, Sub-path with the note "Windows maps the whole share on the drive letter; Explorer opens at this folder.", Auth (*Password*, *Ask each time*, *Current Windows user*), then User and Domain (not with *Current Windows user*), the password and *Remember password* (with *Password*), Drive, and *Mount when DriveMount starts*. There is no *Advanced*: Windows reconnects a share whatever `auto_reconnect` says (§5.9), and maps it as the server allows, with no read-only mapping, so *Reconnect* and *Read-only* are not shown and keep what the file has. *Test connection* connects to the share without a drive letter, checks that the sub-path is a folder, and disconnects (§5.9).
 
 ```
 ┌ Add connection ───────────────────────────────────┐

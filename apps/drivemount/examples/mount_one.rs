@@ -40,7 +40,7 @@ mod real {
     use std::time::Duration;
 
     use anyhow::{Context, Result, anyhow, bail, ensure};
-    use drivemount_app::backend::{SftpWinFspFactory, SystemDriveLetters};
+    use drivemount_app::backend::{DriveFactory, SystemDriveLetters};
     use drivemount_app::logging;
     use drivemount_core::config::ConfigStore;
     use drivemount_core::manager::{ManagerParts, MountManager, MountState};
@@ -276,7 +276,7 @@ mod real {
             let _inside = runtime.enter();
             MountManager::new(ManagerParts {
                 store,
-                factory: Arc::new(SftpWinFspFactory::new(Arc::clone(&secrets), known_hosts)),
+                factory: Arc::new(DriveFactory::new(Arc::clone(&secrets), known_hosts)),
                 secrets,
                 letters: Arc::new(SystemDriveLetters),
                 prompter,

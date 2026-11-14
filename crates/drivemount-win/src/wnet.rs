@@ -143,20 +143,25 @@ impl fmt::Debug for Credentials<'_> {
 /// it (FR-SMB-03). The credentials go in the call: no process is started. Blocks, for about 27 s
 /// against a host that does not answer.
 ///
+/// With no letter it is a connection without a drive, as *Test connection* makes (FR-PROF-06), and
+/// [`cancel_connection_to`] removes it.
+///
 /// # Errors
 /// What Windows answered; spec §5.9 maps the codes.
 pub fn add_connection(
-    letter: DriveLetter,
+    letter: Option<DriveLetter>,
     unc: &str,
     provider: &str,
     credentials: Credentials<'_>,
 ) -> Result<(), WNetError> {
-    let mut local = wide(letter.to_string());
+    let mut local = letter.map(|letter| wide(letter.to_string()));
     let mut remote = wide(unc);
     let mut provider = wide(provider);
     let resource = NETRESOURCEW {
         dwType: RESOURCETYPE_DISK,
-        lpLocalName: PWSTR(local.as_mut_ptr()),
+        lpLocalName: local
+            .as_mut()
+            .map_or(PWSTR::null(), |local| PWSTR(local.as_mut_ptr())),
         lpRemoteName: PWSTR(remote.as_mut_ptr()),
         lpProvider: PWSTR(provider.as_mut_ptr()),
         ..Default::default()
@@ -196,7 +201,19 @@ pub fn add_connection(
 /// # Errors
 /// What Windows answered: 2250 `ERROR_NOT_CONNECTED` if there is no mapping.
 pub fn cancel_connection(letter: DriveLetter, force: bool) -> Result<(), WNetError> {
-    let name = wide(letter.to_string());
+    cancel(&letter.to_string(), force)
+}
+
+/// Removes the connection without a drive to `unc` that [`add_connection`] made with no letter.
+///
+/// # Errors
+/// What Windows answered: 2250 `ERROR_NOT_CONNECTED` if there is none.
+pub fn cancel_connection_to(unc: &str, force: bool) -> Result<(), WNetError> {
+    cancel(unc, force)
+}
+
+fn cancel(name: &str, force: bool) -> Result<(), WNetError> {
+    let name = wide(name);
     // SAFETY: `name` is nul-terminated and outlives the call.
     let status =
         unsafe { WNetCancelConnection2W(PCWSTR(name.as_ptr()), NET_CONNECT_FLAGS(0), force) };
@@ -420,7 +437,7 @@ mod tests {
         let _letters = lock_letters();
         let provider = smb_provider().unwrap();
         let error = add_connection(
-            free_letter(),
+            Some(free_letter()),
             r"\\drivemount-test.invalid\share",
             &provider,
             Credentials::Current,

@@ -203,10 +203,13 @@ impl SmbBackend {
     }
 }
 
-#[async_trait]
-impl MountBackend for SmbBackend {
-    async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError> {
-        let password = self.password(prompter).await?;
+impl SmbBackend {
+    /// Maps the share on `letter`, or with none, with `password` or as the signed-in user.
+    async fn map(
+        &self,
+        letter: Option<DriveLetter>,
+        password: Option<Secret<String>>,
+    ) -> Result<(), MountError> {
         let user = password.as_ref().map(|_| self.account.clone());
         let unc = self.unc();
         let mapped = spawn_blocking(move || -> Result<(), WNetError> {
@@ -223,23 +226,87 @@ impl MountBackend for SmbBackend {
         .await
         .map_err(|error| MountError::Other(error.to_string()))?;
 
-        if let Err(error) = mapped {
-            let user = self.shown_user();
-            let mapping = Mapping {
-                letter,
-                server: &self.server,
-                share: &self.share,
-                user: &user,
-            };
-            debug!(%letter, unc = %self.unc(), %error, "mapping failed");
-            if error.code == ERROR_SESSION_CREDENTIAL_CONFLICT {
-                // Who holds the other session, for the message (spec §5.9). Reaches no server.
-                let uses = spawn_blocking(wnet::net_uses).await;
-                let uses = uses.ok().and_then(Result::ok).unwrap_or_default();
-                return Err(credential_conflict(&self.server, &uses));
+        let Err(error) = mapped else {
+            return Ok(());
+        };
+        let user = self.shown_user();
+        let mapping = Mapping {
+            letter,
+            server: &self.server,
+            share: &self.share,
+            user: &user,
+        };
+        debug!(?letter, unc = %self.unc(), %error, "mapping failed");
+        if error.code == ERROR_SESSION_CREDENTIAL_CONFLICT {
+            // Who holds the other session, for the message (spec §5.9). Reaches no server.
+            let uses = spawn_blocking(wnet::net_uses).await;
+            let uses = uses.ok().and_then(Result::ok).unwrap_or_default();
+            return Err(credential_conflict(&self.server, &uses));
+        }
+        Err(mount_error(&error, &mapping))
+    }
+
+    /// *Test connection* (FR-PROF-06): connects to the share without a drive letter, checks that
+    /// `sub_path` (`films\2024`, or empty) is a folder in it, and disconnects. Returns how long
+    /// connecting took. A password typed at a prompt is never remembered.
+    ///
+    /// # Errors
+    /// Why it could not connect, or [`ConnectError::PathNotFound`] / [`ConnectError::PathNotDir`]
+    /// for the sub-path.
+    pub async fn test(
+        &self,
+        sub_path: &str,
+        prompter: &dyn Prompter,
+    ) -> Result<Duration, ConnectError> {
+        let as_connect = |error: MountError| match error {
+            MountError::Connect(error) => error,
+            other => ConnectError::Other(other.to_string()),
+        };
+        let password = self.password(prompter).await.map_err(as_connect)?;
+        *lock(&self.remembered) = None;
+        let started = std::time::Instant::now();
+        self.map(None, password).await.map_err(as_connect)?;
+        let took = started.elapsed();
+
+        let unc = self.unc();
+        let folder = if sub_path.is_empty() {
+            unc.clone()
+        } else {
+            format!(r"{unc}\{sub_path}")
+        };
+        let found = spawn_blocking({
+            let folder = folder.clone();
+            move || std::fs::metadata(folder)
+        })
+        .await;
+        let removed = spawn_blocking({
+            let unc = unc.clone();
+            move || wnet::cancel_connection_to(&unc, false)
+        })
+        .await;
+        if let Ok(Err(error)) = removed {
+            debug!(%unc, %error, "the test connection could not be removed");
+        }
+        let shown = || sub_path.to_owned();
+        match found {
+            Ok(Ok(metadata)) if metadata.is_dir() => Ok(took),
+            Ok(Ok(_)) => Err(ConnectError::PathNotDir { path: shown() }),
+            Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                Err(ConnectError::PathNotFound { path: shown() })
             }
+            Ok(Err(error)) => Err(ConnectError::Other(format!("{folder}: {error}"))),
+            Err(error) => Err(ConnectError::Other(error.to_string())),
+        }
+    }
+}
+
+#[async_trait]
+impl MountBackend for SmbBackend {
+    async fn mount(&self, letter: DriveLetter, prompter: &dyn Prompter) -> Result<(), MountError> {
+        let password = self.password(prompter).await?;
+        if let Err(error) = self.map(Some(letter), password).await {
             *lock(&self.remembered) = None;
-            return Err(mount_error(&error, &mapping));
+            return Err(error);
         }
         *lock(&self.letter) = Some(letter);
         self.health.send_replace(Health::Ok);

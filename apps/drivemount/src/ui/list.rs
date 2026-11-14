@@ -25,6 +25,36 @@ pub(super) enum Key {
     Profile(Uuid),
     /// An entry of [`Config::unreadable`], by its place there, as it may have no id.
     Unreadable(usize),
+    /// A network drive mapped outside DriveMount (FR-SMB-09), by its letter.
+    External(DriveLetter),
+}
+
+/// How Windows last saw an external drive (spec §5.9). The app never checks it itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExternalStatus {
+    /// Connected, as far as Windows knows.
+    Mapped,
+    /// Windows is connecting to its server again.
+    Reconnecting,
+    /// Windows has lost its server.
+    Disconnected,
+    /// Remembered, and connected when it is next opened.
+    NotConnected,
+}
+
+/// A network drive mapped outside DriveMount: by `net use`, Explorer or another program (FR-SMB-09).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ExternalDrive {
+    /// Its letter.
+    pub letter: DriveLetter,
+    /// What it is mapped to, as `\\nas\photos`.
+    pub unc: String,
+    /// The network provider, as Windows names it.
+    pub provider: String,
+    /// Its state, as Windows reports it.
+    pub status: ExternalStatus,
+    /// For an SMB drive, the user it was made as.
+    pub user: Option<String>,
 }
 
 /// What a row's button does.
@@ -81,6 +111,8 @@ pub(super) struct ProfileItem {
     pub primary_enabled: bool,
     /// Whether it can be opened in Explorer.
     pub can_open: bool,
+    /// The folder on the drive Explorer opens at: an SMB profile's sub-path, else empty.
+    pub folder: String,
     /// Whether it can be deleted.
     pub can_delete: bool,
 }
@@ -90,6 +122,8 @@ pub(super) struct ProfileItem {
 pub(super) enum Body {
     /// A profile.
     Profile(Box<ProfileItem>),
+    /// A drive mapped outside DriveMount, shown only (FR-SMB-09).
+    External(ExternalDrive),
     /// An entry of the file that the model cannot hold.
     Unreadable {
         /// Its name, if it has one.
@@ -145,6 +179,8 @@ pub(super) struct ListState {
     selected_place: usize,
     can_mount: bool,
     read_only: bool,
+    /// What Windows last listed, whether or not FR-SET-09 shows them.
+    externals: Vec<ExternalDrive>,
 }
 
 impl ListState {
@@ -169,9 +205,33 @@ impl ListState {
         self.settle_selection();
     }
 
-    /// Whether WinFsp can be used (FR-APP-06).
+    /// Whether WinFsp can be used (FR-APP-06). Without it only SMB profiles can mount (FR-SMB-08).
     pub(super) fn set_can_mount(&mut self, can_mount: bool) {
         self.can_mount = can_mount;
+    }
+
+    /// The network drives mapped outside DriveMount, sorted by letter (FR-SMB-09). Returns whether
+    /// that changed what Windows lists, so that the list is only redrawn when it did.
+    pub(super) fn set_externals(&mut self, externals: Vec<ExternalDrive>) -> bool {
+        if externals == self.externals {
+            return false;
+        }
+        self.externals = externals;
+        self.settle_selection();
+        true
+    }
+
+    /// Whether the list shows other network drives (FR-SET-09).
+    pub(super) const fn shows_externals(&self) -> bool {
+        self.config.settings.show_other_drives
+    }
+
+    /// An external drive's row, by its letter.
+    pub(super) fn external(&self, letter: DriveLetter) -> Option<&ExternalDrive> {
+        self.externals
+            .iter()
+            .find(|drive| drive.letter == letter)
+            .filter(|_| self.shows_externals())
     }
 
     /// Whether the file can be written. If not, nothing can be added or deleted.
@@ -196,6 +256,7 @@ impl ListState {
     /// Settings changed on the settings page, in use before they are saved.
     pub(super) fn set_settings(&mut self, settings: Settings) {
         self.config.settings = settings;
+        self.settle_selection();
     }
 
     /// Whether the close button hides the window to the tray (FR-APP-02).
@@ -323,17 +384,41 @@ impl ListState {
     }
 
     /// The list as it is now: rows by the drive letter they show, then by name, then what could not be read.
+    /// Drives mapped outside DriveMount go among them by their letter, after a profile on the same
+    /// one (spec §7.1), while FR-SET-09 shows them.
     pub(super) fn items(&self) -> Vec<Item> {
-        let mut shown: Vec<&Profile> = self.config.profiles.iter().collect();
-        shown.sort_by_cached_key(|profile| self.sort_key(profile));
+        let mut shown: Vec<(SortKey, Item)> = self
+            .config
+            .profiles
+            .iter()
+            .map(|profile| {
+                let item = Item {
+                    key: Key::Profile(profile.id),
+                    body: Body::Profile(Box::new(self.profile_item(profile))),
+                };
+                (self.sort_key(profile), item)
+            })
+            .collect();
+        if self.shows_externals() {
+            shown.extend(self.externals.iter().map(|drive| {
+                let key = (
+                    false,
+                    Some(drive.letter),
+                    true,
+                    String::new(),
+                    String::new(),
+                );
+                let item = Item {
+                    key: Key::External(drive.letter),
+                    body: Body::External(drive.clone()),
+                };
+                (key, item)
+            }));
+        }
+        shown.sort_by(|(a, _), (b, _)| a.cmp(b));
 
         let mut items = Vec::with_capacity(shown.len() + self.config.unreadable.len());
-        for profile in shown {
-            items.push(Item {
-                key: Key::Profile(profile.id),
-                body: Body::Profile(Box::new(self.profile_item(profile))),
-            });
-        }
+        items.extend(shown.into_iter().map(|(_, item)| item));
         for (place, entry) in self.config.unreadable.iter().enumerate() {
             items.push(Item {
                 key: Key::Unreadable(place),
@@ -352,7 +437,7 @@ impl ListState {
     /// ties, so that the order never depends on the file's. A row moves when it is mounted or
     /// unmounted. Only case is ignored in names: `Ż` comes after `z`, as sorting by language needs
     /// tables this program has no other use for.
-    fn sort_key(&self, profile: &Profile) -> (bool, Option<DriveLetter>, String, String) {
+    fn sort_key(&self, profile: &Profile) -> SortKey {
         let live = self
             .status
             .get(&profile.id)
@@ -365,6 +450,7 @@ impl ListState {
         (
             letter.is_none(),
             letter,
+            false,
             profile.name.to_lowercase(),
             profile.name.clone(),
         )
@@ -394,9 +480,10 @@ impl ListState {
             _ if invalid => Line::NeedsCorrecting,
             _ => Line::None,
         };
+        let can_start = self.can_start(profile) && !invalid;
         let (primary, primary_enabled) = match state {
-            MountState::Disconnected => (Primary::Mount, self.can_mount && !invalid),
-            MountState::Error(_) => (Primary::Retry, self.can_mount && !invalid),
+            MountState::Disconnected => (Primary::Mount, can_start),
+            MountState::Error(_) => (Primary::Retry, can_start),
             MountState::Connecting => (Primary::Cancel, true),
             MountState::Mounted | MountState::Reconnecting => (Primary::Unmount, true),
             MountState::Unmounting => (Primary::Unmount, false),
@@ -408,6 +495,10 @@ impl ListState {
             letter: live_letter.or(wanted),
             letter_is_live: live_letter.is_some(),
             can_open: matches!(state, MountState::Mounted) && live_letter.is_some(),
+            folder: match &profile.protocol {
+                Protocol::Smb(smb) => smb.sub_path.clone(),
+                Protocol::Sftp(_) => String::new(),
+            },
             state,
             line,
             primary,
@@ -416,16 +507,19 @@ impl ListState {
         }
     }
 
+    /// Whether a mount of this profile can start: SFTP needs WinFsp, SMB does not (FR-SMB-08).
+    fn can_start(&self, profile: &Profile) -> bool {
+        self.can_mount || matches!(profile.protocol, Protocol::Smb(_))
+    }
+
     /// What *Mount all* acts on: every unmounted profile (FR-MNT-09).
     pub(super) fn mountable(&self) -> Vec<Uuid> {
-        if !self.can_mount {
-            return Vec::new();
-        }
         self.config
             .profiles
             .iter()
             .filter(|profile| {
-                !self.invalid.contains(&profile.id)
+                self.can_start(profile)
+                    && !self.invalid.contains(&profile.id)
                     && matches!(
                         self.state_of(profile.id),
                         MountState::Disconnected | MountState::Error(_)
@@ -451,6 +545,14 @@ impl ListState {
             .collect()
     }
 
+    /// The letters DriveMount's own drives are on now.
+    pub(super) fn live_letters(&self) -> Vec<DriveLetter> {
+        self.status
+            .values()
+            .filter_map(|(state, detail)| live_letter(state, *detail))
+            .collect()
+    }
+
     /// The status bar's numbers.
     pub(super) fn counts(&self) -> Counts {
         let mut counts = Counts::default();
@@ -466,6 +568,9 @@ impl ListState {
         counts
     }
 }
+
+/// No letter last, then the letter, then a profile before an external drive, then the name.
+type SortKey = (bool, Option<DriveLetter>, bool, String, String);
 
 fn live_letter(state: &MountState, detail: Option<MountDetail>) -> Option<DriveLetter> {
     match state {
@@ -555,6 +660,7 @@ mod tests {
             .map(|item| match &item.body {
                 Body::Profile(row) => row.name.clone(),
                 Body::Unreadable { name, .. } => format!("? {}", name.as_deref().unwrap_or("-")),
+                Body::External(drive) => format!("ext {}", drive.letter),
             })
             .collect()
     }
@@ -565,7 +671,7 @@ mod tests {
             .into_iter()
             .find_map(|item| match item.body {
                 Body::Profile(row) if row.id == id => Some(*row),
-                Body::Profile(_) | Body::Unreadable { .. } => None,
+                Body::Profile(_) | Body::Unreadable { .. } | Body::External(_) => None,
             })
             .unwrap()
     }
@@ -659,6 +765,24 @@ mod tests {
         assert!(row(&state, id).primary_enabled);
         state.apply(&mounted(id, 'Z'));
         assert!(row(&state, id).primary_enabled);
+    }
+
+    /// FR-SMB-08: Windows maps a share itself.
+    #[test]
+    fn without_winfsp_an_smb_profile_still_mounts() {
+        use drivemount_core::profile::{SmbAuth, SmbProfile};
+
+        let share = Profile::new(
+            "share",
+            Protocol::Smb(SmbProfile::new("nas", "media", "me", SmbAuth::Ask)),
+        );
+        let (share_id, ssh) = (share.id, profile("ssh"));
+        let ssh_id = ssh.id;
+        let mut state = state_with(vec![share, ssh]);
+        state.set_can_mount(false);
+        assert!(row(&state, share_id).primary_enabled);
+        assert!(!row(&state, ssh_id).primary_enabled);
+        assert_eq!(state.mountable(), [share_id]);
     }
 
     #[test]
@@ -933,5 +1057,62 @@ mod tests {
         smb.sub_path = "films".to_owned();
         let saved = Profile::new("a", Protocol::Smb(smb));
         assert_eq!(address_of(&saved), r"\\nas\media\films");
+    }
+
+    fn external(on: char) -> ExternalDrive {
+        ExternalDrive {
+            letter: letter(on),
+            unc: format!("//nas/{on}"),
+            provider: "Microsoft Windows Network".to_owned(),
+            status: ExternalStatus::Mapped,
+            user: None,
+        }
+    }
+
+    /// Spec §7.1: one list by letter, a profile before an external drive on its letter.
+    #[test]
+    fn external_drives_sort_among_the_profiles_by_letter() {
+        let mut on_w = profile("Wanted");
+        on_w.drive = DriveChoice::Letter(letter('W'));
+        let mut on_z = profile("Zed");
+        on_z.drive = DriveChoice::Letter(letter('Z'));
+        let auto = profile("Auto");
+        let mut state = state_with(vec![on_z, auto, on_w]);
+        assert!(state.set_externals(vec![external('W'), external('X')]));
+        assert_eq!(names(&state), ["Wanted", "ext W:", "ext X:", "Zed", "Auto"]);
+    }
+
+    #[test]
+    fn the_same_listing_again_changes_nothing() {
+        let mut state = state_with(vec![]);
+        assert!(state.set_externals(vec![external('W')]));
+        assert!(!state.set_externals(vec![external('W')]));
+        let mut changed = external('W');
+        changed.status = ExternalStatus::Disconnected;
+        assert!(state.set_externals(vec![changed]));
+    }
+
+    /// FR-SET-09, and spec §7.1: never counted, mounted or unmounted.
+    #[test]
+    fn external_drives_are_shown_only_while_the_setting_is_on_and_never_counted() {
+        let saved = profile("a");
+        let mut state = state_with(vec![saved]);
+        state.set_externals(vec![external('W')]);
+        assert_eq!(names(&state), ["ext W:", "a"]);
+        assert!(state.external(letter('W')).is_some());
+        assert_eq!(state.counts(), Counts::default());
+        assert!(state.unmountable().is_empty());
+        assert!(!state.is_empty());
+
+        state.select_place(0);
+        let mut settings = state.settings().clone();
+        settings.show_other_drives = false;
+        state.set_settings(settings);
+        assert_eq!(names(&state), ["a"]);
+        assert!(state.external(letter('W')).is_none());
+        assert_eq!(
+            state.selected(),
+            Some(&Key::Profile(state.profiles()[0].id))
+        );
     }
 }

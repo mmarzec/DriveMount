@@ -1635,3 +1635,64 @@ fn a_save_that_stored_nothing_still_becomes_an_edit_when_the_file_has_it() {
         "not against itself"
     );
 }
+
+fn smb_profile(name: &str) -> drivemount_core::profile::Profile {
+    use drivemount_core::profile::{Profile, SmbAuth, SmbProfile};
+    let mut smb = SmbProfile::new(
+        "nas",
+        "media",
+        "marcin",
+        SmbAuth::Password { remember: true },
+    );
+    smb.sub_path = r"films\2024".to_owned();
+    Profile::new(name, Protocol::Smb(smb))
+}
+
+/// M3-03 could list an SMB profile but not edit it; the form now has its boxes (FR-SMB-01).
+#[test]
+fn an_smb_profile_opens_in_its_own_boxes_and_saves_as_it_was() {
+    let saved = smb_profile("NAS");
+    let fixture = Fixture::new(vec![saved.clone()]);
+    fixture.open_selected();
+    assert_eq!(fixture.box_holds("Server"), "nas");
+    assert_eq!(fixture.box_holds("Share"), "media");
+    assert_eq!(fixture.box_holds("Sub-path"), r"films\2024");
+    assert!(fixture.labelled("Host").is_none(), "no SSH boxes");
+    assert!(fixture.can_save());
+
+    fixture.press("Save");
+    let (changed, secrets) = fixture.take_save();
+    assert_eq!(changed, saved);
+    assert!(secrets.0.is_empty());
+}
+
+/// FR-SMB-01's acceptance case, through the window.
+#[test]
+fn a_unc_path_pasted_into_server_fills_share_and_sub_path() {
+    let fixture = Fixture::new(Vec::new());
+    fixture.open_new();
+    fixture.choose_auth("SMB");
+    fixture.type_in("Name", "Films");
+    fixture.type_in("Server", r"\\nas\media\films");
+    assert_eq!(fixture.box_holds("Server"), "nas");
+    assert_eq!(fixture.box_holds("Share"), "media");
+    assert_eq!(fixture.box_holds("Sub-path"), "films");
+
+    fixture.type_in("User", r"CORP\anna");
+    assert_eq!(fixture.box_holds("User"), "anna");
+    assert_eq!(fixture.box_holds("Domain"), "CORP");
+
+    fixture.choose_auth("Current Windows user");
+    assert!(fixture.labelled("User").is_none(), "nothing to send");
+    assert!(fixture.can_save());
+    fixture.press("Save");
+    let (saved, _) = fixture.take_save();
+    let Protocol::Smb(smb) = &saved.protocol else {
+        panic!("not SMB");
+    };
+    assert_eq!(smb.unc_with_sub_path(), r"\\nas\media\films");
+    assert_eq!(
+        (smb.domain.as_str(), smb.username.as_str()),
+        ("CORP", "anna")
+    );
+}
