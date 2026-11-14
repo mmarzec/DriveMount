@@ -200,6 +200,7 @@ A single settings page (§7.5). The settings are stored in `config.toml` (§6.1)
 | FR-SET-08 | M | Notification sound (under *Show notifications*, off while it is off). Off adds `<audio silent="true"/>` to the toast | Off |
 | FR-SET-06 | M | Log level: Error / Warning / Info / Debug, plus an *Open logs folder* button | Info |
 | FR-SET-07 | M | WinFsp status (read-only line): "WinFsp 2.1.25156 installed", or the missing banner | n/a |
+| FR-SET-09 | S | Show other network drives (FR-SMB-09), M3 | On |
 
 Acceptance for every setting: the value persists across restarts and takes effect without restarting the app.
 
@@ -217,6 +218,7 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 | FR-SMB-06 | M | Windows error **1219** (another connection to this server with a different user name) maps to E-SMB-1219. The message explains the cause and suggests using the server's IP address or another DNS alias. | Mapping `\\nas\a` as user1 and then `\\nas\b` as user2 shows the E-SMB-1219 text. |
 | FR-SMB-07 | M | On Quit or sign-out, the app removes all SMB mappings it created. | No mapping remains after Quit. |
 | FR-SMB-08 | S | SMB profiles work without WinFsp installed. | With WinFsp uninstalled, SMB profiles mount normally; only SSH/NFS rows are disabled. |
+| FR-SMB-09 | S | **Other network drives** (mapped by `net use`, Explorer or another program, before or after DriveMount was installed) are shown in the list for visibility only, marked *External* (§7.1). The app never mounts, unmounts, checks or changes them; it only reads what Windows reports. Turned off by FR-SET-09. Works without WinFsp. | With `net use W: \\nas\photos` made outside the app, the list shows a *W:* row marked *External* with no button, within 5 s while the window is shown; after `net use W: /delete` the row goes within 5 s. |
 
 ### 3.10 NFS backend (FR-NFS), milestone M4
 
@@ -728,6 +730,12 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
   | anything else, 1203 included | E-INTERNAL, with the number and Windows' text in the log |
 
   E-HOST-UNREACHABLE shows port 445.
+- **Other network drives (FR-SMB-09)**, from spike M3-01 §11. `drivemount-smb` has `other_drives() -> Vec<OtherDrive>` (letter, UNC, provider name, status, and for SMB the user it was made as), which only reads what Windows already knows and never reaches a server: 2 ms or less a call, also during an outage.
+  - **Listing:** `WNetOpenEnumW(RESOURCE_CONNECTED, RESOURCETYPE_DISK)`, then `RESOURCE_REMEMBERED`, merged by letter. Any provider counts: SMB, WSL's `\\wsl$\…` (Plan 9), another WinFsp program's drives. Only lettered drives are rows.
+  - **Status:** for SMB letters, `NetUseEnum` level 2's `ui2_status`: 0 → *Mapped*; 4 or 5 → *Reconnecting*; 2 or 3 → *Disconnected*. A remembered letter that is not connected is *Not connected* (Windows reconnects it when it is next opened). Other providers' letters are *Mapped*. This is Windows' own view and lags: an outage showed *Mapped* for about 24 s, and a drive no one uses can keep it for as long as its server is gone. The app shows it as Windows reports it and never checks these drives itself: no `GetDiskFreeSpaceExW` or any other call on the drive, as that can block for over a minute (spike M3-01 §6).
+  - **The app's own drives are left out:** every letter the mount manager holds (§5.5, from when it is chosen until the mount ends), and every UNC starting `\\drivemount\` (its WinFsp drives, §5.8).
+  - **Refresh:** Windows sends nothing when another program maps or removes a drive (no `WM_DEVICECHANGE`, no shell notification; spike M3-01 §11), so the list is polled: every 5 s while the main window is shown, and at once when it is shown, on the network events of FR-SMB-05, and after each of the app's own mounts and unmounts. Nothing while it is hidden. The call runs on the UI thread's timer; a row is only redrawn when it changed.
+  - **E-SMB-1219** uses it: after a 1219, the app lists `NetUseEnum` again and looks for a use whose server part of the UNC equals the profile's server, ignoring case. If it finds one, the message names its letter (or says it has none) and its user (§7.8). Uses without a letter (a share opened in Explorer by its `\\server\share` path) cause 1219 too and are only seen here, not as rows.
 
 ### 5.10 NFS backend (drivemount-nfs), M4
 
@@ -760,6 +768,7 @@ letter_conflict    = "auto"       # auto | fail
 notifications      = true
 notification_sound = false
 log_level          = "info"       # error | warn | info | debug
+show_other_drives  = true         # FR-SET-09 (M3)
 op_timeout_secs    = 15           # not in UI, 5..=120
 winfsp_threads     = 0            # not in UI, 0 = number of cores (max 8)
 
@@ -863,6 +872,7 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 │   ◌  Staging                                 [ Cancel ]    Y:    │
 │   ✓  Production                              [Unmount ]    Z:  › │  ← › on hover
 │   !  Dev box                                 [ Retry  ]          │
+│   ⧉  \\nas\photos                            External      W:    │  ← FR-SMB-09, dimmed
 ├──────────────────────────────────────────────────────────────────┤
 │  1 mounted · 1 connecting · 1 failed                             │
 └──────────────────────────────────────────────────────────────────┘
@@ -886,6 +896,12 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 - **Unmounting** has no row in the table above: an amber loader, with *Unmount* disabled.
 - **What a row has no room for:** the address, "Y: (Z: was in use)" (FR-MNT-04), an error, and a profile that breaks a rule of §7.3 (its *Mount* is disabled until it is edited). These are on the connection page, and in a tooltip that shows after 0.7 s over the row. An entry of the file that cannot be read (§6.1) has a red warning icon and no button, and can only be deleted.
 - **Mouse:** a click anywhere on a row except its button opens the row's **connection page** (§7.1.1). The right-click menu has *Details*, *Open in Explorer* (when mounted), *Edit…* and *Delete…*.
+- **External rows** (FR-SMB-09, M3; only while FR-SET-09 is on): drives mapped outside DriveMount, shown so the user sees every letter in use, and read only.
+  - **Look:** the whole row is dimmed. In the status icon's place a grey drive-with-link icon (Lucide `hard-drive` with a link mark), hollow when the drive is *Disconnected* or *Not connected*. The name is the UNC (`\\nas\photos`, or `\\wsl$\Ubuntu` and the like), cut in the middle when long. In the button's place a muted tag, **External**; there is no button. Then the letter, not dimmed.
+  - **Tooltip** (after 0.7 s, like other rows): "Mapped outside DriveMount. DriveMount only shows it.", then the status as Windows reports it (*Mapped*, *Reconnecting*, *Disconnected*, *Not connected*), the provider ("Microsoft Windows Network", "Plan 9 Network Provider"…), and for SMB the user it was made as.
+  - **Actions:** a click selects the row; there is no connection page. The right-click menu has only *Open in Explorer* and *Copy path* (the UNC). Ctrl+Enter opens it in Explorer; Enter, Space, Ctrl+E and Del do nothing on it. There is no *Disconnect*: the user removes it where it was made.
+  - **Place:** in the same list, sorted by letter like the others, so profile rows and external rows together show which letters are taken. A profile row and an external row on the same letter (the profile is not mounted) sort the profile first.
+  - **Left out of** the status bar's counts, the tray tooltip and menu (§7.6), *Mount all* and *Unmount all*. The empty state counts profiles only, and external rows show below it.
 
 **List**
 - Rows are one flat list, sorted by the drive letter the row shows (D to Z): the letter a mounted profile holds, otherwise the preferred one. Rows with no letter to show (*Auto*, not mounted) come last. Rows with the same letter are sorted by name, ignoring case. A row therefore moves when it is mounted or unmounted.
@@ -972,7 +988,7 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 | User | 1–64 chars, no spaces | "User name is required" / "Use at most 64 characters" / "A user name cannot contain spaces" |
 | Key file | Exists, is readable and is OpenSSH/PEM format; `.ppk` rejected (FR-SSH-03); `.pub` rejected. Only for the *Key file* method | "Select a private key file" / "This file does not exist" / "This file cannot be read" / "Convert with PuTTYgen → Conversions → Export OpenSSH key" / "This is a public key; select the private key file" / "Unsupported key file format." |
 | Remote path | `~`, `~/…`, or an absolute path starting with `/`, or a Windows `C:/…` or `C:\…` form; not above the root | "Use an absolute path such as /var/www, or ~ for home" |
-| Drive | Auto or D–Z; a letter in use by another *profile* gives a warning only (allowed, because only one can be mounted) | "Choose Auto or a letter from D to Z" / warning: "Also used by 'NAS backup'" |
+| Drive | Auto or D–Z; a letter in use by another *profile* gives a warning only (allowed, because only one can be mounted). From M3, a letter held by an external drive (FR-SMB-09) warns too, as mounting there will meet FR-MNT-04 | "Choose Auto or a letter from D to Z" / warning: "Also used by 'NAS backup'", or "In use by \\nas\photos, mapped outside DriveMount" |
 | Cache (s) | 0–60 | "Cache must be 0–60 seconds" |
 | Keep-alive (s) | 0 or 5–300 | "Keep-alive must be 0 (off) or 5–300 seconds" |
 | Jump host | Empty or `[user@]host[:port]`, with `[…]` around an IPv6 address that has a port. No user means the profile's own user, as with `ssh -J`; no port means 22 | "Use user@host:port" |
@@ -1100,7 +1116,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 | E-WINFSP-MISSING | "WinFsp 2.1 or later is required." | Download button |
 | E-KEY-FORMAT | "Unsupported key file format." | PuTTY conversion hint |
 | E-CONN-LOST | "Connection lost." | Shown when auto-reconnect is off |
-| E-SMB-1219 (M3) | "Windows is already connected to {server} as a different user." | "Disconnect the other connection, or use the server's IP address in this connection." |
+| E-SMB-1219 (M3) | "Windows is already connected to {server} as a different user." When the app finds the other connection (§5.9): "Windows is already connected to {server} as {user}, on {L}:." or "…as {user}, without a drive letter." | "Disconnect the other connection, or use the server's IP address in this connection." With a letter that is not the app's: "Disconnect {L}: in Explorer, or use the server's IP address in this connection." |
 | E-SMB-SHARE-NOT-FOUND (M3) | "Share {share} not found on {server}." | |
 | E-NFS-ACCESS (M4) | "The NFS server refused access to {export}." | "Check that this PC's IP address is allowed in the export list, and the UID/GID." |
 | E-INTERNAL | "Unexpected error." | "See the log for details." with an Open logs button |
@@ -1153,6 +1169,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 - Config serialisation, round-trips, unknown-key preservation, migrations and corrupt-file handling.
 - Mount state machine: every transition in §5.5, using a mock `MountBackend`.
 - Letter allocator: free and taken letters, remembered network connections, A/B/C excluded, auto from Z downwards.
+- Other network drives (M3, FR-SMB-09): merging the connected and remembered lists by letter, statuses, and leaving out the app's own letters and `\\drivemount\…`, from recorded listings.
 - VFS caches: TTL expiry, invalidation on each mutation, negative cache and noise names.
 - Name mapping round-trips (all invalid characters, trailing dot or space); case-insensitive fallback with ambiguous names.
 - Error mapping tables (§5.8).
