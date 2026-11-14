@@ -599,13 +599,15 @@ impl Setup {
 fn a_connection_that_ends_by_itself_is_noticed_without_any_call() {
     let setup = reconnect_setup(Duration::from_secs(30));
     setup.mount();
-    let calls = setup.connector.probe.count(Op::Stat);
     setup.connector.end_session();
+    // That reason comes only from the session's own end, not from a call that failed.
     assert!(eventually(|| matches!(
         *setup.backend.health().borrow(),
         Health::Lost(ref reason) if reason == "the connection ended"
     )));
-    assert_eq!(setup.connector.probe.count(Op::Stat), calls);
+    // Nor did the backend ask whether the connection answers. Calls to the drive are not
+    // counted: Windows looks at a new drive by itself whenever it likes, which made this flaky.
+    assert_eq!(setup.connector.probes.load(Ordering::SeqCst), 0);
 }
 
 #[test]
