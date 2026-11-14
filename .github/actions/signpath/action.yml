@@ -1,0 +1,89 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# One SignPath signing request (plan M2-11, OD-3): uploads the files as a workflow artifact, has
+# SignPath sign them (packaging/signpath/artifact-configuration.xml says what), waits, and copies the
+# signed files back over the ones given. A release-signing request waits for an approver in SignPath.
+
+name: SignPath signing request
+description: Sign files in place with SignPath.
+
+inputs:
+  name:
+    description: The workflow artifact's name; one per request in a run.
+    required: true
+  files:
+    description: The files to sign, one per line, all in different names.
+    required: true
+  api-token:
+    required: true
+  organization-id:
+    required: true
+  project-slug:
+    required: true
+  signing-policy-slug:
+    required: true
+  artifact-configuration-slug:
+    description: Empty for the project's default.
+    required: false
+    default: ''
+  timeout-seconds:
+    description: How long to wait, approval included.
+    required: false
+    default: '3600'
+
+runs:
+  using: composite
+  steps:
+    - name: Gather the files
+      shell: powershell
+      env:
+        FILES: ${{ inputs.files }}
+        INTO: ${{ runner.temp }}\signpath-${{ inputs.name }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        foreach ($folder in "$env:INTO\unsigned", "$env:INTO\signed") {
+          if (Test-Path $folder) { Remove-Item -Recurse -Force $folder }
+          New-Item -ItemType Directory $folder | Out-Null
+        }
+        foreach ($file in $env:FILES -split "`n" | ForEach-Object Trim | Where-Object { $_ }) {
+          Copy-Item $file "$env:INTO\unsigned"
+        }
+        Get-ChildItem "$env:INTO\unsigned" | Format-Table Name, Length
+
+    - name: Upload them
+      id: upload
+      uses: actions/upload-artifact@v4
+      with:
+        name: unsigned-${{ inputs.name }}
+        path: ${{ runner.temp }}\signpath-${{ inputs.name }}\unsigned
+        if-no-files-found: error
+        retention-days: 1
+
+    - name: Sign them with SignPath
+      uses: signpath/github-action-submit-signing-request@v3
+      with:
+        api-token: ${{ inputs.api-token }}
+        organization-id: ${{ inputs.organization-id }}
+        project-slug: ${{ inputs.project-slug }}
+        signing-policy-slug: ${{ inputs.signing-policy-slug }}
+        artifact-configuration-slug: ${{ inputs.artifact-configuration-slug }}
+        github-artifact-id: ${{ steps.upload.outputs.artifact-id }}
+        wait-for-completion: true
+        wait-for-completion-timeout-in-seconds: ${{ inputs.timeout-seconds }}
+        output-artifact-directory: ${{ runner.temp }}\signpath-${{ inputs.name }}\signed
+
+    - name: Put the signed files in place
+      shell: powershell
+      env:
+        FILES: ${{ inputs.files }}
+        INTO: ${{ runner.temp }}\signpath-${{ inputs.name }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+        foreach ($file in $env:FILES -split "`n" | ForEach-Object Trim | Where-Object { $_ }) {
+          $signed = Join-Path "$env:INTO\signed" (Split-Path -Leaf $file)
+          if (-not (Test-Path $signed)) { throw "SignPath sent back no $(Split-Path -Leaf $file)" }
+          $signature = Get-AuthenticodeSignature $signed
+          if (-not $signature.SignerCertificate) { throw "$signed came back unsigned" }
+          Copy-Item $signed $file -Force
+          Write-Host "$(Split-Path -Leaf $file): $($signature.Status), $($signature.SignerCertificate.Subject)"
+        }

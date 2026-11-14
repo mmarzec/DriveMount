@@ -1125,7 +1125,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 - **Setup exe (OD-5):** looks up `InstallDir` under `HKLM\SOFTWARE\WOW6432Node\WinFsp` and the version of `bin\winfsp-x64.dll` in it. If WinFsp is missing or older than 2.1, it installs the official, **unmodified** WinFsp MSI it carries (allowed by WinFsp's FLOSS exception, ADR-0003); otherwise WinFsp is left as it is. WinFsp is permanent: uninstalling DriveMount leaves it, as other programs may use it. Its window has a *Start with Windows* box, ticked when this user's Run value is there, and passes it to the MSI. No licence to accept: the GPL asks for none.
 - **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\DriveMount` with a `DisplayName` and a `CustomActivator` (a CLSID), and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}\LocalServer32` = `"<exe>"`. Spike M0-3 showed the AUMID key is what makes toasts appear; a shortcut with an AUMID alone did not. The CLSID is what a click in Action Center starts or calls (§5.3). Both are rewritten at every start, as the exe may have moved. The uninstaller removes them for the user who uninstalls; the portable zip leaves them behind, as it has no uninstaller.
 - **Portable:** a zip with `drivemount.exe`. It needs WinFsp installed separately.
-- **Signing:** Authenticode for `drivemount.exe`, the MSI and the setup exe (OD-3); the setup exe's engine is signed with WiX's `insignia` (M2-11).
+- **Signing:** Authenticode for `drivemount.exe`, the MSI and the setup exe, by SignPath (OD-3) in the release workflow (M2-11). The setup exe's engine is taken out with WiX's `insignia`, signed, and put back before the setup exe is signed.
 - **Updates:** none in v1. Users install a newer setup exe or MSI over the old one. Settings and profiles are kept and migrated (§6.1).
 - **Licence:** DriveMount is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE.txt` (the repository's `LICENSE`) and `THIRD-PARTY-LICENSES.html`, which `cargo-about` makes from the shipped exe's dependencies (`about.toml`, `packaging/about.hbs`) with WinFsp's attribution; a crate under a licence outside the allow-list fails the build. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
 
@@ -1238,7 +1238,7 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 |---|---|---|---|
 | OD-1 | Licence model | **Decided 2026-11-03** | **GPL-3.0-or-later open source, WinFsp + `winfsp` crate** ([ADR-0003](adr/0003-licence-gplv3.md)) |
 | OD-2 | Final product name and icon | Before M2 | |
-| OD-3 | Code-signing certificate (OV/EV or Azure Trusted Signing) | Before M2 | Azure Trusted Signing (low cost, SmartScreen reputation) |
+| OD-3 | Code-signing certificate (OV/EV or Azure Trusted Signing) | Before M2 | ✅ **SignPath** (owner, 2026-11-14): SignPath Foundation's free signing for open source; the certificate is SignPath Foundation's, which Windows shows as the publisher. The release workflow sends the files to SignPath (§9, M2-11) |
 | OD-4 | Write-behind on or off | End of M0 | ✅ **On**, 4 MiB bound (spike M0-2, §5.6) |
 | OD-5 | Bundle WinFsp MSI in our installer, or link to download | Before M2 | ✅ **Bundled** (owner, 2026-11-13): the setup exe, a WiX Burn bundle, installs the unmodified WinFsp MSI when WinFsp is missing or older than 2.1 (§9). WinFsp's FLOSS exception allows it for FLOSS apps that show the attribution (ADR-0003) |
 

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!--
+  SignPath artifact configuration for DriveMount's releases (plan M2-11, OD-3). SignPath keeps its own
+  copy: paste this into the project's default artifact configuration when it changes here.
+
+  The release workflow (.github/workflows/release.yml) sends three signing requests, as each part is
+  taken into the next and a WiX bundle's engine has to be signed apart from the bundle:
+    1. drivemount.exe and the MSI: the exe on its own (for the portable zip) and inside the MSI, then
+       the MSI;
+    2. engine.exe, the setup exe's engine as insignia takes it out;
+    3. the setup exe, after insignia has put the signed engine back.
+  Each request has only some of these files, so each one may match nothing.
+
+  WinFsp's MSI is not in any request: it travels inside the setup exe, signed by its own publisher.
+  Before relying on a change, try it with "Upload an artifact sample" in SignPath.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="drivemount.exe" min-matches="0">
+      <authenticode-sign />
+    </pe-file>
+    <msi-file path="DriveMount-*-x64.msi" min-matches="0">
+      <!-- In the MSI it sits under the install folder (wix\main.wxs: ProgramFiles64Folder\DriveMount). -->
+      <pe-file path="**/drivemount.exe">
+        <authenticode-sign />
+      </pe-file>
+      <authenticode-sign />
+    </msi-file>
+    <pe-file path="engine.exe" min-matches="0">
+      <authenticode-sign />
+    </pe-file>
+    <pe-file path="DriveMount-*-setup.exe" min-matches="0">
+      <authenticode-sign />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
