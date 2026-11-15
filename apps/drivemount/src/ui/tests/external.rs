@@ -126,7 +126,7 @@ fn an_external_drives_page_shows_what_windows_says_and_can_take_it_over() {
     assert!(view.remembered);
     assert!(view.can_take_over);
 
-    fixture.press("Copy path");
+    fixture.press("Copy");
     assert_eq!(
         fixture.take_sent(),
         [UiCommand::CopyText(r"\\nas\photos".to_owned())]

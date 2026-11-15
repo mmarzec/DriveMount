@@ -114,6 +114,8 @@ export component AppButton {
     // Icon only, square.
     in property <bool> icon-only;
     in property <length> icon-size: 18px;
+    // Small enough for a line of text.
+    in property <bool> compact;
 
     callback clicked();
 
@@ -133,7 +135,7 @@ export component AppButton {
         : root.danger ? Theme.red
         : Theme.text;
 
-    min-height: 32px;
+    min-height: root.compact ? 22px : 32px;
     min-width: root.icon-only ? 32px : 0;
     horizontal-stretch: 0;
     vertical-stretch: 0;
@@ -176,8 +178,8 @@ export component AppButton {
         }
 
         HorizontalLayout {
-            padding-left: root.icon-only ? 7px : 12px;
-            padding-right: root.icon-only ? 7px : 14px;
+            padding-left: root.icon-only ? 7px : root.compact ? 8px : 12px;
+            padding-right: root.icon-only ? 7px : root.compact ? 8px : 14px;
             spacing: 6px;
             alignment: center;
 
@@ -194,6 +196,7 @@ export component AppButton {
             if !root.icon-only: Text {
                 text: root.text;
                 color: root.ink;
+                font-size: root.compact ? Theme.small-size : 14px;
                 vertical-alignment: center;
                 font-weight: root.primary ? 600 : 400;
                 accessible-role: none;
@@ -215,6 +218,11 @@ export component Field {
     in property <string> label;
     in property <string> value;
     in property <bool> last;
+    // A small button at the end of the line, for copying the value.
+    in property <string> action;
+    in property <bool> action-enabled: true;
+
+    callback action-clicked();
 
     accessible-role: text;
     accessible-label: root.label + ": " + root.value;
@@ -240,6 +248,19 @@ export component Field {
                 color: Theme.text;
                 wrap: char-wrap;
                 accessible-role: none;
+            }
+
+            if root.action != "": VerticalLayout {
+                alignment: center;
+
+                AppButton {
+                    text: root.action;
+                    compact: true;
+                    enabled: root.action-enabled;
+                    clicked => {
+                        root.action-clicked();
+                    }
+                }
             }
         }
 

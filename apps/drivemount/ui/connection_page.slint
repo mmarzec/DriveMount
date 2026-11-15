@@ -277,7 +277,10 @@ export component ConnectionPage {
 
         // An external drive: what Windows says of it, read only.
         if root.is-external: Card {
-            VerticalLayout {
+            vertical-stretch: 0;
+            height: ext-lines.preferred-height;
+
+            ext-lines := VerticalLayout {
                 padding-left: 16px;
                 padding-right: 16px;
                 padding-top: 2px;
@@ -286,6 +289,11 @@ export component ConnectionPage {
                 Field {
                     label: @tr("Path");
                     value: root.view.unc;
+                    action: @tr("Copy");
+                    action-enabled: root.interactive;
+                    action-clicked => {
+                        root.copy-path();
+                    }
                 }
 
                 Field {
@@ -347,13 +355,6 @@ export component ConnectionPage {
                 }
             }
 
-            AppButton {
-                text: @tr("Copy path");
-                enabled: root.interactive;
-                clicked => {
-                    root.copy-path();
-                }
-            }
         }
 
         if !root.is-external: HorizontalLayout {
