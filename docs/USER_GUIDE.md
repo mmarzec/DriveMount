@@ -201,11 +201,31 @@ The drive appears in Explorer under *Network locations*, named after the connect
 
 ### Drives mapped by other programs
 
-The list also shows network drives mapped outside DriveMount, by `net use`, Explorer or another program, so you can see every letter in use. They are dimmed, marked **External**, and have no button: DriveMount never changes them. Hover for what Windows says about them. Ctrl+Enter or the right-click menu opens one in Explorer, and **Copy path** copies its `\\server\share`. Remove one where it was made, for example with `net use W: /delete`. The list is read again every 5 seconds while the window is open.
+The list also shows network drives mapped outside DriveMount (by `net use`, Explorer's *Map network drive*, WSL or another program), so you can see every letter in use. These are **external drives**:
 
-Click an *External* drive to see what Windows says about it: its path, status, network, the user it was made as, and whether Windows maps it at sign-in.
+- they are dimmed and marked **External**, with a grey drive-with-link icon (hollow when Windows says the drive is disconnected) and no button;
+- they sort by letter among your connections, and are left out of the status bar's counts, the tray, **Mount all** and **Unmount all**;
+- DriveMount never mounts, unmounts or changes them, and never contacts their server: what it shows is what Windows reports, which can lag behind a real outage;
+- the list is read again every 5 seconds while the window is open, so a drive mapped or removed elsewhere appears or goes within that time.
 
-**Moving a mapped share into DriveMount.** Click an *External* SMB drive and press **Manage with DriveMount…** on its page (it is in the right-click menu too). The Add page opens with its server, share, user and letter filled in; Windows never reveals the password, so type it, or choose another sign-in method. Save asks before it goes on: DriveMount then removes the drive from Windows, including Windows' memory of it, so it is no longer mapped at sign-in, and mounts the new connection on the same letter. If Windows mapped it at each sign-in, *Mount when DriveMount starts* is already ticked. If files are open on the drive you are asked again, and if anything goes wrong nothing is saved and the drive stays as it was. WSL and other non-SMB drives cannot be moved. Turn this off in Settings: **Show other network drives**.
+Hover over one for what Windows says about it. To remove one, do it where it was made, for example `net use W: /delete`. To hide them all, turn off **Show other network drives** in [Settings](#7-settings).
+
+**An external drive's page.** Click the row to open its page. It shows the drive's letter (greyed while the drive is not connected), its path with a **Copy** button, its status as Windows reports it, the network provider, the user it was mapped as, and whether Windows maps it again at each sign-in. **Open in Explorer** is there while the drive is connected. The row's right-click menu has **Details**, **Open in Explorer**, **Copy path** and, for an SMB drive, **Manage with DriveMount…**; Ctrl+Enter opens the selected drive in Explorer.
+
+**Letters held by external drives.** In the *Drive* box of a connection, a letter an external drive holds shows a warning (*In use by \\nas\photos, mapped outside DriveMount*). You can still choose it, but mounting there meets the rules in [When the drive letter is taken](#when-the-drive-letter-is-taken).
+
+### Taking over an external drive
+
+You can move an SMB share mapped outside DriveMount into DriveMount, so DriveMount mounts it, remembers its password and restores it at start-up. DriveMount *takes over* the drive: it removes Windows' mapping and puts its own connection on the same letter.
+
+1. Click the *External* SMB drive and press **Manage with DriveMount…** on its page (or choose it from the row's right-click menu).
+2. The page *Manage W: with DriveMount* opens, filled from the drive: a name (the share's name, or "share on server" if that name is taken), **Server**, **Share** and **Sub-path** from its path, **Domain** and **User** from the account it was mapped as, and its letter. If Windows mapped it at each sign-in, **Mount when DriveMount starts** is already ticked.
+3. Windows never reveals a mapped drive's password, so type it in **Password** (tick **Remember password** to keep it), or choose another **Auth** method such as *Current Windows user*. **Test connection** checks it without touching the drive.
+4. Press **Save**. DriveMount asks before going on. **Yes** removes the Windows mapping, including Windows' memory of it (so Windows no longer maps it at sign-in), then saves the connection and mounts it on the same letter. The external row is replaced by your new connection, and its page opens.
+
+If programs have files open on the drive, you are asked again: **Remove anyway** goes on, and those programs may lose unsaved changes. If the letter now maps a different path, or Windows refuses to remove the drive, nothing is saved, the drive stays as it was, and the reason is shown above the buttons. **Cancel** at any point leaves the drive untouched.
+
+Only SMB drives can be taken over. WSL drives (`\\wsl$\…`) and drives of other programs show no **Manage with DriveMount…**, and neither does any drive while DriveMount's settings file is read only. To give a taken-over drive back to Windows, delete the connection in DriveMount and map the share again with `net use` or Explorer.
 
 ### When the drive letter is taken
 
