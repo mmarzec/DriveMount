@@ -1,6 +1,6 @@
 # DriveMount
 
-DriveMount (working title; executable `drivemount.exe`) is a Windows desktop application that mounts remote disks as drive letters. It keeps a list of connections, mounts or unmounts each with one click, restores mounts at start-up and after network drops, and lives in the system tray.
+DriveMount is a Windows desktop application to easily manage, mount and unmount remote network drives, and assign them drive letters. Supported protocols: SSH (SFTP) and SMB (Samba). It keeps a list of connections, mounts or unmounts each with one click, restores mounts at start-up and after network drops, and lives in the system tray.
 
 It is a native Rust program built on [WinFsp](https://winfsp.dev). It needs no external SSHFS tooling and runs as a normal, unelevated user process.
 

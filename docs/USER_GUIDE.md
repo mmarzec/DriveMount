@@ -1,8 +1,6 @@
 # DriveMount user guide
 
-DriveMount mounts folders on remote servers as Windows drive letters, over SSH (SFTP). You keep a list of connections, mount or unmount each with one click, and DriveMount restores them at start-up and after network drops. It lives in the system tray.
-
-This guide is for DriveMount v1, which handles SSH/SFTP connections only.
+DriveMount lets you easily manage, mount and unmount remote network drives, and assign them drive letters. Supported protocols: SSH (SFTP) and SMB (Samba). You keep a list of connections, mount or unmount each with one click, and DriveMount restores them at start-up and after network drops. It lives in the system tray.
 
 **Contents**
 
