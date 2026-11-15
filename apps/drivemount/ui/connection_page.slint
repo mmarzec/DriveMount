@@ -17,6 +17,8 @@ export struct PageView {
     name: string,
     status: RowStatus,
     letter: string,
+    // Dimmed while it is not on that letter, as on its row.
+    letter-is-live: bool,
     primary: PrimaryAction,
     primary-enabled: bool,
     can-open: bool,
@@ -69,13 +71,14 @@ export component ConnectionPage {
     property <string> no: @tr("No");
     property <string> status-line: root.is-external ? @tr("Mapped outside DriveMount")
         : !root.is-profile ? @tr("Cannot be read")
-        : root.view.status == RowStatus.mounted ? (root.view.letter != "" ? @tr("Mounted on {}", root.view.letter) : @tr("Mounted"))
+        // Mounted or not, the state icon says it.
+        : root.view.status == RowStatus.mounted ? ""
         : root.view.status == RowStatus.connecting ? @tr("Connecting…")
         : root.view.status == RowStatus.reconnecting && root.view.smb ? @tr("Disconnected (Windows will reconnect)")
-        : root.view.status == RowStatus.reconnecting ? (root.view.letter != "" ? @tr("Reconnecting… (on {})", root.view.letter) : @tr("Reconnecting…"))
+        : root.view.status == RowStatus.reconnecting ? @tr("Reconnecting…")
         : root.view.status == RowStatus.unmounting ? @tr("Unmounting…")
         : root.view.status == RowStatus.error ? @tr("Failed")
-        : @tr("Not mounted");
+        : "";
 
     VerticalLayout {
         padding: 16px;
@@ -125,12 +128,22 @@ export component ConnectionPage {
                     overflow: elide;
                 }
 
-                Text {
+                if root.status-line != "": Text {
                     text: root.status-line;
                     font-size: Theme.small-size;
                     color: root.is-external ? Theme.text-muted
                         : root.view.status == RowStatus.error || !root.is-profile ? Theme.red : Theme.text-muted;
                 }
+            }
+
+            // The letter it is on, else the one it asks for, dimmed while not on it, as on its row.
+            if root.view.letter != "" || root.is-profile: Text {
+                text: root.view.letter != "" ? root.view.letter : @tr("Auto");
+                font-size: 18px;
+                font-weight: 600;
+                vertical-alignment: center;
+                color: root.view.letter-is-live ? Theme.text : Theme.text-muted;
+                accessible-label: @tr("Drive {}", self.text);
             }
 
             if root.view.primary != PrimaryAction.none: VerticalLayout {

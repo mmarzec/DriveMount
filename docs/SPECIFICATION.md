@@ -914,7 +914,7 @@ Built with **Slint** (Fluent style, software renderer). Theme: System / Light / 
 - **Drive letter:** the row shows it when mounted, and the preferred letter (dimmed) otherwise. *Auto* has none to show until it is mounted.
 - **Toolbar:** *Add*, *Mount all*, *Unmount all* (FR-MNT-09) and Settings, each with an icon. *Mount all* and *Unmount all* are disabled when they have nothing to act on. *Add* is always there, and is the only way to add with the mouse.
 - **Status bar:** also counts reconnecting and failed profiles ("· 1 reconnecting · 1 failed", in FR-TRAY-02's words), and says "Nothing mounted" when there is nothing to count.
-- **Reconnecting** shows the drive's letter, as the drive is still there, and its page says "Reconnecting… (on Z:)". The loader does not pulse, as reconnecting can last for hours; *Open in Explorer* is off until it is mounted again.
+- **Reconnecting** shows the drive's letter, as the drive is still there, and its page says "Reconnecting…", with the letter beside its button. The loader does not pulse, as reconnecting can last for hours; *Open in Explorer* is off until it is mounted again.
 - **Unmounting** has no row in the table above: an amber loader, with *Unmount* disabled.
 - **What a row has no room for:** the address, "Y: (Z: was in use)" (FR-MNT-04), an error, and a profile that breaks a rule of §7.3 (its *Mount* is disabled until it is edited). These are on the connection page, and in a tooltip that shows after 0.7 s over the row. An entry of the file that cannot be read (§6.1) has a red warning icon and no button, and can only be deleted.
 - **Mouse:** a click anywhere on a row except its button opens the row's **connection page** (§7.1.1). The right-click menu has *Details*, *Open in Explorer* (when mounted), *Edit…* and *Delete…*.
@@ -958,7 +958,7 @@ This page replaces the list inside the main window, as the settings page does. A
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-- **Header:** the state icon, the name, the state in words ("Mounted on Z:", "Connecting…", "Failed", "Not mounted"), and the row's primary button. *Open in Explorer* is a button under the details, for a profile or an external drive, only while it is mounted (connected, for an external drive); Ctrl+Enter and the row's right-click menu do the same.
+- **Header:** the state icon, the name, under it the state in words only while it is neither mounted nor unmounted ("Connecting…", "Reconnecting…", "Unmounting…", "Failed"; "Mapped outside DriveMount" for an external drive), as the icon already says that, then on the right the drive letter in full size, dimmed while it is not on it as on its row ("Auto" for a profile that asks for none), and the row's primary button. *Open in Explorer* is a button under the details, for a profile or an external drive, only while it is mounted (connected, for an external drive); Ctrl+Enter and the row's right-click menu do the same.
 - **Size:** the settings are at 14 px, one tight line each, and the buttons come right under them. Opening the page grows the window to at least 600 × 680 so that nothing scrolls, as §7.2 does.
 - **Problem:** what happened and what to do (§7.8). It is red for an error, and amber for a moved letter or a profile that needs correcting.
 - **Settings:** read-only. No secret is ever shown. An SMB profile shows Server, User (not with *Current Windows user*), Authentication, Share (the UNC path with the sub-path), Drive and *Mount at start*; its *Reconnecting* state reads "Disconnected (Windows will reconnect)" (§5.9).

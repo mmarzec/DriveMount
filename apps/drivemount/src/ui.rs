@@ -1560,6 +1560,7 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
         name: entry.name,
         status: entry.status,
         letter: entry.letter,
+        letter_is_live: entry.letter_is_live,
         primary: entry.primary,
         primary_enabled: entry.primary_enabled,
         can_open: entry.can_open,
