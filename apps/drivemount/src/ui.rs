@@ -1093,14 +1093,19 @@ impl Inner {
         }
     }
 
+    /// An external drive, while Windows has it connected.
+    fn open_external(&self, drive: &ExternalDrive) {
+        if drive.status == ExternalStatus::Mapped {
+            self.send(UiCommand::OpenInExplorer(drive.letter, String::new()));
+        }
+    }
+
     fn open_of(&self, index: usize) {
         match self.item(index).map(|item| item.body) {
             Some(Body::Profile(row)) => {
                 self.open(&row);
             }
-            Some(Body::External(drive)) => {
-                self.send(UiCommand::OpenInExplorer(drive.letter, String::new()));
-            }
+            Some(Body::External(drive)) => self.open_external(&drive),
             _ => {}
         }
     }
@@ -1164,9 +1169,7 @@ impl Inner {
             Some(Body::Profile(row)) => {
                 self.open(&row);
             }
-            Some(Body::External(drive)) => {
-                self.send(UiCommand::OpenInExplorer(drive.letter, String::new()));
-            }
+            Some(Body::External(drive)) => self.open_external(&drive),
             _ => {}
         }
     }
@@ -1521,7 +1524,8 @@ fn list_entry(
                 }
             },
             line: external_tip(texts, drive),
-            can_open: true,
+            // Explorer would only wait on a drive Windows has not connected.
+            can_open: drive.status == ExternalStatus::Mapped,
             can_take_over: drive.smb && can_add,
             ..placed
         },

@@ -736,11 +736,19 @@ fn the_page_shows_the_settings_and_follows_the_state() {
     assert_eq!(view.login, super::LoginKind::Agent);
     assert_eq!(view.drive, "X:");
     assert_eq!(view.problem, "");
+    assert!(
+        fixture.labelled("Open in Explorer").is_none(),
+        "not mounted"
+    );
 
     fixture.set_state(id, MountState::Mounted, Some('X'));
     assert_eq!(window.get_page_view().status, RowStatus::Mounted);
-    // The page has no button for it, but the key works there as on the list.
-    assert!(fixture.labelled("Open in Explorer").is_none());
+    // A button while it is mounted, and the key works there as on the list.
+    fixture.press("Open in Explorer");
+    assert_eq!(
+        fixture.take_sent(),
+        [UiCommand::OpenInExplorer(letter('X'), String::new())]
+    );
     fixture.ctrl(Key::Return);
     assert_eq!(
         fixture.take_sent(),

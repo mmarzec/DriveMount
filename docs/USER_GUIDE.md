@@ -197,7 +197,7 @@ Each row shows the connection's state, its name, one button and its drive letter
 
 You can also press Enter on the selected row, or use the tray menu. **Mount all** and **Unmount all** on the toolbar act on every connection. The status bar at the bottom counts what is mounted, connecting, reconnecting and failed.
 
-The drive appears in Explorer under *Network locations*, named after the connection. **Open in Explorer** (Ctrl+Enter, or the right-click menu) opens it.
+The drive appears in Explorer under *Network locations*, named after the connection. **Open in Explorer** (on its page, Ctrl+Enter, or the right-click menu) opens it while it is mounted.
 
 **Unmount** finishes any writes still under way and removes the drive. It does not wait for programs that have files open on it; those programs get an error the next time they use the file.
 

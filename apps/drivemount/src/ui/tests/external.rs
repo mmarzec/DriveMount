@@ -170,6 +170,36 @@ fn after_a_take_over_the_page_shows_the_new_profile() {
     assert_eq!(kinds_and_names(&fixture).len(), 1, "the external row went");
 }
 
+/// A drive Windows has not connected cannot be opened: from its page, its menu or Ctrl+Enter.
+#[test]
+fn an_external_drive_that_is_not_connected_cannot_be_opened() {
+    for status in [
+        DriveStatus::NotConnected,
+        DriveStatus::Disconnected,
+        DriveStatus::Reconnecting,
+    ] {
+        let fixture = Fixture::new(Vec::new());
+        let mut drive = other('W', r"\\nas\photos");
+        drive.status = status;
+        listing(&fixture, vec![drive]);
+        assert!(!fixture.entry(0).can_open, "{status:?}");
+        let items = right_click_menu(&fixture, r"\\nas\photos");
+        assert!(
+            !items.iter().any(|item| item == "Open in Explorer"),
+            "{items:?}"
+        );
+
+        fixture.key(Key::Escape);
+        fixture.key(Key::DownArrow);
+        fixture.ctrl(Key::Return);
+        fixture.key(" ");
+        assert!(fixture.ui.window().get_page_open());
+        assert!(fixture.labelled("Open in Explorer").is_none(), "{status:?}");
+        fixture.ctrl(Key::Return);
+        assert!(fixture.take_sent().is_empty(), "{status:?}");
+    }
+}
+
 /// WSL's and other providers' drives have a page, but nothing to take over.
 #[test]
 fn a_drive_of_another_provider_cannot_be_taken_over_from_its_page() {

@@ -338,7 +338,7 @@ export component ConnectionPage {
                 }
             }
 
-            AppButton {
+            if root.view.can-open: AppButton {
                 icon: Icons.folder-open;
                 text: @tr("Open in Explorer");
                 enabled: root.interactive;
@@ -359,6 +359,16 @@ export component ConnectionPage {
         if !root.is-external: HorizontalLayout {
             spacing: 8px;
             alignment: start;
+
+            // Only while it is mounted, as on the row's right-click menu.
+            if root.is-profile && root.view.can-open: AppButton {
+                icon: Icons.folder-open;
+                text: @tr("Open in Explorer");
+                enabled: root.interactive;
+                clicked => {
+                    root.open();
+                }
+            }
 
             if root.is-profile: AppButton {
                 icon: Icons.pencil;
