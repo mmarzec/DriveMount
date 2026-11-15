@@ -1482,6 +1482,7 @@ fn list_entry(
                 kind: EntryKind::Profile,
                 name: (&row.name).into(),
                 address: (&row.address).into(),
+                protocol: if row.smb { "SMB" } else { "SSH" }.into(),
                 letter: row
                     .letter
                     .map(|letter| letter.to_string())
@@ -1514,6 +1515,7 @@ fn list_entry(
         Body::External(drive) => ListEntry {
             kind: EntryKind::External,
             name: shortened_unc(&drive.unc).into(),
+            protocol: if drive.smb { "SMB" } else { "" }.into(),
             letter: drive.letter.to_string().into(),
             // Dimmed while Windows does not have it connected.
             letter_is_live: matches!(

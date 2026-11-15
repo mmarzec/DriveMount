@@ -17,6 +17,8 @@ export struct ListEntry {
     height: length,
     name: string,
     address: string,
+    // "SSH" or "SMB", as the dialog names them; empty when not known, as for an external drive of another provider.
+    protocol: string,
     letter: string,
     letter-is-live: bool,
     status: RowStatus,
@@ -105,7 +107,7 @@ export component ProfileRow {
     property <string> primary-text: RowTexts.primary(entry.primary);
 
     accessible-role: list-item;
-    accessible-label: entry.name + ", " + status-text
+    accessible-label: entry.name + (entry.protocol != "" ? ", " + entry.protocol : "") + ", " + status-text
         + (entry.address != "" ? ", " + entry.address : "")
         + (entry.letter != "" ? ", " + entry.letter : "")
         + (entry.line != "" ? ", " + entry.line : "");
@@ -159,6 +161,28 @@ export component ProfileRow {
             vertical-alignment: center;
             color: root.external ? Theme.text-muted : Theme.text;
             accessible-role: none;
+        }
+
+        // The protocol, as a tag after the name.
+        if root.entry.protocol != "": VerticalLayout {
+            alignment: center;
+            opacity: root.external ? 0.6 : 1;
+
+            Rectangle {
+                border-radius: 4px;
+                border-width: 1px;
+                border-color: Theme.text-muted;
+                width: protocol-tag.preferred-width + 10px;
+                height: protocol-tag.preferred-height + 2px;
+
+                protocol-tag := Text {
+                    text: root.entry.protocol;
+                    font-size: 11px;
+                    font-weight: 600;
+                    color: Theme.text-muted;
+                    accessible-role: none;
+                }
+            }
         }
 
         VerticalLayout {

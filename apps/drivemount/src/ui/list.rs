@@ -101,6 +101,8 @@ pub(super) struct ProfileItem {
     pub name: String,
     /// `user@host:path`.
     pub address: String,
+    /// Whether it is an SMB profile, else SSH. Shown as a tag on its row.
+    pub smb: bool,
     /// The letter it is on, or the one it asks for.
     pub letter: Option<DriveLetter>,
     /// Whether it is on that letter now. Otherwise it is dimmed.
@@ -496,6 +498,7 @@ impl ListState {
             id: profile.id,
             name: profile.name.clone(),
             address: address_of(profile),
+            smb: matches!(profile.protocol, Protocol::Smb(_)),
             letter: live_letter.or(wanted),
             letter_is_live: live_letter.is_some(),
             can_open: matches!(state, MountState::Mounted) && live_letter.is_some(),

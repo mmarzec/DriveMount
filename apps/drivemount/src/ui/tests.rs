@@ -16,7 +16,9 @@ use std::rc::Rc;
 
 use drivemount_core::config::{Config, ConfigStore, ReadOnlyReason, Theme};
 use drivemount_core::manager::{MountDetail, MountEvent, MountState};
-use drivemount_core::profile::{DriveChoice, Profile, Protocol, SftpAuth, SftpProfile};
+use drivemount_core::profile::{
+    DriveChoice, Profile, Protocol, SftpAuth, SftpProfile, SmbAuth, SmbProfile,
+};
 use drivemount_vfs::{ChangedHostKey, ConnectError, DriveLetter, MountError, RevokedHostKey};
 use i_slint_backend_testing::{AccessibleRole, ElementHandle, ElementQuery};
 use slint::platform::{Key, PointerEventButton, WindowEvent};
@@ -890,10 +892,27 @@ fn a_row_reads_out_its_state_and_address() {
     let fixture = Fixture::new(vec![saved]);
     fixture.set_state(id, MountState::Mounted, Some('Z'));
     let label = fixture.row("Prod").accessible_label().unwrap();
-    assert_eq!(label, "Prod, mounted, me@host:~, Z:");
+    assert_eq!(label, "Prod, SSH, mounted, me@host:~, Z:");
     assert_eq!(fixture.row("Prod").accessible_item_selected(), Some(false));
     fixture.key(Key::DownArrow);
     assert_eq!(fixture.row("Prod").accessible_item_selected(), Some(true));
+}
+
+#[test]
+fn a_row_shows_its_protocol() {
+    let smb = Profile::new(
+        "Nas",
+        Protocol::Smb(SmbProfile::new("nas", "media", "me", SmbAuth::Ask)),
+    );
+    let fixture = Fixture::new(vec![profile("Prod"), smb]);
+    let protocols: Vec<_> = (0..2)
+        .map(|place| {
+            let entry = fixture.entry(place);
+            (entry.name.to_string(), entry.protocol.to_string())
+        })
+        .collect();
+    assert!(protocols.contains(&("Prod".into(), "SSH".into())));
+    assert!(protocols.contains(&("Nas".into(), "SMB".into())));
 }
 
 #[test]
