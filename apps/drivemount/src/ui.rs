@@ -1515,7 +1515,11 @@ fn list_entry(
             kind: EntryKind::External,
             name: shortened_unc(&drive.unc).into(),
             letter: drive.letter.to_string().into(),
-            letter_is_live: true,
+            // Dimmed while Windows does not have it connected.
+            letter_is_live: matches!(
+                drive.status,
+                ExternalStatus::Mapped | ExternalStatus::Reconnecting
+            ),
             // Filled while Windows has it connected.
             status: match drive.status {
                 ExternalStatus::Mapped | ExternalStatus::Reconnecting => RowStatus::Mounted,
