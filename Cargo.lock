@@ -1411,6 +1411,7 @@ dependencies = [
  "nfs3_types",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

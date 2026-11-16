@@ -159,6 +159,11 @@ pub fn shown_connect_error_among(
             texts.invoke_share_not_found(share.into(), server.into()),
             None,
         ),
+        ConnectError::NfsAccess { export } => ShownError::new(
+            "E-NFS-ACCESS",
+            texts.invoke_nfs_access(export.into()),
+            Some(texts.invoke_nfs_access_hint()),
+        ),
         // Cancelling goes to Disconnected, and has no row of its own in the catalogue.
         ConnectError::Cancelled | ConnectError::Other(_) => internal(texts),
     }

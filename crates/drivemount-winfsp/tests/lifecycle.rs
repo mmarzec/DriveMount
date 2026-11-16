@@ -74,7 +74,9 @@ impl Connector for Shared<TestConnector> {
         if self.0.refuse.load(Ordering::SeqCst) {
             return Err(ConnectError::SftpUnavailable);
         }
-        Ok(Arc::clone(&self.0.probe) as Arc<dyn RemoteFs>)
+        // A new session each time, as an SFTP connection is: the same `Arc` would tell `SessionFs`
+        // that the session before came back, and keep its handles (as NFS's connector does).
+        Ok(Arc::new(Arc::clone(&self.0.probe)) as Arc<dyn RemoteFs>)
     }
 
     async fn probe(&self) -> Result<Duration, ConnectError> {

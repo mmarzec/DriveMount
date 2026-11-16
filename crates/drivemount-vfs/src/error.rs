@@ -180,6 +180,12 @@ pub enum ConnectError {
         /// The server.
         server: String,
     },
+    /// E-NFS-ACCESS: the NFS server refused this PC or this user the export (FR-NFS-05).
+    #[error("the NFS server refused access to {export}")]
+    NfsAccess {
+        /// The export path, as the profile gives it.
+        export: String,
+    },
     /// E-CONN-LOST: the connection dropped during setup, or a probe found it gone.
     #[error("connection lost")]
     ConnectionLost,

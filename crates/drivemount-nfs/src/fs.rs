@@ -71,6 +71,11 @@ const LISTING_RESTARTS: usize = 3;
 /// for a share.
 const MAX_LINKS: usize = 8;
 
+/// Uncommitted bytes one open file keeps before a write sends COMMIT itself.
+const COMMIT_EVERY: u64 = 32 * 1024 * 1024;
+/// How many times one COMMIT sends everything again after finding that the server restarted.
+const RESENDS: usize = 3;
+
 /// Modes of new files and directories: 666 and 777 less a umask of 022.
 const FILE_MODE: u32 = 0o644;
 const DIR_MODE: u32 = 0o755;
@@ -112,23 +117,28 @@ struct OpenFile {
     fh: nfs_fh3,
     access: Access,
     unstable: Mutex<Unstable>,
+    /// One COMMIT, with what it sends again, at a time.
+    committing: tokio::sync::Mutex<()>,
 }
 
-/// What an open file has written that may not be on the server's disk yet.
+/// What an open file has written that may not be on the server's disk yet: kept until a COMMIT
+/// with the same write verifier says it is, and sent again if the verifier changed, as the server
+/// restarted and may have lost it (RFC 1813 §3.3.21). That is what lets a copy run across a server
+/// restart (FR-NFS-04).
 #[derive(Debug, Default)]
 struct Unstable {
-    /// Writes acknowledged so far, and how many of them a COMMIT has covered.
-    written: u64,
-    committed: u64,
-    /// The server's write verifier with the first uncommitted write.
+    /// What the server has taken since the last COMMIT, in the order written.
+    writes: Vec<(u64, Bytes)>,
+    /// Their size.
+    bytes: u64,
+    /// The server's write verifier with these writes.
     verifier: Option<writeverf3>,
-    /// A write came back with another verifier: the server restarted in between.
+    /// A reply came back with another verifier: every write kept has to go again.
     restarted: bool,
 }
 
 impl Unstable {
-    fn wrote(&mut self, verifier: writeverf3) {
-        self.written += 1;
+    fn verify(&mut self, verifier: writeverf3) {
         match self.verifier {
             None => self.verifier = Some(verifier),
             Some(seen) if seen != verifier => self.restarted = true,
@@ -136,8 +146,44 @@ impl Unstable {
         }
     }
 
+    fn wrote(&mut self, offset: u64, data: Bytes, verifier: writeverf3) {
+        self.verify(verifier);
+        self.bytes += data.len() as u64;
+        self.writes.push((offset, data));
+    }
+
     fn pending(&self) -> bool {
-        self.written > self.committed
+        !self.writes.is_empty() || self.restarted
+    }
+
+    /// Before a COMMIT: how many writes it covers, and, if the server restarted, those to send
+    /// again first, under whatever verifier the server has now.
+    fn begin_commit(&mut self) -> (usize, Option<Vec<(u64, Bytes)>>) {
+        let again = self.restarted.then(|| {
+            self.restarted = false;
+            self.verifier = None;
+            self.writes.clone()
+        });
+        (self.writes.len(), again)
+    }
+
+    /// After a COMMIT of the first `covered` writes that gave `verifier`: drops them if the server
+    /// kept them all, and says whether it did.
+    fn committed(&mut self, covered: usize, verifier: writeverf3) -> bool {
+        self.verify(verifier);
+        if self.restarted {
+            return false;
+        }
+        let done: u64 = self
+            .writes
+            .drain(..covered)
+            .map(|(_, data)| data.len() as u64)
+            .sum();
+        self.bytes -= done;
+        if self.writes.is_empty() {
+            self.verifier = None;
+        }
+        true
     }
 }
 
@@ -198,6 +244,23 @@ impl NfsFs {
             capabilities,
             dir_chunk: info.dtpref.clamp(MIN_DIR_CHUNK, MAX_DIR_CHUNK),
         })
+    }
+
+    // ---- For the connector ----
+
+    /// A NULL call: whether the server answers, for a keep-alive probe.
+    pub(crate) async fn ping(&self) -> FsResult<()> {
+        self.pool
+            .call(Retry::Idempotent, |c| Box::pin(c.null()))
+            .await
+    }
+
+    /// After an outage: drops the idle connections, which are most likely dead, and checks that
+    /// the export's root handle is still good. `Err(HandleError::Stale)` means the export was
+    /// made again and has to be mounted again; any other handle stays valid (FR-NFS-04).
+    pub(crate) async fn reconnect(&self) -> Result<(), HandleError> {
+        self.pool.reset();
+        self.getattr(&to_fh(self.handles.root())).await.map(|_| ())
     }
 
     fn file(&self, handle: &RemoteHandle) -> FsResult<Arc<OpenFile>> {
@@ -537,7 +600,20 @@ impl NfsFs {
         }
     }
 
-    async fn write_chunk(&self, file: &OpenFile, mut offset: u64, mut data: Bytes) -> FsResult<()> {
+    /// Writes `data` at `offset`, and keeps it until a COMMIT.
+    async fn write_chunk(&self, file: &OpenFile, offset: u64, data: Bytes) -> FsResult<()> {
+        self.send(file, offset, data, true).await
+    }
+
+    /// Sends one WRITE, repeated for whatever the server did not take. Each part taken is kept for
+    /// the next COMMIT if `keep`; when sending kept data again it is already.
+    async fn send(
+        &self,
+        file: &OpenFile,
+        mut offset: u64,
+        mut data: Bytes,
+        keep: bool,
+    ) -> FsResult<()> {
         while !data.is_empty() {
             let reply = self
                 .pool
@@ -559,63 +635,74 @@ impl NfsFs {
                 Nfs3Result::Ok(written) => written,
                 Nfs3Result::Err((stat, _)) => return Err(file_status(stat)),
             };
-            lock(&file.unstable).wrote(written.verf);
             let count = (written.count as usize).min(data.len());
             if count == 0 {
                 return Err(FsError::Other(
                     "NFS: the server accepted none of a write".to_owned(),
                 ));
             }
-            data = data.slice(count..);
+            let taken = data.split_to(count);
+            if keep {
+                lock(&file.unstable).wrote(offset, taken, written.verf);
+            } else {
+                lock(&file.unstable).verify(written.verf);
+            }
             offset += count as u64;
         }
         Ok(())
     }
 
-    /// COMMIT what `file` has written, if anything.
+    /// COMMIT what `file` has written, if anything. If the server restarted since it was written,
+    /// it is all sent again first, and committed then.
     async fn commit(&self, file: &OpenFile) -> FsResult<()> {
-        let covered = {
-            let unstable = lock(&file.unstable);
-            if !unstable.pending() {
+        let _turn = file.committing.lock().await;
+        for _ in 0..=RESENDS {
+            let (covered, again) = {
+                let mut unstable = lock(&file.unstable);
+                if !unstable.pending() {
+                    return Ok(());
+                }
+                unstable.begin_commit()
+            };
+            if let Some(again) = again {
+                let bytes: usize = again.iter().map(|(_, data)| data.len()).sum();
+                warn!(
+                    bytes,
+                    "the NFS server restarted before written data reached its disk; sending it again"
+                );
+                let sends = again
+                    .into_iter()
+                    .map(|(offset, data)| self.send(file, offset, data, false));
+                join_all(sends)
+                    .await
+                    .into_iter()
+                    .collect::<FsResult<Vec<()>>>()?;
+            }
+            let reply = self
+                .pool
+                .call(Retry::Idempotent, |c| {
+                    let file = file.fh.clone();
+                    Box::pin(async move {
+                        let args = COMMIT3args {
+                            file,
+                            offset: 0,
+                            count: 0,
+                        };
+                        c.commit(&args).await
+                    })
+                })
+                .await?;
+            let verifier = match reply {
+                Nfs3Result::Ok(committed) => committed.verf,
+                Nfs3Result::Err((stat, _)) => return Err(file_status(stat)),
+            };
+            if lock(&file.unstable).committed(covered, verifier) {
                 return Ok(());
             }
-            unstable.written
-        };
-        let reply = self
-            .pool
-            .call(Retry::Idempotent, |c| {
-                let file = file.fh.clone();
-                Box::pin(async move {
-                    let args = COMMIT3args {
-                        file,
-                        offset: 0,
-                        count: 0,
-                    };
-                    c.commit(&args).await
-                })
-            })
-            .await?;
-        let verifier = match reply {
-            Nfs3Result::Ok(committed) => committed.verf,
-            Nfs3Result::Err((stat, _)) => return Err(file_status(stat)),
-        };
-        let mut unstable = lock(&file.unstable);
-        unstable.committed = unstable.committed.max(covered);
-        let lost = unstable.restarted || unstable.verifier.is_some_and(|seen| seen != verifier);
-        // Writes after this COMMIT start a new run, with whatever verifier they bring.
-        unstable.verifier = None;
-        unstable.restarted = false;
-        if unstable.pending() {
-            unstable.verifier = Some(verifier);
         }
-        if lost {
-            warn!("the NFS server restarted before written data reached its disk");
-            return Err(FsError::Other(
-                "the NFS server restarted; data written since the last flush may be lost"
-                    .to_owned(),
-            ));
-        }
-        Ok(())
+        Err(FsError::Other(
+            "the NFS server kept restarting before written data reached its disk".to_owned(),
+        ))
     }
 
     async fn lookup_fresh(&self, path: &RemotePath) -> FsResult<FileHandle> {
@@ -738,6 +825,7 @@ impl RemoteFs for NfsFs {
             fh,
             access,
             unstable: Mutex::new(Unstable::default()),
+            committing: tokio::sync::Mutex::new(()),
         });
         lock(&self.files).insert(id, file);
         Ok(RemoteHandle::new(id))
@@ -788,7 +876,15 @@ impl RemoteFs for NfsFs {
             let end = (start + chunk).min(data.len());
             self.write_chunk(file, offset + start as u64, data.slice(start..end))
         });
-        join_all(parts).await.into_iter().collect()
+        join_all(parts)
+            .await
+            .into_iter()
+            .collect::<FsResult<Vec<()>>>()?;
+        // What is kept to send again after a restart has to stay bounded.
+        if lock(&file.unstable).bytes >= COMMIT_EVERY {
+            self.commit(file).await?;
+        }
+        Ok(())
     }
 
     async fn flush(&self, handle: &RemoteHandle) -> FsResult<()> {
@@ -1267,15 +1363,53 @@ mod tests {
         );
     }
 
+    fn data(text: &'static str) -> Bytes {
+        Bytes::from_static(text.as_bytes())
+    }
+
     #[test]
     fn a_changed_write_verifier_is_noticed() {
         let mut unstable = Unstable::default();
         assert!(!unstable.pending());
-        unstable.wrote(writeverf3([1; 8]));
-        unstable.wrote(writeverf3([1; 8]));
+        unstable.wrote(0, data("ab"), writeverf3([1; 8]));
+        unstable.wrote(2, data("cd"), writeverf3([1; 8]));
         assert!(unstable.pending() && !unstable.restarted);
-        unstable.wrote(writeverf3([2; 8]));
+        assert_eq!(unstable.bytes, 4);
+        unstable.wrote(4, data("e"), writeverf3([2; 8]));
         assert!(unstable.restarted);
+    }
+
+    #[test]
+    fn a_commit_with_the_same_verifier_drops_what_it_covered() {
+        let mut unstable = Unstable::default();
+        unstable.wrote(0, data("ab"), writeverf3([1; 8]));
+        let (covered, again) = unstable.begin_commit();
+        assert_eq!((covered, again), (1, None));
+        // Written while the COMMIT was on its way: not covered, so kept.
+        unstable.wrote(2, data("cd"), writeverf3([1; 8]));
+        assert!(unstable.committed(covered, writeverf3([1; 8])));
+        assert_eq!(unstable.writes, vec![(2, data("cd"))]);
+        assert_eq!(unstable.bytes, 2);
+        assert!(unstable.committed(1, writeverf3([1; 8])));
+        assert!(!unstable.pending());
+        assert_eq!(unstable.verifier, None);
+    }
+
+    #[test]
+    fn after_a_restart_everything_kept_goes_again() {
+        let mut unstable = Unstable::default();
+        unstable.wrote(0, data("ab"), writeverf3([1; 8]));
+        unstable.wrote(2, data("cd"), writeverf3([1; 8]));
+        // The COMMIT finds another verifier: nothing is dropped.
+        assert!(!unstable.committed(2, writeverf3([2; 8])));
+        assert_eq!(unstable.bytes, 4);
+        let (covered, again) = unstable.begin_commit();
+        assert_eq!(covered, 2);
+        assert_eq!(again, Some(vec![(0, data("ab")), (2, data("cd"))]));
+        // Sent again under the new verifier, then committed under it.
+        unstable.verify(writeverf3([2; 8]));
+        assert!(unstable.committed(covered, writeverf3([2; 8])));
+        assert!(!unstable.pending());
     }
 
     fn target(export: &str, to: &str) -> FsResult<String> {

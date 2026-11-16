@@ -23,5 +23,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+tracing = { workspace = true }
 drivemount-vfs = { workspace = true, features = ["testing"] }
 tokio = { workspace = true, features = ["rt", "test-util", "io-util"] }
+tracing-subscriber = { workspace = true }

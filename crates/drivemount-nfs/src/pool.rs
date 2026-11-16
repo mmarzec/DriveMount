@@ -35,7 +35,7 @@ pub(crate) type Client = Nfs3Client<Stream>;
 
 /// A TCP stream for `nfs3_client` whose reads fail at the end of the stream instead of returning
 /// nothing, and whose writes fail if nothing could be written.
-pub(crate) struct Stream(TcpStream);
+pub(crate) struct Stream(pub(crate) TcpStream);
 
 impl AsyncRead for Stream {
     async fn async_read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -106,16 +106,9 @@ impl Pool {
         size: usize,
         call_timeout: Duration,
     ) -> Self {
-        let credential = opaque_auth::auth_unix(&auth_unix {
-            stamp: 0,
-            machinename: Opaque::borrowed(MACHINE_NAME),
-            uid: identity.uid,
-            gid: identity.gid,
-            gids: vec![identity.gid],
-        });
         Self {
             dialer,
-            credential,
+            credential: Self::credential(identity),
             idle: Mutex::new(Vec::new()),
             slots: Semaphore::new(size.max(1)),
             call_timeout,
@@ -125,9 +118,10 @@ impl Pool {
     /// Runs one RPC on a free connection, under the call deadline. `rpc` builds the call from owned
     /// arguments, so it can be run again on a new connection.
     ///
-    /// An I/O error (the connection broke) is tried once more on a new connection if `retry`
-    /// allows: a server closes idle connections, and the call that finds out should not fail.
-    /// A timeout is not: the deadline layer above has its own, and the session is suspect then.
+    /// An I/O error (the connection broke) is tried once more on a newly opened connection if
+    /// `retry` allows: a server closes idle connections, and the call that finds out should not
+    /// fail. Not on another idle one, which may have broken the same way. A timeout is not tried
+    /// again: the deadline layer above has its own, and the session is suspect then.
     pub(crate) async fn call<T, F>(&self, retry: Retry, mut rpc: F) -> Result<T, FsError>
     where
         F: for<'c> FnMut(&'c mut Client) -> BoxFuture<'c, Result<T, RpcError>> + Send,
@@ -137,6 +131,7 @@ impl Pool {
             Retry::Idempotent => 2,
             Retry::Once => 1,
         };
+        let mut fresh = false;
         loop {
             tries -= 1;
             let _slot = self
@@ -144,7 +139,7 @@ impl Pool {
                 .acquire()
                 .await
                 .map_err(|_| FsError::ConnectionLost)?;
-            let mut client = self.checkout().await?;
+            let mut client = self.checkout(fresh).await?;
             // Until it is put back, a cancelled call drops the connection with it.
             match timeout(self.call_timeout, rpc(&mut client)).await {
                 Ok(Ok(value)) => {
@@ -157,6 +152,7 @@ impl Pool {
                     }
                     if matches!(error, RpcError::Io(_)) && tries > 0 {
                         debug!(%error, "NFS connection broke; trying the call again on a new one");
+                        fresh = true;
                         continue;
                     }
                     return Err(map_rpc_error(&error));
@@ -169,14 +165,17 @@ impl Pool {
         }
     }
 
-    async fn checkout(&self) -> Result<Client, FsError> {
-        let idle = self
-            .idle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop();
-        if let Some(client) = idle {
-            return Ok(client);
+    /// A free connection: an idle one unless `fresh`, else a new one.
+    async fn checkout(&self, fresh: bool) -> Result<Client, FsError> {
+        if !fresh {
+            let idle = self
+                .idle
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .pop();
+            if let Some(client) = idle {
+                return Ok(client);
+            }
         }
         let stream = match timeout(self.call_timeout, self.dialer.dial()).await {
             Ok(Ok(stream)) => stream,
@@ -193,11 +192,33 @@ impl Pool {
         ))
     }
 
+    /// The AUTH_SYS credential every call carries, for MOUNT too.
+    pub(crate) fn credential(identity: Identity) -> opaque_auth<'static> {
+        opaque_auth::auth_unix(&auth_unix {
+            stamp: 0,
+            machinename: Opaque::borrowed(MACHINE_NAME),
+            uid: identity.uid,
+            gid: identity.gid,
+            gids: vec![identity.gid],
+        })
+    }
+
     fn checkin(&self, client: Client) {
         self.idle
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(client);
+    }
+
+    /// Drops every idle connection, so that the next calls open new ones. After an outage the idle
+    /// ones are most likely dead, and each would cost a call that finds out.
+    pub(crate) fn reset(&self) {
+        let dropped =
+            std::mem::take(&mut *self.idle.lock().unwrap_or_else(PoisonError::into_inner));
+        debug!(
+            connections = dropped.len(),
+            "dropped the idle NFS connections"
+        );
     }
 
     /// How many connections are open and free, for tests.

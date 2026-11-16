@@ -2,6 +2,20 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: M4-04 `NfsConnector`
+
+**Status: done; committed on `main`.** `drivemount_nfs::NfsConnector` (`src/connector.rs`), with `NfsProfile` for what it needs from a profile. Against knfsd (`tests/connector.rs`, `#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP, `--test-threads=1`): FR-NFS-03 (the `secure` export mounts from a reserved port, and refuses MOUNT without one), FR-NFS-04 (a 40 MiB copy across a 10 s knfsd restart, 22 s; bytes match), FR-NFS-05 (the `denied` export and a missing one are E-NFS-ACCESS), and fixed ports. 8 new connector unit tests (one Windows-only), 2 for kept writes, 2 new `SessionFs` tests. The M4-03 knfsd suite still passes. `fmt`, `clippy --workspace --all-targets -D warnings`, `cargo deny check` and the SPDX/secret checks pass.
+
+- **Reconnect without reopening (FR-NFS-04):** the connector keeps a `Weak` to the `NfsFs` it handed out. On a reconnect it asks the portmapper again, drops the pool's idle connections, GETATTRs the root handle and gives back the **same** `Arc`. `SessionFs` now tells sessions apart by `since` (the generation a file system first came in) rather than by generation, so the same `Arc` keeps every handle. Only a stale root mounts again (new `NfsFs`, handles reopened by path).
+- **Changed from M4-03: uncommitted writes are kept and sent again.** The restart test showed knfsd's write verifier changes on restart, so M4-03's "the flush fails" made FR-NFS-04's copy fail at close. Now each open file keeps what it wrote until a COMMIT with the same verifier covers it, sends it all again if the verifier changed (up to 3 times), and a write sends COMMIT itself at 32 MiB uncommitted to bound the memory. Seen in the test: one resend of 32 MiB.
+- **Pool:** a call's retry after a broken connection dials a new one instead of taking another idle one (after an outage they are all dead).
+- **Errors:** `ConnectError::NfsAccess { export }` (E-NFS-ACCESS) with the §7.8 text and hint in `ui/errors.rs`/`texts.slint`; not in the stop-retrying list. Refused/unreachable ports are E-HOST-UNREACHABLE with the port; the last failed dial of the pool is kept so FSINFO's `ConnectionLost` can say which. Spec §5.5 and §5.10 updated.
+- **Test fake changed:** `TestConnector` in `drivemount-winfsp/tests/lifecycle.rs` handed out one `Arc` on every connect, which now means "the same session came back"; it wraps it in a new `Arc` each time, as SFTP's connector makes a new `SftpFs`.
+- **Flaky:** `app::engine::tests::each_change_is_saved_at_once_and_in_use_before` failed twice in a full `cargo test --workspace` run (its 10 s `PATIENCE` ran out under load) and passes alone and in `cargo test -p drivemount --lib`. It touches nothing M4-04 changed; not checked on the commit before.
+- **Found:** WSL forwards `localhost:111` to the knfsd container, so "nothing listens on 111 here" is not true on the dev machine.
+- **Open:** a file closed while the connection is down is not closed on the `NfsFs` (its entry stays until the drive goes). The `info!` lines of a reconnect run on another task and don't show in the restart test's log. Not tested: a silent outage (netem) and a stale root after the export is made again.
+- **Next:** M4-05 (profile, config, UI, and the backend factory making an `NfsConnector`).
+
 ## 2026-11-16: M4-03 `NfsFs`
 
 **Status: done; committed on `main`.** `drivemount_nfs::NfsFs` (`src/fs.rs`) over a connection pool (`src/pool.rs`). `contract::run_all` passes against knfsd's `insecure` export in 9 s, the 1 GiB case included (`tests/nfsfs.rs`, `#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP). 5 more tests there: UID/GID ownership (FR-NFS-01), symbolic links, a file another client replaced, an open file another client removed, the `ro` export. 20 new unit tests, 7 of them the pool against a fake RPC server. `fmt`, `clippy --workspace --all-targets -D warnings`, `cargo deny check` and the SPDX/secret checks pass.
@@ -16,7 +30,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Symbolic links (M4-02's open question):** a link at the end of a path is followed (stat, open, read_dir, set_attr by path) when the target is relative or absolute inside the export, up to 8 links; anything else is `NotFound`. A link in the middle of a path is not followed (`PathNotFound`).
 - **Other choices:** a rename without replace looks the target up first (not atomic); READDIRPLUS restarts on `NFS3ERR_BAD_COOKIE` up to 3 times and fills the handle cache; non-UTF-8 names are left out of listings; an open file whose handle went stale is `NotFound`; `JUKEBOX` and other statuses are `Other`.
 - **Not done here:** the reserved-port dialer, portmapper, MOUNT, reconnect and E-NFS-ACCESS (M4-04); fragmented replies (M4-06's server matrix).
-- **Next:** M4-04.
+- **Next:** M4-04 (done, above).
 
 ## 2026-11-16: M4-02 path → file-handle cache
 

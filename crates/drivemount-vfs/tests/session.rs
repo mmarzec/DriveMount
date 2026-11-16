@@ -47,6 +47,11 @@ impl Conn {
         self.dead.store(true, Ordering::SeqCst);
     }
 
+    /// The connection works again, as an NFS file system whose pool has reconnected does.
+    fn revive(&self) {
+        self.dead.store(false, Ordering::SeqCst);
+    }
+
     fn check(&self) -> FsResult<()> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.dead.load(Ordering::SeqCst) {
@@ -337,6 +342,64 @@ async fn a_handle_is_opened_again_without_truncating_and_keeps_writing() {
         server.read(&read, 0, 100).await.unwrap().as_ref(),
         b"onetwo!"
     );
+}
+
+#[tokio::test]
+async fn the_same_file_system_coming_back_keeps_its_handles() {
+    let (server, first, sessions) = setup().await;
+    let mode = OpenMode::write(Disposition::CreateOrTruncate);
+    let handle = sessions.open(&path("/b.txt"), mode).await.unwrap();
+    sessions
+        .write(&handle, 0, Bytes::from_static(b"one"))
+        .await
+        .unwrap();
+
+    first.kill();
+    sessions.mark_lost(1, "gone");
+    first.revive();
+    assert_eq!(
+        sessions.replace(Arc::clone(&first) as Arc<dyn RemoteFs>),
+        Some(2)
+    );
+    sessions
+        .write(&handle, 3, Bytes::from_static(b"two"))
+        .await
+        .unwrap();
+    sessions.close(handle).await.unwrap();
+
+    // Opened once, and closed on the file system it was opened on.
+    assert_eq!(first.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(first.closes.load(Ordering::SeqCst), 1);
+    let read = server
+        .open(&path("/b.txt"), OpenMode::read())
+        .await
+        .unwrap();
+    assert_eq!(
+        server.read(&read, 0, 100).await.unwrap().as_ref(),
+        b"onetwo"
+    );
+}
+
+#[tokio::test]
+async fn handles_are_opened_again_once_another_file_system_comes_in_between() {
+    let (server, first, sessions) = setup().await;
+    let handle = sessions
+        .open(&path("/a.txt"), OpenMode::read())
+        .await
+        .unwrap();
+    // Replaced while up by the same one: nothing changes.
+    sessions.replace(Arc::clone(&first) as Arc<dyn RemoteFs>);
+    sessions.read(&handle, 0, 5).await.unwrap();
+    assert_eq!(first.opens.load(Ordering::SeqCst), 1);
+
+    let second = Conn::to(&server);
+    sessions.replace(Arc::clone(&second) as Arc<dyn RemoteFs>);
+    sessions.read(&handle, 0, 5).await.unwrap();
+    // The first one again counts as new: its handle was given up for the second's.
+    sessions.replace(Arc::clone(&first) as Arc<dyn RemoteFs>);
+    sessions.read(&handle, 0, 5).await.unwrap();
+    assert_eq!(second.opens.load(Ordering::SeqCst), 1);
+    assert_eq!(first.opens.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]

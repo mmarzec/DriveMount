@@ -108,6 +108,12 @@ export global Texts {
     public pure function share-not-found(share: string, server: string) -> string {
         return @tr("Share {} not found on {}.", share, server);
     }
+    public pure function nfs-access(export: string) -> string {
+        return @tr("The NFS server refused access to {}.", export);
+    }
+    public pure function nfs-access-hint() -> string {
+        return @tr("Check the export path, that this PC's IP address is allowed in the export list, and the UID/GID. If the export has the secure option, Use reserved source port must be on.");
+    }
 
     // The second line of a row.
     public pure function letter-moved(letter: string, wanted: string) -> string {

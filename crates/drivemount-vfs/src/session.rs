@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -21,6 +21,9 @@ use crate::{
 #[derive(Clone)]
 struct Session {
     generation: u64,
+    /// The generation at which this file system first became current. A reconnect that gives back
+    /// the same file system keeps it, and with it the handles opened on it.
+    since: u64,
     fs: Arc<dyn RemoteFs>,
 }
 
@@ -30,7 +33,13 @@ enum State {
     /// Calls go to this session.
     Up(Session),
     /// The session of this generation is gone, for this reason. Calls wait for the next.
-    Down { generation: u64, reason: String },
+    Down {
+        generation: u64,
+        reason: String,
+        /// Its file system, only to tell whether the next session is the same one; and its `since`.
+        last: Weak<dyn RemoteFs>,
+        since: u64,
+    },
     /// No session will come: calls fail at once.
     Closed,
 }
@@ -40,7 +49,7 @@ struct OpenFile {
     /// Where it is now, following renames through this file system.
     path: Mutex<RemotePath>,
     mode: OpenMode,
-    /// The session it is open on, and its handle there.
+    /// The `since` of the session it is open on, and its handle there.
     remote: Mutex<(u64, u64)>,
     /// Lets one call at a time open it again on a new session.
     reopening: tokio::sync::Mutex<()>,
@@ -66,6 +75,9 @@ impl OpenFile {
 ///   by path on the first use after a reconnect (FR-REC-05). That reopening never creates or
 ///   truncates: the file has to be there, and keeps what it holds. Paths follow renames made through
 ///   this layer. A handle from a session that has gone is closed by going with it.
+/// - **A reconnect that gives back the same file system** (the same `Arc`, as the NFS connector
+///   does: NFS file handles outlive the connection, FR-NFS-04) keeps every handle as it is. Nothing
+///   is opened again, and the file system keeps what it knows of each open file.
 ///
 /// [`capabilities`](RemoteFs::capabilities) are those of the current session, or the last one.
 pub struct SessionFs {
@@ -86,7 +98,11 @@ impl SessionFs {
     pub fn new(fs: Arc<dyn RemoteFs>) -> Self {
         let capabilities = fs.capabilities();
         Self {
-            state: watch::Sender::new(State::Up(Session { generation: 1, fs })),
+            state: watch::Sender::new(State::Up(Session {
+                generation: 1,
+                since: 1,
+                fs,
+            })),
             files: Mutex::default(),
             next_id: AtomicU64::new(1),
             capabilities: Mutex::new(capabilities),
@@ -95,18 +111,35 @@ impl SessionFs {
 
     /// Makes `fs` the session calls go to, whatever the state, and wakes the calls waiting for one.
     /// Returns its generation. Does nothing once [shut down](Self::shut_down), and returns `None`.
+    ///
+    /// If `fs` is the file system of the session before (the same `Arc`), files open on it stay
+    /// open on it and are not opened again.
     pub fn replace(&self, fs: Arc<dyn RemoteFs>) -> Option<u64> {
         let capabilities = fs.capabilities();
         let mut generation = None;
         self.state.send_if_modified(|state| {
-            let last = match state {
-                State::Up(session) => session.generation,
-                State::Down { generation, .. } => *generation,
+            let (last, same, since) = match state {
+                State::Up(session) => (
+                    session.generation,
+                    Arc::ptr_eq(&session.fs, &fs),
+                    session.since,
+                ),
+                State::Down {
+                    generation,
+                    last,
+                    since,
+                    ..
+                } => (
+                    *generation,
+                    Weak::ptr_eq(last, &Arc::downgrade(&fs)),
+                    *since,
+                ),
                 State::Closed => return false,
             };
             generation = Some(last + 1);
             *state = State::Up(Session {
                 generation: last + 1,
+                since: if same { since } else { last + 1 },
                 fs,
             });
             true
@@ -123,7 +156,12 @@ impl SessionFs {
         let reason = reason.into();
         self.state.send_if_modified(|state| match state {
             State::Up(session) if session.generation == generation => {
-                *state = State::Down { generation, reason };
+                *state = State::Down {
+                    generation,
+                    reason,
+                    last: Arc::downgrade(&session.fs),
+                    since: session.since,
+                };
                 true
             }
             _ => false,
@@ -170,6 +208,7 @@ impl SessionFs {
             State::Down {
                 generation: lost,
                 reason,
+                ..
             } if *lost == generation => Some(reason.clone()),
             _ => None,
         }
@@ -219,19 +258,19 @@ impl SessionFs {
 
     /// The file's handle on `session`, opening it there first if it was opened on an earlier one.
     async fn remote(&self, file: &OpenFile, session: &Session) -> FsResult<RemoteHandle> {
-        let (generation, id) = file.remote();
-        if generation == session.generation {
+        let (since, id) = file.remote();
+        if since == session.since {
             return Ok(RemoteHandle::new(id));
         }
         let _turn = file.reopening.lock().await;
-        let (generation, id) = file.remote();
-        if generation == session.generation {
+        let (since, id) = file.remote();
+        if since == session.since {
             return Ok(RemoteHandle::new(id));
         }
         // The handle of the old session went with it, so there is nothing to close.
         let path = lock(&file.path).clone();
         let reopened = session.fs.open(&path, reopen_mode(file.mode)).await?;
-        *lock(&file.remote) = (session.generation, reopened.id());
+        *lock(&file.remote) = (session.since, reopened.id());
         Ok(reopened)
     }
 
@@ -299,17 +338,17 @@ impl RemoteFs for SessionFs {
     }
 
     async fn open(&self, path: &RemotePath, mode: OpenMode) -> FsResult<RemoteHandle> {
-        let (generation, remote) = self
+        let (since, remote) = self
             .call(repeatable_open(mode), |s| async move {
                 let remote = s.fs.open(path, mode).await?;
-                Ok((s.generation, remote))
+                Ok((s.since, remote))
             })
             .await?;
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let file = OpenFile {
             path: Mutex::new(path.clone()),
             mode,
-            remote: Mutex::new((generation, remote.id())),
+            remote: Mutex::new((since, remote.id())),
             reopening: tokio::sync::Mutex::new(()),
         };
         lock(&self.files).insert(id, Arc::new(file));
@@ -352,14 +391,14 @@ impl RemoteFs for SessionFs {
         let Some(file) = lock(&self.files).remove(&handle.id()) else {
             return Err(FsError::Other("unknown file handle".to_owned()));
         };
-        let (generation, id) = file.remote();
+        let (since, id) = file.remote();
         let session = match &*self.state.borrow() {
-            State::Up(session) if session.generation == generation => session.clone(),
+            State::Up(session) if session.since == since => session.clone(),
             _ => return Ok(()),
         };
         match session.fs.close(RemoteHandle::new(id)).await {
             Err(FsError::ConnectionLost) => {
-                self.mark_lost(generation, "a call found the connection gone");
+                self.mark_lost(session.generation, "a call found the connection gone");
                 Ok(())
             }
             result => result,
