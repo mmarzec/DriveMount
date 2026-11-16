@@ -26,11 +26,13 @@ It replaces tools such as NEO SSH-Win Manager with a native Rust program. That p
 
 ### 1.2 Scope and releases
 
-| Release | Content |
+| Scope | Content |
 |---|---|
-| **v1** (milestones M0–M2) | SSH/SFTP connections mounted as drive letters; tray; auto-mount; auto-reconnect; Windows Credential Manager; host-key verification; settings; MSI installer |
+| **v1 scope** (milestones M0–M2) | SSH/SFTP connections mounted as drive letters; tray; auto-mount; auto-reconnect; Windows Credential Manager; host-key verification; settings; MSI installer |
 | **M3** | SMB 2/3 connections (Windows' own SMB client) |
 | **M4** | NFSv3 connections (built-in userspace client) |
+
+"v1" in this document names the SSH scope above, not a version number. Releases (owner, 2026-11-16): none at the end of M2; **0.2.0** at the end of M3 (SSH and SMB), the first published build, **unsigned**; **1.0.0** at the end of M4 (SSH, SMB and NFS), the first **signed** release.
 
 **Explicitly excluded** (not to be added without changing this document):
 - SSH terminal, file browser, server system info, CLI;
@@ -1195,7 +1197,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 - **Setup exe (OD-5):** looks up `InstallDir` under `HKLM\SOFTWARE\WOW6432Node\WinFsp` and the version of `bin\winfsp-x64.dll` in it. If WinFsp is missing or older than 2.1, it installs the official, **unmodified** WinFsp MSI it carries (allowed by WinFsp's FLOSS exception, ADR-0003); otherwise WinFsp is left as it is. WinFsp is permanent: uninstalling DriveMount leaves it, as other programs may use it. Its window has a *Start with Windows* box, ticked when this user's Run value is there, and passes it to the MSI. No licence to accept: the GPL asks for none.
 - **Toast registration:** at start, the app writes `HKCU\Software\Classes\AppUserModelId\DriveMount` with a `DisplayName` and a `CustomActivator` (a CLSID), and `HKCU\Software\Classes\CLSID\{F458B6D8-450A-4371-8114-627B7E93EBBC}\LocalServer32` = `"<exe>"`. Spike M0-3 showed the AUMID key is what makes toasts appear; a shortcut with an AUMID alone did not. The CLSID is what a click in Action Center starts or calls (§5.3). Both are rewritten at every start, as the exe may have moved. The uninstaller removes them for the user who uninstalls; the portable zip leaves them behind, as it has no uninstaller.
 - **Portable:** a zip with `drivemount.exe`. It needs WinFsp installed separately.
-- **Signing:** Authenticode for `drivemount.exe`, the MSI and the setup exe, by SignPath (OD-3) in the release workflow (M2-11). The setup exe's engine is taken out with WiX's `insignia`, signed, and put back before the setup exe is signed.
+- **Signing:** Authenticode for `drivemount.exe`, the MSI and the setup exe, by SignPath (OD-3) in the release workflow (M2-11), from 1.0.0. The 0.2.0 pre-release is unsigned. The setup exe's engine is taken out with WiX's `insignia`, signed, and put back before the setup exe is signed.
 - **Updates:** none in v1. Users install a newer setup exe or MSI over the old one. Settings and profiles are kept and migrated (§6.1).
 - **Licence:** DriveMount is GPL-3.0-or-later ([ADR-0003](adr/0003-licence-gplv3.md)). The MSI and zip include `LICENSE.txt` (the repository's `LICENSE`) and `THIRD-PARTY-LICENSES.html`, which `cargo-about` makes from the shipped exe's dependencies (`about.toml`, `packaging/about.hbs`) with WinFsp's attribution; a crate under a licence outside the allow-list fails the build. `cargo deny` enforces the allow-list from ADR-0003 (NFR-LIC).
 
@@ -1239,6 +1241,7 @@ The generic part is `drivemount_vfs::contract` (feature `testing`): everything d
   - scripted Explorer-like operations through Win32 `CopyFileEx`, `MoveFileEx`, `FindFirstFile` and `ReplaceFile`;
   - NEO regression cases: write → close → reopen → hash; a new file visible in the next listing; a host-key prompt for an unknown server; no drive left after the process is killed.
 - Crash test: kill `drivemount.exe` with a mount active, then check with `GetLogicalDrives` that the letter is gone (NFR-REL-04).
+- *(M3)* SMB mappings through the runner's own Windows server: `scripts/smb-test-share.ps1` makes a share and two local users (administrator rights), and `crates/drivemount-smb/tests/local_share.rs` maps it at `\127.0.0.1`, `\localhost` and the computer's name: mount and unmount, *Current Windows user*, E-AUTH, E-SMB-SHARE-NOT-FOUND, *Test connection*, E-SMB-1219, open files and a forced unmount. Samba and outages stay on the development machine (`tests/samba.rs`), as WSL2 does not run on the runner.
 
 ### 10.4 Manual and lab test matrix (before each release)
 
@@ -1274,9 +1277,9 @@ All implementation work is done by an AI coding agent. Tasks, human checkpoints 
 |---|---|---|
 | **M0 Spikes** | **M0-1:** `winfsp` crate mounts an in-memory FS as an unelevated network drive; Explorer copy/rename/delete/drag-drop work; volume flags settled. **M0-2:** `russh` + `russh-sftp` pipelined read/write throughput vs OpenSSH `sftp` on LAN and 50 ms WAN; decide write-behind (§5.6). **M0-3:** Slint + `tray-icon` on one event loop; close-to-tray; hidden message window receives power and session messages. | Each spike has a short report in `docs/spikes/` with numbers and a go/no-go. A no-go triggers the fallback in §12. |
 | **M1 Core mount** | Workspace, drivemount-core, drivemount-vfs, drivemount-sftp, drivemount-winfsp, main window, profile dialog, prompts, Credential Manager, known hosts | Mount an SFTP profile from the UI; NFR-REL-01/02 pass; FR-PROF, FR-SSH and FR-MNT acceptance criteria pass |
-| **M2 v1 release** | Reconnect (FR-REC), tray, notifications, settings, lifecycle (FR-APP), MSI, signing, user guide | All v1 requirements' acceptance criteria pass; NFR-PERF budgets met; 4 h soak passes |
-| **M3 SMB** | drivemount-smb, SMB form fields, E-SMB errors | FR-SMB acceptance criteria pass on Windows 10 Home and 11 Pro against Samba and Windows Server |
-| **M4 NFS** | drivemount-nfs (NFSv3), NFS form fields | FR-NFS acceptance criteria pass against knfsd, Synology and TrueNAS on Windows 10 Home |
+| **M2 SSH completion** | Reconnect (FR-REC), tray, notifications, settings, lifecycle (FR-APP), MSI, user guide. No release | All v1-scope requirements' acceptance criteria pass; NFR-PERF budgets met; 4 h soak passes |
+| **M3 SMB** | drivemount-smb, SMB form fields, E-SMB errors | FR-SMB acceptance criteria pass on Windows 10 Home and 11 Pro against Samba and Windows Server. Release **0.2.0, unsigned** |
+| **M4 NFS** | drivemount-nfs (NFSv3), NFS form fields | FR-NFS acceptance criteria pass against knfsd, Synology and TrueNAS on Windows 10 Home. Release **1.0.0, signed** (M2-11) |
 
 **Later (only on request):**
 - NFSv4.1;

@@ -76,8 +76,8 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | H-07 | M1-19 | Manual items of the M1 exit checklist (§9.2) | ~45 min |
 | H-08 | M2-02/03/04/06 | Sleep/resume, Wi-Fi switch, sign-out with mounts, tray and toast behaviour | ~45 min. Done 2026-11-13: two fixes (tray clicks after the first were dropped; the Drive list called another profile's letter free) |
 | H-09 | M2-09 | Start the 4 h soak (shortened from 72 h by the owner, 2026-11-13); keep the PC on, and don't use it for anything else during the run | 4 h of wall clock. Done 2026-11-13 (failed, fixed; not repeated by the owner's decision) |
-| H-10 | M2-11 | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup. OD-3 decided 2026-11-14: SignPath; the SignPath Foundation application and project setup are still to do |
-| H-11 | M2-10/13 | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min |
+| H-10 | M2-11 (before M4-07) | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup. OD-3 decided 2026-11-14: SignPath; the SignPath Foundation application and project setup are still to do. Needed only for v1.0.0 (end of M4); v0.2.0 ships unsigned |
+| H-11 | M2-10 (before M3-06) | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min |
 | H-12 | M3-05 | SMB tests against your real servers (NAS, Windows share) | ~30 min |
 | H-13 | M4-06 | NFS tests against your real servers (NAS) | ~30 min |
 
@@ -90,8 +90,9 @@ Work does not pass a gate until its conditions hold.
 | **G0** | M0 | Setup tasks S-01 to S-04 done (S-05 deferred until the Gitea remote exists) |
 | **G1** | M1 | All three spikes are "go" (or a fallback is chosen); OD-1 licence decided ✅ (ADR-0003); OD-4 (write-behind) decided |
 | **G2** | M2 | M1 exit checklist passes |
-| **G3** | v1.0.0 release | v1 release checklist passes |
-| **G4 / G5** | M3 / M4 release | Each milestone's exit criteria pass |
+| **G3** | M3 | M2 tasks done, except M2-11 (signing), which moves to the v1.0.0 release. No release at the end of M2 (owner, 2026-11-16) |
+| **G4** | v0.2.0 release (end of M3) | M3 exit criteria and the v0.2.0 checklist (§9.3) pass. **Unsigned** pre-release |
+| **G5** | v1.0.0 release (end of M4) | M4 exit criteria and the v1.0.0 checklist (§9.4) pass. First **signed** release |
 
 ### 1.7 Refinement of the specification found while planning
 
@@ -114,8 +115,8 @@ Spec §5.2 now matches (M1-01).
 ## 2. Overall sequence and timing
 
 ```
-Setup ─▶ M0 spikes ─▶ G1 ─▶ M1 core mount ─▶ G2 ─▶ M2 v1 release ─▶ G3 (v1.0.0) ─▶ M3 SMB ─▶ G4 ─▶ M4 NFS ─▶ G5
- H-01      H-04         H-03     H-06, H-07           H-08…H-11                      H-12          H-13
+Setup ─▶ M0 spikes ─▶ G1 ─▶ M1 core mount ─▶ G2 ─▶ M2 SSH complete ─▶ G3 ─▶ M3 SMB ─▶ G4 (v0.2.0, unsigned) ─▶ M4 NFS ─▶ G5 (v1.0.0, signed)
+ H-01      H-04         H-03     H-06, H-07           H-08, H-09               H-11, H-12                      H-10, H-13
  H-02      H-05
 ```
 
@@ -126,16 +127,16 @@ Setup ─▶ M0 spikes ─▶ G1 ─▶ M1 core mount ─▶ G2 ─▶ M2 v1 rel
 | Setup | hours | Your installs (H-01, H-02) |
 | M0 spikes | 1–3 days | The Explorer and tray checks (H-04, H-05) |
 | M1 core mount | ~1½–2½ weeks | Rust compile/test loops, WinFsp debugging, UI review rounds (H-06) |
-| M2 v1 release | ~1½–2 weeks | 4 h soak (H-09), signing certificate (H-10), installer check (H-11) |
-| **v1.0.0 (SSH)** | **≈ 4–6 weeks** | |
-| M3 SMB + M4 NFS | ~1½–2 weeks | Tests on your real servers (H-12, H-13) |
+| M2 SSH complete | ~1½–2 weeks | 4 h soak (H-09) |
+| M3 SMB → **v0.2.0 (unsigned)** | ~1 week | Installer check (H-11), tests on your real servers (H-12) |
+| M4 NFS → **v1.0.0 (signed)** | ~1–1½ weeks | Signing account (H-10), tests on your real servers (H-13) |
 
 These are rough ranges, not commitments:
 - They assume checkpoints are answered within about a day.
 - Waiting on checkpoints, wall-clock tests and accounts dominate the schedule more than writing code does.
 - Low-level Windows file system work can need several debugging rounds.
 
-**Critical path:** S-01 → M0-1 → M1-12a–c (WinFsp adapter) → M1-19 → M2-01 (reconnect) → M2-09 (reliability, soak) → M2-13 (release).
+**Critical path:** S-01 → M0-1 → M1-12a–c (WinFsp adapter) → M1-19 → M2-01 (reconnect) → M2-09 (reliability, soak) → M3-06 (v0.2.0) → M4-07 (v1.0.0, needs H-10 for signing).
 ---
 
 ## 3. Setup
@@ -301,7 +302,9 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 
 ---
 
-## 6. M2: v1 release
+## 6. M2: SSH completion
+
+M2 makes the SSH feature set complete. It ends without a release (owner, 2026-11-16): the first published build is the unsigned v0.2.0 at the end of M3, and signing (M2-11) is needed only for v1.0.0 at the end of M4.
 
 | ID | Task | Done when | You | ☐ |
 |---|---|---|---|---|
@@ -315,9 +318,9 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M2-08 | **Performance pass**: measure every NFR-PERF budget on the spec §4.1 environment (the local machine + WSL/Docker server, with netem for WAN); profile with `tracing` spans and Windows Performance Recorder; tune cache TTLs, chunk sizes and thread count; implement write-behind if OD-4 says so (ADR-0002). | `docs/perf/v1.md` shows all budgets met | – | ☑ |
 | M2-09 | **Reliability campaign**:<br>• `fsx` 100k operations on SFTP mounts;<br>• full `winfsp-tests` subset;<br>• NEO regressions (spec §10.3);<br>• kill test;<br>• **4 h soak** (72 h until the owner shortened it, 2026-11-13): 5 mounts; a PowerShell driver copies files in a loop while a WSL/Docker script toggles iptables DROP every 20 min and a wake-timer script sleeps and resumes the PC (`scripts/soak/`);<br>• working set logged. | No data mismatch; no stuck state; working-set growth < 10% (NFR-REL-06) | H-09 | ☑ Accepted by the owner, 2026-11-13: the 4 h soak failed on 3 files and +10.8% working set; the cause was fixed and a 20-minute soak with drops and sleeps passed on data. The 4 h soak was not repeated (too costly). [reliability/v1.md](reliability/v1.md) |
 | M2-10 | **Installer** (`cargo-wix`, WiX):<br>• per-machine install;<br>• Start-menu shortcut with the AppUserModelID `DriveMount` (toasts rely on the HKCU keys from M2-04, not on this);<br>• uninstall removes those HKCU keys (spec §9) for the installing user;<br>• optional Start with Windows;<br>• WinFsp ≥ 2.1 check, then chain-install of the unmodified WinFsp MSI or a link (OD-5);<br>• uninstall with "Remove my settings";<br>• portable zip;<br>• `LICENSE` and `THIRD-PARTY-LICENSES.html` (generated with `cargo-about`) in both artefacts (NFR-LIC-04). | Install, upgrade and uninstall scripted on the dev machine; owner verifies on a clean Windows 11 Pro machine. **Done locally:** `scripts/package.ps1` builds the MSI, a setup exe (WiX Burn bundle: WinFsp chained, as an MSI cannot chain one) and the zip; `scripts/test-installer.ps1` passes all 33 checks on the dev machine. "Remove my settings" is a question the uninstall step asks (owner's choice). H-11 is still to do. See `docs/PROGRESS.md` | H-11 | ☐ |
-| M2-11 | **Signing and release workflow**: GitHub Actions on tag builds, signs (OD-3), builds the MSI and zip, writes `sha256sums.txt` and drafts the release. | A signed test tag produces the artefacts; SmartScreen does not block | H-10 | ☐ (workflow written 2026-11-14 for SignPath; waits on H-10) |
+| M2-11 | **Signing and release workflow**: GitHub Actions on tag builds, signs (OD-3), builds the MSI and zip, writes `sha256sums.txt` and drafts the release. | A signed test tag produces the artefacts; SmartScreen does not block. **Moved to the v1.0.0 release (M4-07)**; without SignPath settings the workflow builds unsigned, which v0.2.0 uses | H-10 | ☐ (workflow written 2026-11-14 for SignPath; waits on H-10; needed by M4-07) |
 | M2-12 | **User guide** `docs/USER_GUIDE.md`: install, add a connection, auth methods, host keys, tray, troubleshooting (one entry per §7.8 error), data locations, licence and WinFsp attribution (NFR-LIC-02). | Reviewed against the UI and the error catalogue | – | ☑ |
-| M2-13 | **Release v1.0.0**: run the full checklist (§9.3), update the traceability table, tag. | G3 passed | Approve the release | ☐ |
+| M2-13 | ~~**Release v1.0.0**~~ **Dropped** (owner, 2026-11-16): no release at the end of M2. Its work moves to M3-06 (v0.2.0, unsigned) and M4-07 (v1.0.0, signed). | – | – | – |
 
 ---
 
@@ -330,8 +333,8 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M3-03 | **Profile and config**: `Protocol::Smb(SmbProfile)`, validation (UNC paste, domain\user), config keys from spec §6.1, `show_other_drives` (FR-SET-09) among them (additive; bump `schema_version` only if existing fields change), secrets. | Unit tests for validation and config round-trip. **Done locally 2026-11-14:** the SMB rules and pastes are in spec §7.3, the keys in §6.1; `schema_version` stays 1. Until M3-04 the app shows an SMB profile but cannot mount or edit it. See `docs/PROGRESS.md` | – | ☑ |
 | M3-04 | **UI**: protocol selector (SSH \| SMB \| NFS, with NFS hidden until M4); SMB fields; the sub-path note; the E-SMB-1219 text, naming the other connection when found; SMB rows usable without WinFsp (FR-SMB-08);<br>• the factory makes an `SmbBackend` for an SMB profile; FR-SMB-04's question: a row that goes *Unmounting* → *Mounted* after Unmount had files open asks, and *Unmount anyway* sends `force_unmount`;<br>• the E-SMB-SHARE-NOT-FOUND text (both SMB errors show as E-INTERNAL until then);<br>• *External* rows for other network drives, polled every 5 s while the window is shown, and the FR-SET-09 setting (FR-SMB-09, spec §7.1). | FR-SMB-01/02/06/08/09 acceptance criteria pass; owner checks the form and the external rows. **Done 2026-11-14; the owner confirmed H-06 on 2026-11-16 (100% and 150%, both themes, no *Advanced* for SMB accepted):** everything in the row is built and unit- or window-tested (`ui/tests/external.rs`, the SMB tests in `ui/form.rs` and `ui/tests/dialog.rs`). *Test connection* maps the share without a letter. The SMB form has no *Advanced*: Windows reconnects a share itself and has no read-only mapping, so *Reconnect* and *Read-only* are not shown (owner accepted it at H-06). Network events do not list the other drives again (the 5 s poll does). See `docs/PROGRESS.md` | H-06 || ☑ |
 | M3-04a | **Taking over an external SMB drive** (FR-SMB-10, owner's request 2026-11-14):<br>• `OtherDrive.smb` and `.remembered`; `release_other_drive` and `wnet::forget_connection` (`CONNECT_UPDATE_PROFILE`);<br>• *Manage with DriveMount…* on external SMB rows opens Add filled from the drive; Save asks, then `UiCommand::TakeOver` removes the drive, saves and mounts; open files ask again. | Unit, window and engine tests; `tests/samba.rs` `a_net_use_drive_is_taken_over_and_forgotten` against Samba. **Done 2026-11-14; the owner confirmed it at H-06 on 2026-11-16**, also on their real drives. See `docs/PROGRESS.md` | H-06 || ☑ |
-| M3-05 | **Tests**: Windows CI against a local share; Samba in WSL/Docker; owner runs the real-server matrix (NAS, Windows share). | Matrix recorded | H-12 | ☐ |
-| M3-06 | **M3 release** (v1.1.0). | G4 passed | Approve the release | ☐ |
+| M3-05 | **Tests**: Windows CI against a local share; Samba in WSL/Docker; owner runs the real-server matrix (NAS, Windows share). | Matrix recorded. **Done 2026-11-16; the owner declared H-12 done on 2026-11-16 without recording the matrix row by row.** CI job `smb` and `tests/local_share.rs` against a share the job makes (`scripts/smb-test-share.ps1`), which passes on the dev machine but has not run in CI; Samba passes locally; the owner's matrix is `docs/lab/smb-v0.2.md`. See `docs/PROGRESS.md` | H-12 | ☑ |
+| M3-06 | **Release v0.2.0 (unsigned pre-release)**: SSH and SMB.<br>• H-11 (installer on a clean Windows 11 Pro machine) first;<br>• workspace version 0.2.0; run the v0.2.0 checklist (§9.3); update the traceability table (*Verified in* 0.2.0);<br>• tag `v0.2.0`; the release workflow runs without SignPath settings, so it builds unsigned and its draft says so; the release is marked as a pre-release, and its notes say SmartScreen will warn. | G4 passed | H-11; approve the release | ☐ |
 
 ---
 
@@ -345,7 +348,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | M4-04 | **`NfsConnector`**: portmapper or fixed ports; reserved-port binding from 1023 down; reconnect without reopening handles (FR-NFS-04); `NFS3ERR_ACCES` → E-NFS-ACCESS. | FR-NFS-03/04/05 acceptance criteria pass | – | ☐ |
 | M4-05 | **Profile, config and UI**: NFS form (server, export, UID/GID, ports, reserved port), the AUTH_SYS note (spec §8), show NFS in the protocol selector. | FR-NFS-01 acceptance criterion passes; owner checks the form | H-06 | ☐ |
 | M4-06 | **Tests**: Linux CI with an NFS container; `fsx` on an NFS mount; owner runs the real-server matrix (Synology/TrueNAS/knfsd) on **Windows 10 Home**. | Matrix recorded | H-13 | ☐ |
-| M4-07 | **M4 release** (v1.2.0). | G5 passed | Approve the release | ☐ |
+| M4-07 | **Release v1.0.0 (first signed release)**: SSH, SMB and NFS.<br>• M2-11 done first: H-10 (SignPath set up), a test-signing run by hand, then a signed test tag;<br>• workspace version 1.0.0; run the full v1.0.0 checklist (§9.4); update the traceability table;<br>• tag `v1.0.0`; the workflow signs through SignPath's `release-signing` policy. | G5 passed | H-10; approve the release | ☐ |
 
 ---
 
@@ -360,7 +363,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 | `test-windows` | windows-latest | every push | Install WinFsp (silent MSI); all unit tests; mount tests with `MemFs` and an in-process `russh` SFTP server; `fsx` 10k operations; the `winfsp-tests` subset; Slint UI logic tests |
 | `nightly` | windows-latest | nightly | `fsx` 100k operations; longer contract runs |
 | `perf` | local machine | on demand / before release | NFR-PERF measurements → `docs/perf/` |
-| `release` | windows-latest | tag `v*` | Build, sign, MSI, zip, checksums, licence notices |
+| `release` | windows-latest | tag `v*` | Build, sign (from v1.0.0; v0.2.0 is unsigned), MSI, zip, checksums, licence notices |
 
 ### 9.2 M1 exit checklist
 
@@ -380,13 +383,23 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 - [ ] Host-key prompt and changed-key dialog look right.
 - [ ] The drive shows under *Network locations* with the profile name.
 
-### 9.3 v1 release checklist
+### 9.3 v0.2.0 release checklist (end of M3, unsigned)
 
-- [ ] All FR-PROF, FR-SSH, FR-MNT, FR-REC, FR-TRAY, FR-NOT, FR-APP and FR-SET acceptance criteria verified and ticked in `docs/TRACEABILITY.md`.
+- [ ] All FR-PROF, FR-SSH, FR-MNT, FR-REC, FR-TRAY, FR-NOT, FR-APP, FR-SET and FR-SMB acceptance criteria verified and ticked in `docs/TRACEABILITY.md`.
+- [ ] All NFR-PERF budgets met (`docs/perf/v1.md`).
+- [x] Soak (NFR-REL-06): accepted by the owner, 2026-11-13 (see §9.4).
+- [ ] MSI and setup exe install, upgrade and uninstall cleanly on a clean Windows 11 Pro machine (H-11). Not signed: SmartScreen's warning is expected and the release notes say so.
+- [ ] Licence obligations met (NFR-LIC-01 to NFR-LIC-06), as in §9.4.
+- [ ] User guide complete, and says the 0.x builds are unsigned.
+- [ ] GitHub release marked as a pre-release.
+
+### 9.4 v1.0.0 release checklist (end of M4, signed)
+
+- [ ] All FR-PROF, FR-SSH, FR-MNT, FR-REC, FR-TRAY, FR-NOT, FR-APP, FR-SET, FR-SMB and FR-NFS acceptance criteria verified and ticked in `docs/TRACEABILITY.md`.
 - [ ] All NFR-PERF budgets met (`docs/perf/v1.md`).
 - [x] Soak (NFR-REL-06): accepted by the owner, 2026-11-13, on the fix and a 20-minute run with drops and sleeps; the 4 h run failed before the fix and was not repeated ([reliability/v1.md](reliability/v1.md)).
-- [ ] Manual matrix (spec §10.4, SSH rows) passed on Windows 10 Home 22H2 and Windows 11 Pro.
-- [ ] MSI installs, upgrades and uninstalls cleanly; binaries signed.
+- [ ] Manual matrix (spec §10.4: SSH, SMB and NFS rows) passed on Windows 10 Home 22H2 and Windows 11 Pro.
+- [ ] MSI installs, upgrades (also from 0.2.0) and uninstalls cleanly; binaries signed (M2-11, H-10); SmartScreen does not block.
 - [ ] Licence obligations met (NFR-LIC-01 to NFR-LIC-06): `cargo deny` clean, About shows the GPLv3 notice and WinFsp attribution, licence files shipped, release tag public with source link.
 - [ ] User guide complete.
 
@@ -432,7 +445,7 @@ Spikes are throw-away code in `spikes/<name>/`, outside the main workspace. Each
 - **Tests:** each task lands with its tests. Backends must pass the shared contract suite. Prefer scripted checks over manual ones whenever possible.
 - **Decisions:** architecture decisions go in `docs/adr/NNNN-title.md` (ADR-0002 write mode; ADR-0001 async traits, ADR-0003 licence and ADR-0004 `rsa` advisory are accepted).
 - **Version control:** one task per branch; Conventional Commits (`feat:`, `fix:`, `test:`…); `main` always green; the owner approves merges and pushes.
-- **Versioning:** `0.x` pre-releases during M1–M2; `1.0.0` at G3; minor versions for M3 and M4.
+- **Versioning:** `0.x` during M1–M3: `0.1.0` (local tag, M1), `0.2.0` at G4, the first published build, unsigned. `1.0.0` at G5, the first signed release. Changed by the owner on 2026-11-16 (was: `1.0.0` after M2, `1.1.0` after M3, `1.2.0` after M4).
 
 ### Definition of done (every task)
 

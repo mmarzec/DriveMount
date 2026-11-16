@@ -80,7 +80,7 @@ The workspace also builds on Linux, where the Windows-only crates (`drivemount-w
 
 ### Releases
 
-Pushing a tag `vX.Y.Z` that matches `drivemount`'s version runs [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub. It builds everything, has [SignPath](https://about.signpath.io) sign the exe, the MSI and the setup exe, writes `sha256sums.txt` and drafts a release, which is published by hand. Running the workflow by hand signs with SignPath's test certificate and drafts nothing. The file's header lists the settings it needs. `scripts\package.ps1 -Sign` signs locally with a certificate in the Windows store, such as a self-signed test one; `scripts\sign.ps1` says how.
+Pushing a tag `vX.Y.Z` that matches `drivemount`'s version runs [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub. It builds everything, has [SignPath](https://about.signpath.io) sign the exe, the MSI and the setup exe, writes `sha256sums.txt` and drafts a release, which is published by hand. Without the SignPath settings it builds unsigned and the draft says so at the top: that is how 0.2.0 ships, the first published build; 1.0.0 is the first signed release. Running the workflow by hand signs with SignPath's test certificate and drafts nothing. The file's header lists the settings it needs. `scripts\package.ps1 -Sign` signs locally with a certificate in the Windows store, such as a self-signed test one; `scripts\sign.ps1` says how.
 
 ### Checks
 
@@ -193,7 +193,7 @@ cargo test -p drivemount-winfsp --test explorer -- --ignored --test-threads=1
 
 Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org).
 
-Only the files built from this repository are signed: `drivemount.exe`, the MSI and the setup exe, by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners. The WinFsp installer inside the setup exe is WinFsp's own, signed by its publisher.
+From 1.0.0, only the files built from this repository are signed (0.x pre-releases are not): `drivemount.exe`, the MSI and the setup exe, by the [release workflow](.github/workflows/release.yml) on GitHub-hosted runners. The WinFsp installer inside the setup exe is WinFsp's own, signed by its publisher.
 
 Team roles:
 

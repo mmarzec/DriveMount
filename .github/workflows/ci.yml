@@ -107,6 +107,29 @@ jobs:
       - name: winfsp-tests, less tests/winfsp-tests-exclusions.txt
         run: cargo test -p drivemount-winfsp --locked --test winfsp_tests -- --ignored --test-threads=1 --nocapture
 
+  # SMB mappings through the runner's own Windows server (plan M3-05): a share and two local users
+  # made for the run, so the job needs administrator rights, as GitHub-hosted runners have. Samba
+  # and the outage test stay local (crates/drivemount-smb/tests/samba.rs), as WSL2 does not run here.
+  smb:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+      - name: Build the tests
+        run: cargo test -p drivemount-smb --locked --test local_share --no-run
+      - name: Make the test share and its users
+        shell: powershell
+        run: scripts\smb-test-share.ps1 -EnvFile $env:GITHUB_ENV
+      - name: The SMB tests against it
+        run: cargo test -p drivemount-smb --locked --test local_share -- --ignored --test-threads=1
+      - name: Remove the test share and its users
+        if: always()
+        shell: powershell
+        run: scripts\smb-test-share.ps1 -Remove -EnvFile $env:GITHUB_ENV
+
   # The tests marked #[ignore]: they need the S-03 servers, which this job starts with Docker Engine.
   integration:
     runs-on: ubuntu-latest

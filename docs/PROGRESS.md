@@ -2,6 +2,29 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: release plan changed
+
+**Owner's decision:** no release at the end of M2. The end of M3 is **v0.2.0, unsigned** (SSH and SMB), the first published build; the end of M4 is **v1.0.0**, the first **signed** release (SSH, SMB and NFS).
+
+- **Plan:** M2 is now "SSH completion"; M2-13 dropped; M2-11 (signing) and H-10 (SignPath) are needed only by M4-07. M3-06 is the v0.2.0 release (H-11 first, version 0.2.0, pre-release, unsigned); M4-07 is v1.0.0 (M2-11 first). Gates G3–G5 and the checklists (§9.3 v0.2.0, §9.4 v1.0.0) follow. Old numbering (1.0.0 / 1.1.0 / 1.2.0) is gone.
+- **Spec:** §1.2 says "v1" is the SSH scope, not a version, and lists the two releases; §9 signing from 1.0.0; §11 milestones.
+- **User guide and README:** 0.x builds are unsigned (SmartScreen warns; check the checksums); the release workflow already builds unsigned without SignPath settings.
+- **Renamed:** `docs/lab/smb-v1.1.md` → `docs/lab/smb-v0.2.md`.
+- **Not changed yet:** the workspace version (0.1.0); M3-06 bumps it to 0.2.0.
+
+## 2026-11-16: M3-05 SMB tests
+
+**Status: written, not committed; both suites pass on the dev machine; CI's `smb` job has not run. H-12: the owner declared H-12 done on 2026-11-16 without recording the matrix row by row; M3-05 ticked.**
+
+- **New:** `scripts/smb-test-share.ps1` (elevated) makes share `drivemount-test` at `C:\drivemount-smb-test` (with `hello.txt` and `sub\`), two standard local users `dmsmb1`/`dmsmb2` with random passwords, and grants the signed-in user too. It writes the settings to `target\smb-test-share.env`, or appends them to `$GITHUB_ENV` with the passwords masked. `-Remove` takes it all away.
+- **`crates/drivemount-smb/tests/local_share.rs`** (9 tests, `#[ignore]`): the Samba suite's outage-free cases at this machine's own server, plus *Current Windows user*, *Test connection* with a sub-path and "another name avoids 1219". Explicit logins use `\\127.0.0.1`, the second user's other name is `\\localhost`, and *Current Windows user* has `\\%COMPUTERNAME%` to itself, so null credentials cannot pick up a session another test left (spike M3-01 §5).
+- **CI:** new job `smb` on `windows-latest`: build, make the share, run the suite, remove it (`if: always()`). Needs administrator rights, which GitHub-hosted runners have; on a Gitea runner it depends on that machine's account.
+- **`local_share.rs` 9/9 pass** on the dev machine after the owner ran the script elevated. Two test mistakes fixed on the first run: a stored password is used once, so each *Test connection* needs its own backend; and with a Microsoft account `NetUseEnum` names the user `MicrosoftAccount\<email>`, not `USERNAME`, so the *Current Windows user* test now checks only that no test user's session was reused. `New-LocalUser -Description` takes at most 48 characters.
+- **Samba:** `tests/samba.rs` 9/9 pass again (14.6 s).
+- **Owner's matrix:** `docs/lab/smb-v0.2.md` §2, 15 rows for a Windows share and the NAS, including the two items left open at H-06 (Explorer showing a mapped letter, the E-SMB-1219 text on screen).
+- **Not recorded, then:** each row of `docs/lab/smb-v0.2.md` §2, among them the two left from H-06 (Explorer showing a mapped letter at once, the E-SMB-1219 text on screen), *Current Windows user* and the outages against a real server, Quit and sign-out in the app. TRACEABILITY's *Verified in* for FR-SMB stays `–`.
+- **Next:** M3-06 (v0.2.0 release, unsigned); the first push runs CI's `smb` job.
+
 ## 2026-11-16: H-06 for M3-04 and M3-04a
 
 **Status: done; the owner confirmed H-06.** M3-04 and M3-04a are ticked in the plan. They looked at `examples/main_window.rs` at 100% and at 150% (`SLINT_SCALE_FACTOR=1.5`), light and dark, `--empty` and `--real-drives`, and took over a drive on their real PC, which worked. No issues apart from the ones below. Not recorded as checked: a running Explorer showing a letter the app maps (spike M3-01) and the E-SMB-1219 text on screen; both come round again in M3-05.
@@ -11,7 +34,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Decided:** the SMB form keeps no *Advanced* section (no *Reconnect*, no *Read-only*); the owner reported nothing against it.
 - **`SLINT_SCALE_FACTOR` works for the preview** when set in the same PowerShell window as `cargo run` (`$env:SLINT_SCALE_FACTOR='1.5'; cargo run …`). Compare the content with the Windows title bar to tell.
 - **Still open for M3:** network events do not list the other drives again (spec §5.9; the 5 s poll covers it while the window is shown). Decide before G4.
-- **Next:** M3-05 (H-12: Windows CI against a local share, the owner's NAS and Windows share, *Current Windows user*).
+- **Next:** M3-05 (started, above).
 
 ## 2026-11-14: M3-04a taking over external SMB drives (FR-SMB-10)
 

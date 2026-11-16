@@ -45,10 +45,10 @@ The zip holds `drivemount.exe`, the licence and the third-party licences. Unpack
 
 ### Checking the download
 
-The setup exe, the MSI and `drivemount.exe` are digitally signed. In File Explorer, right-click the file, choose **Properties** and open **Digital Signatures**: the signature should be there, valid, and by **SignPath Foundation**, which signs DriveMount for free as an open-source project. Windows shows the same name as the publisher when the installer asks for administrator rights. Each release also lists the files' SHA-256 checksums, in its notes and in `sha256sums.txt`. To compare, run in PowerShell:
+From version 1.0.0, the setup exe, the MSI and `drivemount.exe` are digitally signed. The 0.x pre-releases are **not signed**: Windows SmartScreen warns when you run the setup exe (choose **More info**, then **Run anyway**), and the administrator prompt shows *Unknown publisher*. Check their checksums instead (below). For a signed release, in File Explorer, right-click the file, choose **Properties** and open **Digital Signatures**: the signature should be there, valid, and by **SignPath Foundation**, which signs DriveMount for free as an open-source project. Windows shows the same name as the publisher when the installer asks for administrator rights. Each release also lists the files' SHA-256 checksums, in its notes and in `sha256sums.txt`. To compare, run in PowerShell:
 
 ```powershell
-Get-FileHash .\DriveMount-1.0.0-setup.exe
+Get-FileHash .\DriveMount-0.2.0-setup.exe
 ```
 
 The portable copy has no uninstaller. To remove it, quit DriveMount, delete its folder, and if you like, delete the data listed in [section 10](#10-where-drivemount-keeps-things).
