@@ -38,6 +38,11 @@ tokio-util = "=0.7.20"
 russh = { version = "=0.65.1", default-features = false, features = ["ring", "rsa"] }
 russh-sftp = "=3.0.1"
 
+# NFSv3 (M4): the crate's client without its connection builder, whose source ports are random
+# (spike M4-01). Unlicense (ADR-0005).
+nfs3_client = { version = "=0.9.1", features = ["tokio"] }
+nfs3_types = "=0.5.3"
+
 # WinFsp. The system feature finds the installed DLL through the registry; bundled mode fails at
 # runtime with error 1285 (spike M0-1). A crate using it also needs winfsp_link_delayload() in
 # its build.rs.

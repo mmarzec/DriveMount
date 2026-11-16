@@ -14,8 +14,14 @@ workspace = true
 
 [dependencies]
 drivemount-vfs = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+nfs3_client = { workspace = true }
+nfs3_types = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "test-util"] }
+drivemount-vfs = { workspace = true, features = ["testing"] }
+tokio = { workspace = true, features = ["rt", "test-util", "io-util"] }

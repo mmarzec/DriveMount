@@ -2,6 +2,22 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: M4-03 `NfsFs`
+
+**Status: done; committed on `main`.** `drivemount_nfs::NfsFs` (`src/fs.rs`) over a connection pool (`src/pool.rs`). `contract::run_all` passes against knfsd's `insecure` export in 9 s, the 1 GiB case included (`tests/nfsfs.rs`, `#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP). 5 more tests there: UID/GID ownership (FR-NFS-01), symbolic links, a file another client replaced, an open file another client removed, the `ro` export. 20 new unit tests, 7 of them the pool against a fake RPC server. `fmt`, `clippy --workspace --all-targets -D warnings`, `cargo deny check` and the SPDX/secret checks pass.
+
+- **Shape:** `NfsFs::new(dialer, root_handle, NfsOptions)` sends FSINFO for the transfer sizes (`min(rtmax, 1 MiB)`, `min(wtmax, 1 MiB)`; 1 MiB on knfsd). `Dialer` gives a connected `TcpStream`: M4-04's connector binds the reserved port and does MOUNT; the tests connect from any port and MOUNT by hand. `NfsOptions` holds the identity, the export path (for absolute symlink targets), the pool size (8), the call deadline and the handle TTL.
+- **Pool:** up to N connections, opened when a call finds none free. A connection is put back only after a clean reply or a reusable RPC error, so a timed-out or cancelled call drops it. Calls build their arguments from owned values, so one can go again on a new connection.
+- **Found in `nfs3_client`:** `async_read_exact` loops while a read returns 0 bytes, so a connection the server closed spins until the deadline instead of failing. `pool::Stream` turns end of file into `UnexpectedEof`. Worth reporting upstream.
+- **Decided (spike M4-01 §8, item 5):** calls that are safe to repeat (GETATTR, LOOKUP, ACCESS, READ, WRITE, SETATTR, COMMIT, READDIRPLUS, FSSTAT) go again once on a new connection after an I/O error, so knfsd closing an idle connection fails nothing. CREATE, MKDIR, REMOVE, RMDIR and RENAME do not: they give `ConnectionLost`, which `SessionFs` does not repeat either. A timeout is not retried here.
+- **Open:** ACCESS decides whether a file may be opened for reading or writing (knfsd lets an owner write to its own read-only file); the handle's access is enforced locally. Truncating dispositions SETATTR the size to 0 after that check.
+- **Writes:** `UNSTABLE`, in `max_write` chunks sent at once, each repeated for whatever the server did not take. Flush and close send COMMIT when something is uncommitted. A changed write verifier (the server restarted) fails that flush or close; the data is not kept to send again. A restart test is M4-04/M4-06's.
+- **New files 644, directories 755:** knfsd gives mode 000 to a CREATE without a mode, and has no umask of its own. Spec §5.6 and §5.10 say so.
+- **Symbolic links (M4-02's open question):** a link at the end of a path is followed (stat, open, read_dir, set_attr by path) when the target is relative or absolute inside the export, up to 8 links; anything else is `NotFound`. A link in the middle of a path is not followed (`PathNotFound`).
+- **Other choices:** a rename without replace looks the target up first (not atomic); READDIRPLUS restarts on `NFS3ERR_BAD_COOKIE` up to 3 times and fills the handle cache; non-UTF-8 names are left out of listings; an open file whose handle went stale is `NotFound`; `JUKEBOX` and other statuses are `Other`.
+- **Not done here:** the reserved-port dialer, portmapper, MOUNT, reconnect and E-NFS-ACCESS (M4-04); fragmented replies (M4-06's server matrix).
+- **Next:** M4-04.
+
 ## 2026-11-16: M4-02 path → file-handle cache
 
 **Status: done; committed on `main`.** `drivemount_nfs::HandleCache` (`crates/drivemount-nfs/src/handles.rs`); 20 tests against a fake NFS server in `crates/drivemount-nfs/tests/handle_cache.rs`, 3 unit tests. `fmt`, `clippy --all-targets -D warnings` and `cargo deny check` pass.
@@ -15,7 +31,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Stale root:** `root_stale()`, an `FsError::Other` asking to mount again. M4-04 may remount instead.
 - **Capacity:** 10,000 paths, least recently used dropped down to 90%.
 - **Open for M4-03:** LOOKUP does not follow symbolic links, so a path through a symlinked directory gives `PathNotFound`; SFTP resolves those on the server. M4-03 decides whether to READLINK and follow them.
-- **Next:** M4-03.
+- **Next:** M4-03 (done, above).
 
 ## 2026-11-16: M4-01 NFS spike (branch `spike/m4-01-nfs`)
 

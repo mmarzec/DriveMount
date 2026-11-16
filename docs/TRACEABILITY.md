@@ -139,7 +139,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-NFS-01 | M4-01 … M4-06 | – | – |
+| FR-NFS-01 | M4-01 … M4-06 | Files and folders owned by the configured UID/GID: `new_files_belong_to_the_configured_user` (`crates/drivemount-nfs/tests/nfsfs.rs`, needs S-03). Fixed ports without the portmapper: M4-04 | – |
 | FR-NFS-02 | M4-01 … M4-06 | – | – |
 | FR-NFS-03 | M4-01 … M4-06 | – | – |
 | FR-NFS-04 | M4-01 … M4-06 | – | – |

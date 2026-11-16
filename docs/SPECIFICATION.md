@@ -573,7 +573,7 @@ A timeout reported by the backend itself counts the same as an expired deadline.
 | mtime / atime | LastWriteTime / LastAccessTime. SFTP v3 has 1 s resolution. |
 | (no birth time in SFTP v3) | CreationTime = ChangeTime = mtime |
 | Owner/ACLs | Not mapped. Every file has one fixed security descriptor: full control for the current user. Access is decided by the server. Setting a descriptor gets `STATUS_NOT_SUPPORTED`, so that nobody believes a file was protected. `ReplaceFile` works without it. |
-| New files and directories | Created without explicit permissions, so the server's umask applies |
+| New files and directories | Created without explicit permissions, so the server's umask applies. NFS has no server umask, so new files are 644 and directories 755 (§5.10) |
 
 ### 5.7 SFTP backend (drivemount-sftp)
 
@@ -757,12 +757,17 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 - AUTH_SYS credentials use the profile's UID/GID.
 - **A pool of NFS connections per drive** (8), each on its own reserved port. The crate's client has one call in flight per connection, so throughput comes from the pool: over 50 ms, one connection levels off at about 60 MiB/s and 8 reach 70 up and 105 down (spike M4-01 §4). Data and metadata share the pool. READ and WRITE calls are `min(rtmax, 1 MiB)` and `min(wtmax, 1 MiB)` from `FSINFO`.
 - Every call runs under our own deadline (`op_timeout_secs`); the crate has none. **A connection is dropped** after a timeout or cancelled call (the crate's client is not cancel-safe: the next call would read the old reply) and after an `RpcError` that is not `is_connection_reusable()`, and a new one is opened from a new reserved port.
-- The connection is stateless: file handles survive reconnects and server restarts with no new MOUNT (FR-NFS-04, confirmed in spike M4-01). A retried CREATE GUARDED may give `NFS3ERR_EXIST`, and a retried REMOVE or RMDIR `NFS3ERR_NOENT`, when the first try succeeded before the connection broke; M4-03 handles them.
+- The connection is stateless: file handles survive reconnects and server restarts with no new MOUNT (FR-NFS-04, confirmed in spike M4-01). A retried CREATE GUARDED may give `NFS3ERR_EXIST`, and a retried REMOVE or RMDIR `NFS3ERR_NOENT`, when the first try succeeded before the connection broke. So those calls, and MKDIR and RENAME, are not sent again after a broken connection: they give `ConnectionLost`, which `SessionFs` does not repeat either (M4-03). Calls that are safe to repeat go again once on a new connection, so a server closing an idle connection fails no call.
+- `nfs3_client`'s `async_read_exact` loops while a read returns 0 bytes, so a closed connection would spin until the deadline. Our stream type turns end of file into an error (M4-03).
 - Mapping:
   - Unix mode bits map as in §5.6;
   - NFS `READDIRPLUS` fills the attribute cache together with the listing;
   - `FSSTAT` gives free space;
-  - `COMMIT` is issued on Flush and Cleanup after `UNSTABLE` writes.
+  - `COMMIT` is issued on Flush and Cleanup after `UNSTABLE` writes. If the write verifier changed in between, the server restarted and may have lost that data: the Flush or Cleanup fails (the data is not kept to be sent again);
+  - opening a file checks with `ACCESS` that this user may read or write it, as knfsd lets an owner write to a file it has made read-only; the access asked for is then enforced by the backend;
+  - new files are created `GUARDED` with mode 644, directories with 755: NFS has no server umask, and knfsd gives 000 to a file created without a mode;
+  - `RENAME` always replaces, so a rename that must not replace looks the target up first (not atomic, as on an SFTP server without `posix-rename`);
+  - path → handle through LOOKUP chains, cached for the profile's cache TTL (M4-02). A symbolic link at the end of a path is followed when its target is relative or an absolute path inside the export; any other link, and a link in the middle of a path, count as missing. Names that are not UTF-8 are left out of listings.
 - NFSv4.1 (`nfs-rs`) is a later option. It adds single-port operation (2049).
 
 ---
