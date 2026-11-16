@@ -30,6 +30,8 @@ function Test-SftpLogin([string]$Name, [string]$User, [string]$Key) {
 switch ($Action) {
     'up' {
         Invoke-Wsl bash docker/gen-keys.sh
+        # knfsd (service nfs) is the WSL kernel's own server.
+        Invoke-Wsl modprobe nfsd
         Invoke-Wsl docker compose up -d --build
     }
     'down' {

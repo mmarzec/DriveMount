@@ -2,6 +2,20 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: M4-01 NFS spike (branch `spike/m4-01-nfs`)
+
+**Status: done; the crate, with conditions. Not committed. The owner allowed the Unlicense (ADR-0005).** Report: `docs/spikes/m4-01-nfs.md`; tool: `spikes/m4-01-nfs/`; spec §5.10, FR-NFS-03/05 and E-NFS-ACCESS updated.
+
+- **Added:** a knfsd test server, `tests/docker/nfs/` (service `nfs`: privileged, host network, ports 111/2049/20048; exports `rw`, `insecure`, `ro`, `denied`). `servers.ps1 up` now runs `modprobe nfsd` first. Windows reaches it at the WSL VM's IP.
+- **Reserved ports:** `nfs3_client` takes a caller-made stream, so we bind 1023 downwards ourselves; no admin rights needed. Windows keeps closed ports in TIME_WAIT for 2 minutes, and a TIME_WAIT port fails at `connect` (10048), not at `bind`. Don't use the crate's builder: its ports are random in 300–1023.
+- **Throughput:** the crate's client has one call in flight per connection. **A pool of 8 connections** gives 903/1,927 MiB/s (write/read) on LAN and 70/105 MiB/s at 50 ms WAN, 2× SFTP on WAN. A pipelined single connection (own transport, in the spike) levels off at about 60 MiB/s on WAN, so an own client doesn't pay.
+- **Errors:** knfsd answers `MNT3ERR_ACCES` for a wrong IP, an unreserved port on a `secure` export *and* a missing export path. An unreserved port on the NFS connection only gives `NFS3ERR_PERM` on every call after MOUNT.
+- **Reconnect:** handles survived a 10 s knfsd restart and a 10 s silent outage with no new MOUNT, hashes matched. A refused connect takes 2–3 s on Windows. The crate's client is not cancel-safe: drop a connection after a timeout.
+- **Licence, decided (owner, 2026-11-16):** `nfs3_client`, `nfs3_types` and `nfs3_macros` are **Unlicense**. It is now allowed: [ADR-0005](adr/0005-unlicense.md), and the lists in ADR-0003, `deny.toml` and `about.toml`. `cargo deny check licenses` was checked with the crate added for a moment, both ways.
+- **Not done:** servers other than knfsd (fragmented replies are refused by the crate; check in M4-06); knfsd's idle-connection close; non-idempotent retries (M4-03).
+- Spike gotchas: in Git Bash, set `MSYS_NO_PATHCONV=1`, or `/srv/nfs/rw` turns into a Windows path and every MOUNT fails with `MNT3ERR_ACCES`. `netem` for NFS goes on the VM's `eth0` with a `u32` filter on source port 2049, as the container uses the host network.
+- **Next:** M4-02.
+
 ## 2026-11-16: M3-06 v0.2.0
 
 **Status: the owner skipped H-11 for v0.2.0 and approved the release (2026-11-16). Committed on `main` and tagged `v0.2.0` (`15a3aa1`); CI green on it, the `smb` job included. The draft is up on GitHub as an unsigned pre-release, for the owner to check and publish.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check` and every workspace test pass at 0.2.0 on the dev machine.

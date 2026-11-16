@@ -1,0 +1,7 @@
+# Each export lives on its own tmpfs, so each needs an fsid. Options are the knfsd defaults unless
+# a line says otherwise: `secure` (the client's source port must be below 1024) and root_squash.
+/srv/nfs/rw        *(rw,sync,no_subtree_check,fsid=1)
+/srv/nfs/insecure  *(rw,sync,no_subtree_check,insecure,fsid=2)
+/srv/nfs/ro        *(ro,sync,no_subtree_check,insecure,fsid=3)
+# Only an address no client has: MOUNT returns MNT3ERR_ACCES (FR-NFS-05).
+/srv/nfs/denied    192.0.2.1(rw,sync,no_subtree_check,fsid=4)

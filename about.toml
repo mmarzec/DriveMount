@@ -24,6 +24,7 @@ accepted = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "MPL-2.0",
+    "Unlicense",
 ]
 # What the shipped exe is built from: no dev- or build-only crates.
 targets = ["x86_64-pc-windows-msvc"]

@@ -1,0 +1,18 @@
+[package]
+name = "m4-01-nfs"
+version = "0.0.0"
+edition = "2024"
+publish = false
+license = "GPL-3.0-or-later"
+description = "Spike M4-01: NFSv3 with nfs3_client, reserved ports, throughput (throw-away)"
+
+# Spikes stay outside the main workspace.
+[workspace]
+
+[dependencies]
+nfs3_client = { version = "=0.9.1", features = ["tokio"] }
+nfs3_types = "=0.5.3"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+sha2 = "0.10"
+fastrand = "2"

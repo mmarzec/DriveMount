@@ -73,6 +73,24 @@ Shares: `a` (writable, holds `hello.txt` and `sub/deeper/`), `b` (writable, empt
 
 See `docs/spikes/m3-01-smb.md`.
 
+## NFS server `nfs`: the WSL VM's address, ports 111, 2049, 20048
+
+The WSL kernel's own knfsd, NFSv3 over TCP only, configured by a Debian bookworm container. It runs privileged and on the VM's own network (`network_mode: host`): knfsd is per network namespace, and Docker's port proxy would hide the client's source port, which the `secure` option checks. **Connect to the WSL VM's IP**, as for Samba. `servers.ps1 up` loads the `nfsd` module first (`modprobe nfsd`, once per WSL boot).
+
+Fixed ports: portmapper 111, NFS 2049, MOUNT 20048. Exports, each on its own tmpfs (emptied when the container restarts):
+
+| Export | Options | For |
+|---|---|---|
+| `/srv/nfs/rw` | `rw`, `secure`, `root_squash` | the normal case; `sub/` inside |
+| `/srv/nfs/insecure` | `rw`, `insecure` | *Use reserved source port* off |
+| `/srv/nfs/ro` | `ro`, `insecure` | read-only; holds `hello.txt` |
+| `/srv/nfs/denied` | `rw` for `192.0.2.1` only | E-NFS-ACCESS (`MNT3ERR_ACCES`) |
+
+- **Server restart, data kept:** `docker exec drivemount-test-nfs-1 rpc.nfsd 0`, then `rpc.nfsd --no-nfs-version 4 --no-udp 8`. `docker restart` empties the exports, so old handles go stale.
+- **Dropped packets:** `tc` on the VM's `eth0` with a filter on source port 2049 (see `docs/spikes/m4-01-nfs.md` §1). `DOCKER-USER` does not see this container's traffic, as it is not bridged.
+
+See `docs/spikes/m4-01-nfs.md`.
+
 ## Notes
 
 

@@ -1,0 +1,6 @@
+whoami elevated? run unelevated. Binding 1023 downwards to 172.23.105.89:2049
+1. first connection from port 1023 in 2.5457ms, skipped []
+2. reconnect at once: port 1022 in 810.7µs, skipped [(1023, "AddrInUse (10048)")]
+3. port 1023 (TIME_WAIT) to the same server again: bind OK, connect failed: AddrInUse os Some(10048)
+4. port 1022 (in use, to 2049) bound again for :111: bind failed: AddrInUse os Some(10048)
+5. 16 connections held at once in 27.7687ms: 1021(+2) 1020(+3) 1019(+4) 1018(+5) 1017(+6) 1016(+7) 1015(+8) 1014(+9) 1013(+10) 1012(+11) 1011(+12) 1010(+13) 1009(+14) 1008(+15) 1007(+16) 1006(+17)

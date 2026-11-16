@@ -1,0 +1,98 @@
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 5.4274ms
+  MNT /srv/nfs/rw from local port 1016: handle 8 bytes, flavors [1], 8.2449ms
+  NFS connection from local port 1005
+  mounted in 19.2288ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-373764.txt: owner 1000:1000 mode 644
+  second CREATE GUARDED: CREATE spike-373764.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=true any_port=false builder=false
+  MNT /srv/nfs/rw from local port 1015: handle 8 bytes, flavors [1], 5.2227ms
+  NFS connection from local port 1004
+  mounted in 8.7405ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-413392.txt: owner 1000:1000 mode 644
+  second CREATE GUARDED: CREATE spike-413392.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=true builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7886ms
+  FAILED after 5.5896ms: MNT from local port 62434: Denied(MNT3ERR_ACCES)
+mount 172.23.105.89:/srv/nfs/insecure fixed=false any_port=true builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7732ms
+  MNT /srv/nfs/insecure from local port 62436: handle 8 bytes, flavors [1], 1.5129ms
+  NFS connection from local port 62437
+  mounted in 6.0219ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-82120.txt: owner 1000:1000 mode 644
+  second CREATE GUARDED: CREATE spike-82120.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/denied fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.5653ms
+  FAILED after 7.7341ms: MNT from local port 1014: Denied(MNT3ERR_ACCES)
+mount 172.23.105.89:/srv/nfs/nope fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7417ms
+  FAILED after 19.2905ms: MNT from local port 1013: Denied(MNT3ERR_ACCES)
+mount 172.23.105.89:/srv/nfs/ro fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.5933ms
+  MNT /srv/nfs/ro from local port 1012: handle 8 bytes, flavors [1], 4.1449ms
+  NFS connection from local port 1003
+  mounted in 11.7ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE spike-326856.txt: NFS3ERR_ROFS
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=false builder=true
+  builder mount in 8.6087ms
+  mounted in 8.7214ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-442476.txt: owner 1000:1000 mode 644
+  second CREATE GUARDED: CREATE spike-442476.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=true any_port=false builder=true
+  builder mount in 3.8844ms
+  mounted in 3.9929ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-285484.txt: owner 1000:1000 mode 644
+  second CREATE GUARDED: CREATE spike-285484.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.4661ms
+  MNT /srv/nfs/rw from local port 1011: handle 8 bytes, flavors [1], 4.1038ms
+  NFS connection from local port 1002
+  mounted in 12.3206ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-396932.txt: owner 65534:65534 mode 644
+  second CREATE GUARDED: CREATE spike-396932.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.3007ms
+  MNT /srv/nfs/rw from local port 1010: handle 8 bytes, flavors [1], 5.4578ms
+  NFS connection from local port 1001
+  mounted in 14.7105ms (NFS port 2049)
+  NULL ok
+  FSINFO rtmax 1048576 rtpref 1048576 wtmax 1048576 wtpref 1048576 dtpref 1048576 maxfilesize 9223372036854775807 props 0x1b
+  CREATE GUARDED spike-108004.txt: owner 1234:5678 mode 644
+  second CREATE GUARDED: CREATE spike-108004.txt: NFS3ERR_EXIST
+  REMOVE ok
+  GETATTR on removed: NFS3ERR_STALE
+mount 172.23.105.89:/srv/nfs/rw fixed=false any_port=false builder=false
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.5119ms
+    skipped 14 ports before 1009: [(1023, "AddrInUse (10048)"), (1022, "AddrInUse (10048)"), (1021, "AddrInUse (10048)"), (1020, "AddrInUse (10048)"), (1019, "AddrInUse (10048)")]
+  MNT /srv/nfs/rw from local port 1009: handle 8 bytes, flavors [1], 5.0808ms
+  NFS connection from local port 62460
+  mounted in 10.5157ms (NFS port 2049)
+  NULL ok
+  FSINFO: NFS3ERR_PERM
+  CREATE spike-345724.txt: NFS3ERR_PERM
