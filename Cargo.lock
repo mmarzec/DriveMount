@@ -1404,6 +1404,8 @@ name = "drivemount-nfs"
 version = "0.2.0"
 dependencies = [
  "drivemount-vfs",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

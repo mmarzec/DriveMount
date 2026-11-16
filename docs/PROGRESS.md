@@ -2,6 +2,21 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: M4-02 path → file-handle cache
+
+**Status: done; committed on `main`.** `drivemount_nfs::HandleCache` (`crates/drivemount-nfs/src/handles.rs`); 20 tests against a fake NFS server in `crates/drivemount-nfs/tests/handle_cache.rs`, 3 unit tests. `fmt`, `clippy --all-targets -D warnings` and `cargo deny check` pass.
+
+- **Shape:** the LOOKUP call is a trait, `Lookup`, which M4-03's `NfsFs` implements over the pool; the cache knows nothing of `nfs3_client`. `FileHandle` is its own type (opaque bytes, cheap to clone), not `nfs3_types::nfs_fh3`, so the crate has no NFS dependency yet. `HandleError` is `Stale` (for `NFS3ERR_STALE`/`BADHANDLE`) or an already-mapped `FsError`; LOOKUP's `NFS3ERR_NOTDIR` should map to `PathNotFound`.
+- **Resolve:** starts at the deepest fresh cached ancestor and LOOKUPs the rest, caching each directory on the way. A missing last name is `NotFound`, a missing parent `PathNotFound`. A stale cached directory met on the way is dropped and the walk starts again above it (at most 4 tries).
+- **`with_handle(path, op)`:** on `Stale` from `op`, forgets the path, resolves afresh and runs `op` once more; stale again → `NotFound`. Only for calls that are safe to repeat after a stale handle.
+- **This mount's changes:** `insert` (CREATE/MKDIR/READDIRPLUS results), `forget` (remove; a path and its subtree), `renamed` (moves the subtree; handles do not change in a rename). Entries are in a `BTreeMap` by path string, so a subtree is one range.
+- **Other clients' changes:** a renamed path still gives the moved file's handle until the entry's TTL runs out, as with the attribute cache. M4-03 passes the profile's cache TTL; with 0 every path is a full LOOKUP chain each time, which may be too slow, so M4-03 may want a floor.
+- **Races:** a resolve that was in flight during any `forget`/`renamed` stores nothing (one generation counter for the cache, not striped as in `CachedFs`); it only costs a LOOKUP later.
+- **Stale root:** `root_stale()`, an `FsError::Other` asking to mount again. M4-04 may remount instead.
+- **Capacity:** 10,000 paths, least recently used dropped down to 90%.
+- **Open for M4-03:** LOOKUP does not follow symbolic links, so a path through a symlinked directory gives `PathNotFound`; SFTP resolves those on the server. M4-03 decides whether to READLINK and follow them.
+- **Next:** M4-03.
+
 ## 2026-11-16: M4-01 NFS spike (branch `spike/m4-01-nfs`)
 
 **Status: done; the crate, with conditions. Not committed. The owner allowed the Unlicense (ADR-0005).** Report: `docs/spikes/m4-01-nfs.md`; tool: `spikes/m4-01-nfs/`; spec §5.10, FR-NFS-03/05 and E-NFS-ACCESS updated.
@@ -14,7 +29,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Licence, decided (owner, 2026-11-16):** `nfs3_client`, `nfs3_types` and `nfs3_macros` are **Unlicense**. It is now allowed: [ADR-0005](adr/0005-unlicense.md), and the lists in ADR-0003, `deny.toml` and `about.toml`. `cargo deny check licenses` was checked with the crate added for a moment, both ways.
 - **Not done:** servers other than knfsd (fragmented replies are refused by the crate; check in M4-06); knfsd's idle-connection close; non-idempotent retries (M4-03).
 - Spike gotchas: in Git Bash, set `MSYS_NO_PATHCONV=1`, or `/srv/nfs/rw` turns into a Windows path and every MOUNT fails with `MNT3ERR_ACCES`. `netem` for NFS goes on the VM's `eth0` with a `u32` filter on source port 2049, as the container uses the host network.
-- **Next:** M4-02.
+- **Next:** M4-02 (done, above).
 
 ## 2026-11-16: M3-06 v0.2.0
 
