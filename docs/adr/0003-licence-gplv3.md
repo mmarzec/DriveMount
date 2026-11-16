@@ -47,6 +47,7 @@ allow = [
   "MIT", "MIT-0", "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
   "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "0BSD", "BSL-1.0",
   "CC0-1.0", "Unicode-3.0", "Unicode-DFS-2016", "MPL-2.0",
+  "Unlicense", # ADR-0005
 ]
 # Slint is "GPL-3.0-only OR <Slint royalty-free> OR <Slint commercial>": accepted through its GPL-3.0-only alternative.
 ```
@@ -56,7 +57,7 @@ allow = [
 - any proprietary or unknown licence;
 - `SSPL` and other non-OSI licences.
 
-Exceptions need a new ADR.
+Exceptions need a new ADR. Added since: `Unlicense` ([ADR-0005](0005-unlicense.md)).
 
 ## Consequences
 

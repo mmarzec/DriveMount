@@ -1,0 +1,180 @@
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 5.3992ms
+  MNT /srv/nfs/rw from local port 1008: handle 8 bytes, flavors [1], 6.5887ms
+  NFS connection from local port 1000
+bench 256 MiB, chunk 1024 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 292.0 MiB/s (876.7235ms); READ 479.5 MiB/s (533.9413ms); sha256 matches
+CSV,256,1024,1,0,292.0,479.5
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.8422ms
+  MNT /srv/nfs/rw from local port 1007: handle 8 bytes, flavors [1], 7.0209ms
+  NFS connection from local port 998
+bench 256 MiB, chunk 1024 KiB, crate, 2 conns
+  WRITE UNSTABLE + COMMIT 580.9 MiB/s (440.7309ms); READ 911.6 MiB/s (280.8401ms); sha256 matches
+CSV,256,1024,2,0,580.9,911.6
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.1183ms
+  MNT /srv/nfs/rw from local port 1005: handle 8 bytes, flavors [1], 5.8354ms
+  NFS connection from local port 995
+bench 256 MiB, chunk 1024 KiB, crate, 4 conns
+  WRITE UNSTABLE + COMMIT 813.1 MiB/s (314.8453ms); READ 1358.7 MiB/s (188.4088ms); sha256 matches
+CSV,256,1024,4,0,813.1,1358.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.549ms
+  MNT /srv/nfs/rw from local port 1004: handle 8 bytes, flavors [1], 4.7614ms
+  NFS connection from local port 990
+bench 256 MiB, chunk 1024 KiB, crate, 8 conns
+  WRITE UNSTABLE + COMMIT 902.8 MiB/s (283.566ms); READ 1927.2 MiB/s (132.8348ms); sha256 matches
+CSV,256,1024,8,0,902.8,1927.2
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.563ms
+  MNT /srv/nfs/rw from local port 1003: handle 8 bytes, flavors [1], 5.3976ms
+  NFS connection from local port 981
+bench 256 MiB, chunk 1024 KiB, own, depth 4
+  WRITE UNSTABLE + COMMIT 686.0 MiB/s (373.201ms); READ 518.7 MiB/s (493.5735ms); sha256 matches
+CSV,256,1024,0,4,686.0,518.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 6.6384ms
+  MNT /srv/nfs/rw from local port 1002: handle 8 bytes, flavors [1], 9.1182ms
+  NFS connection from local port 979
+bench 256 MiB, chunk 1024 KiB, own, depth 16
+  WRITE UNSTABLE + COMMIT 737.2 MiB/s (347.2782ms); READ 525.6 MiB/s (487.065ms); sha256 matches
+CSV,256,1024,0,16,737.2,525.6
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.0967ms
+  MNT /srv/nfs/rw from local port 1001: handle 8 bytes, flavors [1], 6.8824ms
+  NFS connection from local port 977
+bench 256 MiB, chunk 1024 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 785.7 MiB/s (325.8291ms); READ 492.7 MiB/s (519.5974ms); sha256 matches
+CSV,256,1024,0,32,785.7,492.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.6059ms
+  MNT /srv/nfs/rw from local port 1000: handle 8 bytes, flavors [1], 6.6078ms
+  NFS connection from local port 975
+bench 256 MiB, chunk 1024 KiB, own, depth 64
+  WRITE UNSTABLE + COMMIT 670.2 MiB/s (381.9527ms); READ 591.8 MiB/s (432.5921ms); sha256 matches
+CSV,256,1024,0,64,670.2,591.8
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.8593ms
+  MNT /srv/nfs/rw from local port 999: handle 8 bytes, flavors [1], 20.0049ms
+  NFS connection from local port 973
+bench 256 MiB, chunk 128 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 198.1 MiB/s (1.2921556s); READ 191.0 MiB/s (1.3401531s); sha256 matches
+CSV,256,128,1,0,198.1,191.0
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 17.3131ms
+  MNT /srv/nfs/rw from local port 998: handle 8 bytes, flavors [1], 5.6829ms
+  NFS connection from local port 971
+bench 256 MiB, chunk 128 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 609.8 MiB/s (419.7978ms); READ 459.5 MiB/s (557.0718ms); sha256 matches
+CSV,256,128,0,32,609.8,459.5
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 6.5889ms
+  MNT /srv/nfs/rw from local port 997: handle 8 bytes, flavors [1], 6.798ms
+  NFS connection from local port 969
+bench 256 MiB, chunk 1024 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 337.8 MiB/s (757.9245ms); READ 415.3 MiB/s (616.4529ms); sha256 matches
+CSV,256,1024,1,0,337.8,415.3
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7449ms
+  MNT /srv/nfs/rw from local port 996: handle 8 bytes, flavors [1], 6.0126ms
+  NFS connection from local port 967
+bench 256 MiB, chunk 1024 KiB, crate, 2 conns
+  WRITE UNSTABLE + COMMIT 543.6 MiB/s (470.9128ms); READ 949.6 MiB/s (269.5735ms); sha256 matches
+CSV,256,1024,2,0,543.6,949.6
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.7636ms
+  MNT /srv/nfs/rw from local port 995: handle 8 bytes, flavors [1], 24.5011ms
+  NFS connection from local port 964
+bench 256 MiB, chunk 1024 KiB, crate, 4 conns
+  WRITE UNSTABLE + COMMIT 832.7 MiB/s (307.4392ms); READ 1077.7 MiB/s (237.5333ms); sha256 matches
+CSV,256,1024,4,0,832.7,1077.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.3659ms
+  MNT /srv/nfs/rw from local port 994: handle 8 bytes, flavors [1], 7.8623ms
+  NFS connection from local port 959
+bench 256 MiB, chunk 1024 KiB, crate, 8 conns
+  WRITE UNSTABLE + COMMIT 946.4 MiB/s (270.5117ms); READ 2097.5 MiB/s (122.0481ms); sha256 matches
+CSV,256,1024,8,0,946.4,2097.5
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.9848ms
+  MNT /srv/nfs/rw from local port 993: handle 8 bytes, flavors [1], 9.7194ms
+  NFS connection from local port 950
+bench 256 MiB, chunk 1024 KiB, own, depth 4
+  WRITE UNSTABLE + COMMIT 695.9 MiB/s (367.8677ms); READ 530.1 MiB/s (482.9447ms); sha256 matches
+CSV,256,1024,0,4,695.9,530.1
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.6241ms
+  MNT /srv/nfs/rw from local port 992: handle 8 bytes, flavors [1], 8.1638ms
+  NFS connection from local port 948
+bench 256 MiB, chunk 1024 KiB, own, depth 16
+  WRITE UNSTABLE + COMMIT 618.4 MiB/s (413.9709ms); READ 506.7 MiB/s (505.1866ms); sha256 matches
+CSV,256,1024,0,16,618.4,506.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.4657ms
+  MNT /srv/nfs/rw from local port 991: handle 8 bytes, flavors [1], 8.4424ms
+  NFS connection from local port 946
+bench 256 MiB, chunk 1024 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 755.4 MiB/s (338.8747ms); READ 558.3 MiB/s (458.5484ms); sha256 matches
+CSV,256,1024,0,32,755.4,558.3
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.9259ms
+  MNT /srv/nfs/rw from local port 990: handle 8 bytes, flavors [1], 9.3413ms
+  NFS connection from local port 944
+bench 256 MiB, chunk 1024 KiB, own, depth 64
+  WRITE UNSTABLE + COMMIT 726.8 MiB/s (352.2272ms); READ 567.4 MiB/s (451.1506ms); sha256 matches
+CSV,256,1024,0,64,726.8,567.4
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7886ms
+  MNT /srv/nfs/rw from local port 989: handle 8 bytes, flavors [1], 8.2832ms
+  NFS connection from local port 942
+bench 256 MiB, chunk 128 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 205.1 MiB/s (1.2482968s); READ 197.9 MiB/s (1.2934001s); sha256 matches
+CSV,256,128,1,0,205.1,197.9
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.3321ms
+  MNT /srv/nfs/rw from local port 988: handle 8 bytes, flavors [1], 7.0873ms
+  NFS connection from local port 940
+bench 256 MiB, chunk 128 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 622.6 MiB/s (411.1528ms); READ 514.9 MiB/s (497.2088ms); sha256 matches
+CSV,256,128,0,32,622.6,514.9
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.3704ms
+  MNT /srv/nfs/rw from local port 987: handle 8 bytes, flavors [1], 9.3332ms
+  NFS connection from local port 938
+bench 256 MiB, chunk 1024 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 350.7 MiB/s (730.0242ms); READ 504.9 MiB/s (507.009ms); sha256 matches
+CSV,256,1024,1,0,350.7,504.9
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.6942ms
+  MNT /srv/nfs/rw from local port 986: handle 8 bytes, flavors [1], 8.382ms
+  NFS connection from local port 936
+bench 256 MiB, chunk 1024 KiB, crate, 2 conns
+  WRITE UNSTABLE + COMMIT 510.6 MiB/s (501.3532ms); READ 889.2 MiB/s (287.9058ms); sha256 matches
+CSV,256,1024,2,0,510.6,889.2
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.6371ms
+  MNT /srv/nfs/rw from local port 985: handle 8 bytes, flavors [1], 10.9708ms
+  NFS connection from local port 933
+bench 256 MiB, chunk 1024 KiB, crate, 4 conns
+  WRITE UNSTABLE + COMMIT 931.0 MiB/s (274.9648ms); READ 1241.5 MiB/s (206.204ms); sha256 matches
+CSV,256,1024,4,0,931.0,1241.5
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.1264ms
+  MNT /srv/nfs/rw from local port 984: handle 8 bytes, flavors [1], 9.3396ms
+  NFS connection from local port 928
+bench 256 MiB, chunk 1024 KiB, crate, 8 conns
+  WRITE UNSTABLE + COMMIT 800.8 MiB/s (319.6753ms); READ 1804.7 MiB/s (141.8481ms); sha256 matches
+CSV,256,1024,8,0,800.8,1804.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 7.4634ms
+  MNT /srv/nfs/rw from local port 983: handle 8 bytes, flavors [1], 13.6177ms
+  NFS connection from local port 919
+bench 256 MiB, chunk 1024 KiB, own, depth 4
+  WRITE UNSTABLE + COMMIT 661.8 MiB/s (386.8045ms); READ 456.7 MiB/s (560.4983ms); sha256 matches
+CSV,256,1024,0,4,661.8,456.7
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.8814ms
+  MNT /srv/nfs/rw from local port 982: handle 8 bytes, flavors [1], 13.247ms
+  NFS connection from local port 917
+bench 256 MiB, chunk 1024 KiB, own, depth 16
+  WRITE UNSTABLE + COMMIT 828.3 MiB/s (309.0821ms); READ 548.5 MiB/s (466.7591ms); sha256 matches
+CSV,256,1024,0,16,828.3,548.5
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.3204ms
+  MNT /srv/nfs/rw from local port 981: handle 8 bytes, flavors [1], 11.2587ms
+  NFS connection from local port 915
+bench 256 MiB, chunk 1024 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 637.6 MiB/s (401.5185ms); READ 564.0 MiB/s (453.9133ms); sha256 matches
+CSV,256,1024,0,32,637.6,564.0
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 4.8595ms
+  MNT /srv/nfs/rw from local port 980: handle 8 bytes, flavors [1], 12.2411ms
+  NFS connection from local port 913
+bench 256 MiB, chunk 1024 KiB, own, depth 64
+  WRITE UNSTABLE + COMMIT 660.4 MiB/s (387.6334ms); READ 509.8 MiB/s (502.1944ms); sha256 matches
+CSV,256,1024,0,64,660.4,509.8
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.6327ms
+  MNT /srv/nfs/rw from local port 979: handle 8 bytes, flavors [1], 10.1211ms
+  NFS connection from local port 911
+bench 256 MiB, chunk 128 KiB, crate, 1 conns
+  WRITE UNSTABLE + COMMIT 218.2 MiB/s (1.173244s); READ 232.3 MiB/s (1.1020442s); sha256 matches
+CSV,256,128,1,0,218.2,232.3
+  portmapper: MOUNT v3 tcp 20048, NFS v3 tcp 2049 in 3.7769ms
+  MNT /srv/nfs/rw from local port 978: handle 8 bytes, flavors [1], 10.1115ms
+  NFS connection from local port 909
+bench 256 MiB, chunk 128 KiB, own, depth 32
+  WRITE UNSTABLE + COMMIT 668.0 MiB/s (383.2437ms); READ 511.2 MiB/s (500.7672ms); sha256 matches
+CSV,256,128,0,32,668.0,511.2

@@ -42,6 +42,8 @@ allow = [
     "Unicode-3.0",
     "Unicode-DFS-2016",
     "MPL-2.0",
+    # ADR-0005: nfs3_client, nfs3_types, nfs3_macros (M4).
+    "Unlicense",
 ]
 # The list is fixed by the ADR, not by what the dependencies happen to use today.
 unused-allowed-license = "allow"

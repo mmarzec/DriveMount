@@ -96,3 +96,12 @@ services:
     image: drivemount-test-samba
     ports:
       - "445:445"
+
+  # NFSv3 (M4): the kernel's knfsd, so privileged and on the WSL VM's own network. Windows reaches it at
+  # the VM's IP, as for Samba. Ports 111, 2049 and 20048 (MOUNT). It needs the nfsd module, which
+  # servers.ps1 up loads. See docker/README.md.
+  nfs:
+    build: ./docker/nfs
+    image: drivemount-test-nfs
+    privileged: true
+    network_mode: host

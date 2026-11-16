@@ -229,9 +229,9 @@ These settings live only in `config.toml` and are not shown in the UI: `op_timeo
 |---|---|---|---|
 | FR-NFS-01 | M | Profile fields: server, export path, NFS version (v3 only in M4), UID, GID (default 1000/1000), drive letter, read-only flag, and the start/reconnect flags. Advanced: fixed NFS port, fixed mount port (else portmapper on 111), *use reserved source port* (default on). | A server with portmapper disabled mounts with fixed ports set. Files created through the drive are owned by the configured UID/GID on the server. |
 | FR-NFS-02 | M | NFSv3 over TCP with AUTH_SYS, mounted through the same WinFsp adapter as SFTP. It must work on Windows **Home** editions. | Mount of a Linux `knfsd` export on Windows 10 Home. |
-| FR-NFS-03 | M | Reserved source port: bind 1023 downwards until a port is free. On Windows this needs no administrator rights. | Mount of an export with the `secure` option succeeds. |
+| FR-NFS-03 | M | Reserved source port: bind 1023 downwards to 512 until a port is free, for the MOUNT connection and every NFS connection. On Windows this needs no administrator rights (spike M4-01). | Mount of an export with the `secure` option succeeds. |
 | FR-NFS-04 | M | Reconnect follows FR-REC. NFS file handles stay valid across reconnects (stateless v3), so open handles keep working without reopening. | A copy that runs across a 10 s server restart completes, and the hashes match. |
-| FR-NFS-05 | M | `NFS3ERR_ACCES` at mount maps to E-NFS-ACCESS, with hints (client IP not in exports, `secure` option, wrong UID/GID). | Mounting an export that doesn't list the client's IP shows the E-NFS-ACCESS text. |
+| FR-NFS-05 | M | `MNT3ERR_ACCES` or `MNT3ERR_PERM` at mount, and `NFS3ERR_ACCES` or `NFS3ERR_PERM` on the first call after it, map to E-NFS-ACCESS, with hints (client IP not in exports, `secure` option, wrong export path, wrong UID/GID). | Mounting an export that doesn't list the client's IP shows the E-NFS-ACCESS text. |
 
 ---
 
@@ -750,9 +750,14 @@ Confirmed by spike M0-1 (`docs/spikes/m0-1-winfsp.md`): unelevated network-mode 
 
 ### 5.10 NFS backend (drivemount-nfs), M4
 
-- `nfs3_client` over TCP; MOUNT v3 gets the root handle. Ports come from the portmapper (111) unless they are fixed in the profile.
-- AUTH_SYS credentials use the profile's UID/GID. The source port is bound from 1023 downwards (FR-NFS-03).
-- The connection is stateless: file handles survive reconnects (FR-NFS-04).
+- `nfs3_client` and `nfs3_types` over TCP, **without the crate's `Nfs3ConnectionBuilder`** (its ports are random in 300–1023). Spike M4-01 (`docs/spikes/m4-01-nfs.md`).
+- Ports come from the portmapper (111) unless they are fixed in the profile. The portmapper connection uses any source port.
+- **Our own connector** binds each MOUNT and NFS connection from 1023 downwards to 512 (FR-NFS-03), moving on after `AddrInUse` (at `bind`, or at `connect` for a port in TIME_WAIT) or `PermissionDenied`, and hands the connected stream to `MountClient::new_with_auth` / `Nfs3Client::new_with_auth`. `nodelay` on. Windows keeps a closed port in TIME_WAIT for 2 minutes, so ports are not reused at once.
+- MOUNT v3 gets the root handle; the MOUNT connection is closed after MNT, and no UMNT is sent.
+- AUTH_SYS credentials use the profile's UID/GID.
+- **A pool of NFS connections per drive** (8), each on its own reserved port. The crate's client has one call in flight per connection, so throughput comes from the pool: over 50 ms, one connection levels off at about 60 MiB/s and 8 reach 70 up and 105 down (spike M4-01 §4). Data and metadata share the pool. READ and WRITE calls are `min(rtmax, 1 MiB)` and `min(wtmax, 1 MiB)` from `FSINFO`.
+- Every call runs under our own deadline (`op_timeout_secs`); the crate has none. **A connection is dropped** after a timeout or cancelled call (the crate's client is not cancel-safe: the next call would read the old reply) and after an `RpcError` that is not `is_connection_reusable()`, and a new one is opened from a new reserved port.
+- The connection is stateless: file handles survive reconnects and server restarts with no new MOUNT (FR-NFS-04, confirmed in spike M4-01). A retried CREATE GUARDED may give `NFS3ERR_EXIST`, and a retried REMOVE or RMDIR `NFS3ERR_NOENT`, when the first try succeeded before the connection broke; M4-03 handles them.
 - Mapping:
   - Unix mode bits map as in §5.6;
   - NFS `READDIRPLUS` fills the attribute cache together with the listing;
@@ -1160,7 +1165,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 | E-CONN-LOST | "Connection lost." | Shown when auto-reconnect is off |
 | E-SMB-1219 (M3) | "Windows is already connected to {server} as a different user." When the app finds the other connection (§5.9): "Windows is already connected to {server} as {user}, on {L}:." or "…as {user}, without a drive letter." | "Disconnect the other connection, or use the server's IP address in this connection." With a letter that is not the app's: "Disconnect {L}: in Explorer, or use the server's IP address in this connection." |
 | E-SMB-SHARE-NOT-FOUND (M3) | "Share {share} not found on {server}." | |
-| E-NFS-ACCESS (M4) | "The NFS server refused access to {export}." | "Check that this PC's IP address is allowed in the export list, and the UID/GID." |
+| E-NFS-ACCESS (M4) | "The NFS server refused access to {export}." | "Check the export path, that this PC's IP address is allowed in the export list, and the UID/GID. If the export has the `secure` option, *Use reserved source port* must be on." |
 | E-INTERNAL | "Unexpected error." | "See the log for details." with an Open logs button |
 
 ---
@@ -1222,7 +1227,7 @@ The toolbar's ⓘ button, left of Settings, or F1 opens this page in place of th
 `tests/docker-compose.yml` starts:
 - an OpenSSH server built from `tests/docker/sshd` (Debian, own image instead of `linuxserver/openssh-server`, which is built around one user), configured with password, key, certificate and keyboard-interactive (password + TOTP) users, and a second instance acting as a jump host. Further instances each differ in one way: no SFTP subsystem, one that exits at once, one that never answers, only SHA-1 host key signatures, two host keys, a rekey after every MiB, and paths laid out like Windows OpenSSH's;
 - an SFTP server without OpenSSH extensions (ProFTPD `mod_sftp`), with all of them switched off;
-- *(M4)* an NFSv3 server (`erichough/nfs-server` or Ganesha).
+- *(M4)* an NFSv3 server: the WSL kernel's knfsd, configured by a container built from `tests/docker/nfs` (spike M4-01).
 
 The `RemoteFs` contract-test suite (one generic suite run against each backend) covers:
 - create, read and write at offsets, truncate, rename with and without replace, mkdir, rmdir on a non-empty directory, remove, set times and the read-only bit, statfs;
