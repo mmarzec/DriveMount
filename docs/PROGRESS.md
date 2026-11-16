@@ -2,6 +2,17 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: H-06 for M3-04 and M3-04a
+
+**Status: done; the owner confirmed H-06.** M3-04 and M3-04a are ticked in the plan. They looked at `examples/main_window.rs` at 100% and at 150% (`SLINT_SCALE_FACTOR=1.5`), light and dark, `--empty` and `--real-drives`, and took over a drive on their real PC, which worked. No issues apart from the ones below. Not recorded as checked: a running Explorer showing a letter the app maps (spike M3-01) and the E-SMB-1219 text on screen; both come round again in M3-05.
+
+- **Fixed after the first look (on `main`):** *Open in Explorer* on every drive page, only while it is mounted (`ad203ae`); the external page's lines as tall as a drive's, *Copy* on the Path line (`419ca50`); the letter of an external drive that is not connected greyed out (`9ef2894`); the drive letter in the page header instead of a Mounted/Not mounted line (`c9c4af3`); an SSH/SMB tag on each row (`7be0f6b`); README and user guide on SMB and external drives (`6061b3c`, `baefae2`).
+- **Fixed now, in the preview only:** after a take-over the made-up drive stayed in the list, as `made_up_drives` always returned both. It now leaves out the letters taken over (`TAKEN_OVER`), and the new profile pretends to mount on that letter, as the app does. The real app was right: Windows stops listing a removed drive.
+- **Decided:** the SMB form keeps no *Advanced* section (no *Reconnect*, no *Read-only*); the owner reported nothing against it.
+- **`SLINT_SCALE_FACTOR` works for the preview** when set in the same PowerShell window as `cargo run` (`$env:SLINT_SCALE_FACTOR='1.5'; cargo run …`). Compare the content with the Windows title bar to tell.
+- **Still open for M3:** network events do not list the other drives again (spec §5.9; the 5 s poll covers it while the window is shown). Decide before G4.
+- **Next:** M3-05 (H-12: Windows CI against a local share, the owner's NAS and Windows share, *Current Windows user*).
+
 ## 2026-11-14: M3-04a taking over external SMB drives (FR-SMB-10)
 
 **Status: done (branch `feat/m3-04a-smb-takeover`, fast-forwarded into `main`); the owner saw the page, the take-over and the right-click menus in the preview. The rest of H-06 is still to come.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks and every workspace test pass (`drivemount` 274); the new Samba test passes against the test server. The owner's own mappings (`W:`–`Z:`, and `HKCU\Network`) were as before afterwards.

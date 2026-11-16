@@ -224,7 +224,12 @@ drive_letter = "M"
         Ok(ConfigStore::open(path))
     }
 
-    /// Two drives as `net use` and WSL would have mapped them.
+    thread_local! {
+        /// The made-up drives taken over so far, which Windows would no longer list (FR-SMB-10).
+        static TAKEN_OVER: std::cell::RefCell<Vec<char>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    /// Two drives as `net use` and WSL would have mapped them, less those taken over.
     #[expect(clippy::unnecessary_wraps, reason = "the lister's type")]
     fn made_up_drives() -> Option<Vec<OtherDrive>> {
         let drive = |letter, unc: &str, provider: &str, status, user: Option<&str>| {
@@ -254,7 +259,14 @@ drive_letter = "M"
                 None,
             ),
         ];
-        Some(drives.into_iter().flatten().collect())
+        let taken = TAKEN_OVER.with_borrow(Clone::clone);
+        Some(
+            drives
+                .into_iter()
+                .flatten()
+                .filter(|drive| !taken.contains(&drive.letter.as_char()))
+                .collect(),
+        )
     }
 
     /// Pretends to be the manager: mounting takes a moment, and one profile always fails.
@@ -319,11 +331,27 @@ drive_letter = "M"
             UiCommand::TakeOver { force: false, .. } => {
                 ui.take_over_refused(&TakeOverRefused::FilesOpen);
             }
-            UiCommand::TakeOver { profile, .. } => {
-                let mut config = config.borrow_mut();
-                config.profiles.push(*profile);
-                ui.set_config(config.clone());
+            // As the app does: the drive goes, the profile is saved, then mounted on its letter.
+            UiCommand::TakeOver {
+                letter, profile, ..
+            } => {
+                TAKEN_OVER.with_borrow_mut(|taken| taken.push(letter.as_char()));
+                let taken_over = profile.id;
+                {
+                    let mut config = config.borrow_mut();
+                    config.profiles.push(*profile);
+                    ui.set_config(config.clone());
+                }
                 ui.save_finished(Ok(()));
+                ui.apply_event(&event(taken_over, MountState::Connecting, None));
+                let ui = Rc::clone(ui);
+                Timer::single_shot(Duration::from_millis(800), move || {
+                    ui.apply_event(&event(
+                        taken_over,
+                        MountState::Mounted,
+                        Some(letter.as_char()),
+                    ));
+                });
             }
             UiCommand::Test { attempt, .. } => {
                 let ui = Rc::clone(ui);
