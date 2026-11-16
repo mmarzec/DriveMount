@@ -4,15 +4,16 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 
 ## 2026-11-16: M3-06 v0.2.0
 
-**Status: the owner skipped H-11 for v0.2.0 and approved the release (2026-11-16). Committed on `main` and tagged `v0.2.0`; the release workflow drafts it as an unsigned pre-release, which the owner checks and publishes on GitHub.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check` and every workspace test pass at 0.2.0 on the dev machine.
+**Status: the owner skipped H-11 for v0.2.0 and approved the release (2026-11-16). Committed on `main` and tagged `v0.2.0` (`15a3aa1`); CI green on it, the `smb` job included. The draft is up on GitHub as an unsigned pre-release, for the owner to check and publish.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check` and every workspace test pass at 0.2.0 on the dev machine.
 
 - **Version:** the workspace is 0.2.0 (`Cargo.toml`, the workspace's own entries in `Cargo.lock`).
 - **Release workflow:** a 0.x tag is drafted with `--prerelease`. Unsigned, its notes open with "Unsigned pre-release" and say what SmartScreen and the administrator prompt will show, and point to the checksums. The SignPath credit is only in a signed build's notes. An unsigned 1.x keeps "Do not publish it as a release". Every release's notes now link to the tag's source (NFR-LIC-06). The note-building script was run locally for the three cases.
 - **CI `smb` job, first run (`af998a5`): 8 of 9 pass.** `another_name_for_the_server_takes_the_second_user` failed at its *first* mount (user 1 at `127.0.0.1`): E-SMB-1219, no other connection listed. The test before it, `a_wrong_password_is_e_auth_and_leaves_nothing`, had tried user 2 with a wrong password at the same address. On Windows Server, that refused login seems to leave something behind; it didn't on Windows 10 Home here. The wrong password now has a server name of its own, `0--1.ipv6-literal.net` (`::1`, which reaches the local server here). Not run here (the share is gone, and making it needs elevation); CI on the release commit shows it.
 - **Decided (owner):** network events do not list the other drives again; the 5 s poll covers them (spec §5.9).
 - **G4 (§9.3):** ticked except H-11, which the owner skipped for v0.2.0 and is now due before v1.0.0. TRACEABILITY's *Verified in* is 0.2.0 on every row with a test, except FR-NFS (M4); PLAT-01 says Windows 10 only, PLAT-02 and NFR-LIC-03 "H-11 skipped"; NFR-PERF rows link `docs/perf/v1.md` (measured before M3). Rows with no test listed (FR-MNT-08, NFR-SEC-04/05/06) stay `–`. The FR-SMB rows rest on H-12 declared without a recorded matrix.
+- **The tag's release run (43911654088) built everything but failed at *Draft the release*:** Windows PowerShell unrolled `@('--prerelease')` from an `if` into a string, and splatting a string passes it a character at a time, so `gh` got `-` as a file. Fixed on `main` (`9a70f79`: `--prerelease=true|false`). The tag was not moved: the draft was made from the dev machine with the fixed step, from that run's uploaded files (their SHA-256 match its `sha256sums.txt`). So the published files were built from `15a3aa1`, and only the draft step ran elsewhere.
 - **Not done at 0.2.0:** `scripts/test-installer.ps1` (passed at M2-10 on 0.1.0; needs elevation); nothing installed on Windows 11.
-- **Next:** the owner checks the draft release and publishes it as a pre-release; then M4.
+- **Next:** the owner checks the draft (Releases on GitHub) and publishes it; then M4.
 
 ## 2026-11-16: release plan changed
 
