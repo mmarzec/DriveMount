@@ -13,7 +13,8 @@
 # and the variables SIGNPATH_ORGANIZATION_ID and SIGNPATH_PROJECT_SLUG. A tag uses the signing policy
 # release-signing; a run by hand (workflow_dispatch) uses test-signing, which needs no approval, signs
 # with a test certificate and drafts no release. Without SIGNPATH_ORGANIZATION_ID nothing is signed
-# and a tag's draft says so at the top.
+# and a tag's draft says so at the top. A 0.x tag is drafted as a pre-release; unsigned, its notes say
+# SmartScreen will warn (that is how 0.2.0 ships), and leave out the SignPath credit.
 #
 # GitHub only: Gitea Actions has neither SignPath's connector nor GitHub releases.
 
@@ -168,17 +169,28 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           $sums = Get-Content "$env:PACKAGE\sha256sums.txt" -Raw
-          $note = if ($env:SIGN -eq 'true') { '' } else {
-            "**Unsigned build**: SignPath was not set up when this ran. Do not publish it as a release.`n`n"
+          # 0.x is a pre-release and ships unsigned (plan §9.3); from 1.0.0 an unsigned build is a mistake.
+          $preRelease = $env:VERSION.StartsWith('0.')
+          $note = if ($env:SIGN -eq 'true') { '' }
+            elseif ($preRelease) {
+              "**Unsigned pre-release.** The files are not code-signed, so Windows SmartScreen warns when you run the setup exe " +
+              "(choose **More info**, then **Run anyway**) and the administrator prompt shows *Unknown publisher*. " +
+              "Check the SHA-256 checksums below instead. Signed builds start with 1.0.0.`n`n"
+            }
+            else { "**Unsigned build**: SignPath was not set up when this ran. Do not publish it as a release.`n`n" }
+          $credit = if ($env:SIGN -ne 'true') { '' } else {
+            "`nFree code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). " +
+            "See the [code signing policy](https://github.com/mmarzec/DriveMount#code-signing-policy).`n"
           }
           $body = "${note}Download **DriveMount-$env:VERSION-setup.exe**: it installs WinFsp too when it is missing. " +
             "The MSI is for deployment tools (it needs WinFsp installed first), the zip is the portable exe.`n`n" +
             "SHA-256:`n`n``````text`n$sums```````n`n" +
-            "Free code signing provided by [SignPath.io](https://about.signpath.io), certificate by [SignPath Foundation](https://signpath.org). " +
-            "See the [code signing policy](https://github.com/mmarzec/DriveMount#code-signing-policy).`n"
+            "Source: [$env:GITHUB_REF_NAME]($env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/tree/$env:GITHUB_REF_NAME) (GPL-3.0-or-later).`n" +
+            $credit
           # Without a byte order mark, which Windows PowerShell's Out-File would write.
           [IO.File]::WriteAllText("$env:RUNNER_TEMP\notes.md", $body)
           $files = (Get-ChildItem $env:PACKAGE -File).FullName
-          gh release create $env:GITHUB_REF_NAME --draft --verify-tag --title "DriveMount $env:VERSION" `
+          $kind = if ($preRelease) { @('--prerelease') } else { @() }
+          gh release create $env:GITHUB_REF_NAME --draft --verify-tag @kind --title "DriveMount $env:VERSION" `
             --notes-file "$env:RUNNER_TEMP\notes.md" @files
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }

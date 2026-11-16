@@ -2,6 +2,18 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-16: M3-06 v0.2.0
+
+**Status: the owner skipped H-11 for v0.2.0 and approved the release (2026-11-16). Committed on `main` and tagged `v0.2.0`; the release workflow drafts it as an unsigned pre-release, which the owner checks and publishes on GitHub.** `fmt`, `clippy --workspace --all-targets -D warnings`, the SPDX and secret-format checks, `cargo deny check` and every workspace test pass at 0.2.0 on the dev machine.
+
+- **Version:** the workspace is 0.2.0 (`Cargo.toml`, the workspace's own entries in `Cargo.lock`).
+- **Release workflow:** a 0.x tag is drafted with `--prerelease`. Unsigned, its notes open with "Unsigned pre-release" and say what SmartScreen and the administrator prompt will show, and point to the checksums. The SignPath credit is only in a signed build's notes. An unsigned 1.x keeps "Do not publish it as a release". Every release's notes now link to the tag's source (NFR-LIC-06). The note-building script was run locally for the three cases.
+- **CI `smb` job, first run (`af998a5`): 8 of 9 pass.** `another_name_for_the_server_takes_the_second_user` failed at its *first* mount (user 1 at `127.0.0.1`): E-SMB-1219, no other connection listed. The test before it, `a_wrong_password_is_e_auth_and_leaves_nothing`, had tried user 2 with a wrong password at the same address. On Windows Server, that refused login seems to leave something behind; it didn't on Windows 10 Home here. The wrong password now has a server name of its own, `0--1.ipv6-literal.net` (`::1`, which reaches the local server here). Not run here (the share is gone, and making it needs elevation); CI on the release commit shows it.
+- **Decided (owner):** network events do not list the other drives again; the 5 s poll covers them (spec §5.9).
+- **G4 (§9.3):** ticked except H-11, which the owner skipped for v0.2.0 and is now due before v1.0.0. TRACEABILITY's *Verified in* is 0.2.0 on every row with a test, except FR-NFS (M4); PLAT-01 says Windows 10 only, PLAT-02 and NFR-LIC-03 "H-11 skipped"; NFR-PERF rows link `docs/perf/v1.md` (measured before M3). Rows with no test listed (FR-MNT-08, NFR-SEC-04/05/06) stay `–`. The FR-SMB rows rest on H-12 declared without a recorded matrix.
+- **Not done at 0.2.0:** `scripts/test-installer.ps1` (passed at M2-10 on 0.1.0; needs elevation); nothing installed on Windows 11.
+- **Next:** the owner checks the draft release and publishes it as a pre-release; then M4.
+
 ## 2026-11-16: release plan changed
 
 **Owner's decision:** no release at the end of M2. The end of M3 is **v0.2.0, unsigned** (SSH and SMB), the first published build; the end of M4 is **v1.0.0**, the first **signed** release (SSH, SMB and NFS).
@@ -10,7 +22,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Spec:** §1.2 says "v1" is the SSH scope, not a version, and lists the two releases; §9 signing from 1.0.0; §11 milestones.
 - **User guide and README:** 0.x builds are unsigned (SmartScreen warns; check the checksums); the release workflow already builds unsigned without SignPath settings.
 - **Renamed:** `docs/lab/smb-v1.1.md` → `docs/lab/smb-v0.2.md`.
-- **Not changed yet:** the workspace version (0.1.0); M3-06 bumps it to 0.2.0.
+- **Not changed yet:** the workspace version (0.1.0); M3-06 bumps it to 0.2.0 (done, above).
 
 ## 2026-11-16: M3-05 SMB tests
 
@@ -33,7 +45,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Fixed now, in the preview only:** after a take-over the made-up drive stayed in the list, as `made_up_drives` always returned both. It now leaves out the letters taken over (`TAKEN_OVER`), and the new profile pretends to mount on that letter, as the app does. The real app was right: Windows stops listing a removed drive.
 - **Decided:** the SMB form keeps no *Advanced* section (no *Reconnect*, no *Read-only*); the owner reported nothing against it.
 - **`SLINT_SCALE_FACTOR` works for the preview** when set in the same PowerShell window as `cargo run` (`$env:SLINT_SCALE_FACTOR='1.5'; cargo run …`). Compare the content with the Windows title bar to tell.
-- **Still open for M3:** network events do not list the other drives again (spec §5.9; the 5 s poll covers it while the window is shown). Decide before G4.
+- **Still open for M3:** network events do not list the other drives again (spec §5.9; the 5 s poll covers it while the window is shown). **Decided 2026-11-16: accepted as it is; spec §5.9 says so.**
 - **Next:** M3-05 (started, above).
 
 ## 2026-11-14: M3-04a taking over external SMB drives (FR-SMB-10)

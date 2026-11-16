@@ -80,7 +80,7 @@ The workspace also builds on Linux, where the Windows-only crates (`drivemount-w
 
 ### Releases
 
-Pushing a tag `vX.Y.Z` that matches `drivemount`'s version runs [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub. It builds everything, has [SignPath](https://about.signpath.io) sign the exe, the MSI and the setup exe, writes `sha256sums.txt` and drafts a release, which is published by hand. Without the SignPath settings it builds unsigned and the draft says so at the top: that is how 0.2.0 ships, the first published build; 1.0.0 is the first signed release. Running the workflow by hand signs with SignPath's test certificate and drafts nothing. The file's header lists the settings it needs. `scripts\package.ps1 -Sign` signs locally with a certificate in the Windows store, such as a self-signed test one; `scripts\sign.ps1` says how.
+Pushing a tag `vX.Y.Z` that matches `drivemount`'s version runs [.github/workflows/release.yml](.github/workflows/release.yml) on GitHub. It builds everything, has [SignPath](https://about.signpath.io) sign the exe, the MSI and the setup exe, writes `sha256sums.txt` and drafts a release, which is published by hand. Without the SignPath settings it builds unsigned and the draft says so at the top: that is how 0.2.0 ships, the first published build. A 0.x tag is drafted as a pre-release, and its unsigned notes say SmartScreen will warn; 1.0.0 is the first signed release. Running the workflow by hand signs with SignPath's test certificate and drafts nothing. The file's header lists the settings it needs. `scripts\package.ps1 -Sign` signs locally with a certificate in the Windows store, such as a self-signed test one; `scripts\sign.ps1` says how.
 
 ### Checks
 
