@@ -14,7 +14,7 @@
 //! Windows counts `127.0.0.1`, `localhost` and the computer's name as three servers (spike M3-01
 //! §4). The explicit logins use `127.0.0.1`; `localhost` is the second name; the computer's name is
 //! for *Current Windows user* alone, as null credentials would reuse any session still open to the
-//! same name (§5).
+//! same name (§5); `0--1.ipv6-literal.net` (`::1`) is the wrong password's alone.
 
 #![cfg(windows)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -39,6 +39,10 @@ use drivemount_win::wnet;
 
 const ADDRESS: &str = "127.0.0.1";
 const SECOND_NAME: &str = "localhost";
+/// `::1` by the name Windows gives an IPv6 address in a UNC path: a server name of the wrong
+/// password's own. On a GitHub runner a refused login left something at its server that made the
+/// next login there by the other user E-SMB-1219, with no connection listed.
+const WRONG_PASSWORD_NAME: &str = "0--1.ipv6-literal.net";
 
 /// The tests share the server's sessions and the free letters, so they take turns.
 fn one_at_a_time() -> MutexGuard<'static, ()> {
@@ -231,7 +235,7 @@ async fn a_wrong_password_is_e_auth_and_leaves_nothing() {
     };
     let (name, _) = user(2);
     let wrong = (name.clone(), "not-the-password".to_owned());
-    let backend = SmbBackend::new(target(ADDRESS, &setup().share, &wrong));
+    let backend = SmbBackend::new(target(WRONG_PASSWORD_NAME, &setup().share, &wrong));
 
     let error = backend.mount(letter, &NoAnswers).await.unwrap_err();
 
@@ -239,7 +243,7 @@ async fn a_wrong_password_is_e_auth_and_leaves_nothing() {
         error,
         MountError::Connect(ConnectError::Auth {
             user: name.clone(),
-            host: ADDRESS.to_owned(),
+            host: WRONG_PASSWORD_NAME.to_owned(),
         })
     );
     assert!(!is_mapped(letter));
