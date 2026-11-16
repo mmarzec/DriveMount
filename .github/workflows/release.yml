@@ -190,7 +190,9 @@ jobs:
           # Without a byte order mark, which Windows PowerShell's Out-File would write.
           [IO.File]::WriteAllText("$env:RUNNER_TEMP\notes.md", $body)
           $files = (Get-ChildItem $env:PACKAGE -File).FullName
-          $kind = if ($preRelease) { @('--prerelease') } else { @() }
-          gh release create $env:GITHUB_REF_NAME --draft --verify-tag @kind --title "DriveMount $env:VERSION" `
+          # A flag with its value: Windows PowerShell unrolls a one-item array from `if` into a string,
+          # and splatting a string passes it a character at a time (v0.2.0's first run).
+          $kind = "--prerelease=$($preRelease.ToString().ToLower())"
+          gh release create $env:GITHUB_REF_NAME --draft --verify-tag $kind --title "DriveMount $env:VERSION" `
             --notes-file "$env:RUNNER_TEMP\notes.md" @files
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
