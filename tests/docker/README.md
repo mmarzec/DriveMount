@@ -86,6 +86,8 @@ Fixed ports: portmapper 111, NFS 2049, MOUNT 20048. Exports, each on its own tmp
 | `/srv/nfs/ro` | `ro`, `insecure` | read-only; holds `hello.txt` |
 | `/srv/nfs/denied` | `rw` for `192.0.2.1` only | E-NFS-ACCESS (`MNT3ERR_ACCES`) |
 
+- **Ready:** the service's health check asks the portmapper for MOUNT and NFS v3 over TCP, so `docker compose up --wait nfs` returns once knfsd answers.
+- **On Linux** (CI's `nfs` job, `.github/workflows/ci.yml`): `sudo modprobe nfsd`, stop any `rpcbind` of the host (the container brings its own on 111), and connect to `localhost`. A reserved source port needs root there, or `sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0`.
 - **Server restart, data kept:** `docker exec drivemount-test-nfs-1 rpc.nfsd 0`, then `rpc.nfsd --no-nfs-version 4 --no-udp 8`. `docker restart` empties the exports, so old handles go stale.
 - **Dropped packets:** `tc` on the VM's `eth0` with a filter on source port 2049 (see `docs/spikes/m4-01-nfs.md` §1). `DOCKER-USER` does not see this container's traffic, as it is not bridged.
 

@@ -20,8 +20,8 @@ rpc.mountd --port 20048 --no-nfs-version 4 --no-udp
 stop() {
     rpc.nfsd 0
     exportfs -ua
-    pkill rpc.mountd || true
-    pkill rpcbind || true
+    # No pkill in this image.
+    kill $(pidof rpc.mountd rpcbind) 2>/dev/null || true
     exit 0
 }
 trap stop TERM INT

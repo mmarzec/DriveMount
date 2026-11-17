@@ -142,11 +142,42 @@ jobs:
       - name: Build the tests
         run: cargo test -p drivemount-sftp --locked --no-run
       - name: Start the test servers
+        # All but knfsd, which the nfs job runs on a runner of its own.
         run: |
           bash tests/docker/gen-keys.sh
-          docker compose -f tests/docker-compose.yml up -d --build --wait
+          docker compose -f tests/docker-compose.yml up -d --build --wait             $(docker compose -f tests/docker-compose.yml config --services | grep -vx nfs)
       - name: test
         run: cargo test -p drivemount-sftp --locked -- --ignored
+
+  # NfsFs and NfsConnector against knfsd (plan M4-06): the contract suite, ownership, links, the
+  # read-only export, reserved ports (FR-NFS-03), a copy across a server restart (FR-NFS-04) and
+  # E-NFS-ACCESS (FR-NFS-05). knfsd is the runner's own kernel server, configured by the `nfs`
+  # container on the host's network, so the tests reach it at localhost. The drive tests over NFS
+  # (apps/drivemount/tests/nfs_drive.rs, fsx among them) need WinFsp and stay on the dev machine.
+  nfs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install the pinned toolchain
+        run: rustup toolchain install
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+      - name: Build the tests
+        run: cargo test -p drivemount-nfs --locked --no-run
+      - name: Prepare the runner for knfsd
+        # nfsd may sit in linux-modules-extra; the container brings its own portmapper on 111. A
+        # reserved source port needs root on Linux unless the unprivileged range starts at 0.
+        run: |
+          sudo modprobe nfsd || { sudo apt-get update && sudo apt-get install -y "linux-modules-extra-$(uname -r)" && sudo modprobe nfsd; }
+          sudo systemctl stop rpcbind.socket rpcbind.service 2>/dev/null || true
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      - name: Start knfsd
+        run: docker compose -f tests/docker-compose.yml up -d --build --wait nfs
+      - name: test
+        run: cargo test -p drivemount-nfs --locked -- --ignored --test-threads=1
+      - name: knfsd's log
+        if: failure()
+        run: docker compose -f tests/docker-compose.yml logs nfs
 
   exe-size:
     runs-on: windows-latest

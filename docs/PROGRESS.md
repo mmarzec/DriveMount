@@ -2,6 +2,19 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-17: M4-06 NFS tests
+
+**Status: automated part done on branch `feat/m4-06-nfs-tests`; H-13 (the owner's real-server matrix) is still to do, so M4-06 is not ticked.** CI job `nfs` runs `drivemount-nfs`'s ignored suites on Linux; `fsx` runs on an NFS drive; the owner's matrix is [lab/nfs-v1.0.md](lab/nfs-v1.0.md). `fmt`, `clippy --workspace --all-targets -D warnings` and the SPDX check pass.
+
+- **CI job `nfs` (`ubuntu-latest`):** `modprobe nfsd` (falling back to `linux-modules-extra`), stops any host `rpcbind`, sets `net.ipv4.ip_unprivileged_port_start=0` so the tests bind reserved ports without root (FR-NFS-03), starts only the `nfs` service and runs `cargo test -p drivemount-nfs -- --ignored --test-threads=1` at `localhost`. The `integration` job now starts every service but `nfs`. **Not run on GitHub yet** (nothing pushed): whether the runner's kernel has `nfsd` is the open question; the job prints knfsd's log on failure.
+- **Run the CI way locally:** built in `rust:1.99.1`, run as uid 1000 on the WSL VM's network with the Docker socket and the sysctl at 0: connector 6/6 (restart test included) in 21.7 s, `nfsfs` 6/6 in 3.9 s.
+- **`connector.rs`:** the restart test's `in_container` runs `docker exec` on Linux and `wsl --exec docker exec` on Windows (was plain `wsl docker exec`). Windows: 6/6 again, 22.3 s.
+- **`nfs` service:** a health check (`rpcinfo -T tcp localhost mountd 3` and `nfs 3`), so `up --wait` waits for knfsd itself; before, CI's `integration` job called the container healthy whether knfsd had started or not. The entrypoint's `stop` used `pkill`, which the image lacks; it now kills by `pidof`.
+- **`fsx` on NFS (NFR-REL-01):** `fsx_over_knfsd_loses_nothing` in `apps/drivemount/tests/nfs_drive.rs`, the M2-09 test for knfsd: a drive through the manager and real factory, the `secure` export from a reserved port, the server's file hashed in the container every 1,024 operations and at the end, then read through a new session. 10,000 operations in 14.7 s, 100,000 in 144 s (seed `0x5eed0ff5`; over OpenSSH M2-09 took 386 s), and 10,000 with seed `0x12345678` in 15.2 s. The other 3 `nfs_drive.rs` tests pass again.
+- **H-13:** `docs/lab/nfs-v1.0.md` §2, 15 rows for knfsd, Synology and TrueNAS on Windows 10 Home, with what to look for if a server sends fragmented replies (`nfs3_client` refuses them; knfsd never sends them).
+- **Not done:** NFR-PERF end to end over NFS (spike M4-01 §4 said M4-06; the matrix's row 6 notes the 1 GiB times, but no `docs/perf` run); a silent outage (netem) through a drive.
+- **Next:** push so CI's `nfs` job runs; the owner's H-13; then M4-07.
+
 ## 2026-11-17: M4-05 NFS profile, config and UI
 
 **Status: done. The owner confirmed the form at H-06 on 2026-11-17, after the note fix below.** `Protocol::Nfs(NfsProfile)` in `drivemount-core`, its rules, paste and config record; the factory makes a WinFsp drive over M4-04's `NfsConnector`; the Add/Edit page, connection page and list row show NFS. FR-NFS-01's criterion passes through the manager and the real factory against knfsd: `apps/drivemount/tests/nfs_drive.rs` (`#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP, 3 tests: fixed ports with `rpcbind` stopped and files owned 1234:5678 by `stat` on the server; *Test connection* good / E-NFS-ACCESS / E-HOST-UNREACHABLE with the port; a read-only drive). `fmt`, `clippy --workspace --all-targets -D warnings` and the core and app tests pass.

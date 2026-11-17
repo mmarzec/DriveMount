@@ -2,8 +2,8 @@
 
 //! An NFS profile through the manager and the real factory, onto a real drive (M4-05): FR-NFS-01's
 //! criterion (fixed ports with the portmapper stopped; files owned by the profile's UID and GID),
-//! *Test connection*, and a read-only drive. These need the knfsd test server and WinFsp, and tell
-//! Explorer about their drives.
+//! *Test connection*, and a read-only drive; and the `fsx`-style exerciser on an NFS drive (M4-06).
+//! These need the knfsd test server and WinFsp, and tell Explorer about their drives.
 //!
 //! ```text
 //! tests/docker/servers.ps1 up
@@ -14,14 +14,19 @@
 //! `rpcbind` in the `drivemount-test-nfs-1` container through `wsl docker exec`, and starts it again.
 
 #![cfg(windows)]
+#![allow(unsafe_code)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+/// The `fsx`-style exerciser of `drivemount-winfsp`'s tests, which needs only `std` and `windows`.
+#[path = "../../../crates/drivemount-winfsp/tests/support/exerciser.rs"]
+mod exerciser;
 
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use drivemount_app::backend::{DriveFactory, SystemDriveLetters};
 use drivemount_core::config::{Config, ConfigStore};
@@ -33,6 +38,7 @@ use drivemount_vfs::{
     async_trait,
 };
 use drivemount_win::drives::is_letter_free;
+use sha2::{Digest as _, Sha256};
 use tempfile::TempDir;
 use tokio::sync::broadcast;
 use tokio::time::timeout;
@@ -305,5 +311,61 @@ async fn a_read_only_nfs_profile_gets_a_read_only_drive() {
         Some(ERROR_WRITE_PROTECT),
         "{refused}"
     );
+    world.unmounted(id).await;
+}
+
+/// The SHA-256 of a file on knfsd's disk, as another client would read it.
+fn sha256_on_the_server(path: &str) -> Vec<u8> {
+    let line = in_the_container(&format!("sha256sum {path}"));
+    let hex = line.split_whitespace().next().unwrap();
+    (0..hex.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(&hex[at..at + 2], 16).unwrap())
+        .collect()
+}
+
+/// M4-06, NFR-REL-01 for NFS: the `fsx`-style exerciser on a real drive over knfsd, from a reserved
+/// port on the `secure` export, with the server's file hashed in the container every 1,024
+/// operations and at the end, and read once more through a new session. `FSX_OPS` (default 10,000)
+/// and `FSX_SEED` as in `drivemount-winfsp`'s `tests/fsx.rs`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs the knfsd test server and WinFsp; 100,000 operations take minutes"]
+async fn fsx_over_knfsd_loses_nothing() {
+    let ops = exerciser::from_env("FSX_OPS", exerciser::DEFAULT_OPS);
+    let seed = exerciser::from_env("FSX_SEED", exerciser::DEFAULT_SEED);
+    let saved = profile("NFS fsx M4-06", SECURE);
+    let id = saved.id;
+    let mut world = world(vec![saved]);
+    let folder = unique_name("fsx");
+    let on_server = format!("{SECURE}/{folder}/fsx");
+
+    let letter = world.mounted(id).await;
+    let file = on_drive(letter, &folder).join("fsx");
+    let start = Instant::now();
+    let copy = tokio::task::block_in_place(|| {
+        fs::create_dir(file.parent().unwrap()).unwrap();
+        exerciser::run(&file, ops, seed, &mut |copy, log| {
+            let expected: Vec<u8> = Sha256::digest(copy).to_vec();
+            if sha256_on_the_server(&on_server) != expected {
+                exerciser::compare("the server's file", b"(another hash)", copy, 0, log);
+            }
+        })
+    });
+    println!(
+        "{ops} operations with seed {seed:#x} in {:?}, the file {} bytes at the end",
+        start.elapsed(),
+        copy.len()
+    );
+    world.unmounted(id).await;
+
+    let letter = world.mounted(id).await;
+    let file = on_drive(letter, &folder).join("fsx");
+    tokio::task::block_in_place(|| {
+        assert!(
+            fs::read(&file).unwrap() == copy,
+            "a new session reads another file"
+        );
+        fs::remove_dir_all(file.parent().unwrap()).unwrap();
+    });
     world.unmounted(id).await;
 }

@@ -105,3 +105,9 @@ services:
     image: drivemount-test-nfs
     privileged: true
     network_mode: host
+    # Ready once MOUNT and NFS v3 answer over TCP, so `up --wait` waits for knfsd itself.
+    healthcheck:
+      test: ["CMD-SHELL", "rpcinfo -T tcp localhost mountd 3 && rpcinfo -T tcp localhost nfs 3"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

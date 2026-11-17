@@ -2,15 +2,17 @@
 
 //! `NfsConnector` (M4-04) against the knfsd test server: FR-NFS-03 (reserved source ports),
 //! FR-NFS-04 (a copy across a server restart) and FR-NFS-05 (E-NFS-ACCESS). All of it needs the
-//! S-03 servers, and Windows: a reserved port needs no rights there.
+//! S-03 servers, and a reserved source port: Windows needs no rights for one; on Linux (CI's `nfs`
+//! job) run as root or lower `net.ipv4.ip_unprivileged_port_start` to 0.
 //!
 //! ```text
 //! tests/docker/servers.ps1 up
 //! cargo test -p drivemount-nfs --test connector -- --ignored --test-threads=1
 //! ```
 //!
-//! Set `DRIVEMOUNT_TEST_HOST` to the WSL VM's IP (`wsl hostname -I`). The restart test stops and
-//! starts knfsd in the `drivemount-test-nfs-1` container through `wsl docker exec`.
+//! On Windows, set `DRIVEMOUNT_TEST_HOST` to the WSL VM's IP (`wsl hostname -I`); on Linux the
+//! default, `localhost`, is the server. The restart test stops and starts knfsd in the
+//! `drivemount-test-nfs-1` container through `docker exec` (`wsl --exec docker exec` on Windows).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -161,10 +163,18 @@ async fn an_unreserved_port_on_a_secure_export_is_e_nfs_access() {
     assert_eq!(result.err(), Some(access(SECURE)));
 }
 
-/// Runs a command in the knfsd container.
+/// Runs a command in the knfsd container: Docker runs inside WSL on Windows, and beside the test on
+/// Linux. `wsl --exec`, as plain `wsl` would hand the script to the VM's shell first.
 fn in_container(script: &str) {
-    let status = Command::new("wsl")
-        .args(["docker", "exec", CONTAINER, "sh", "-c", script])
+    let mut command = if cfg!(windows) {
+        let mut wsl = Command::new("wsl");
+        wsl.args(["--exec", "docker"]);
+        wsl
+    } else {
+        Command::new("docker")
+    };
+    let status = command
+        .args(["exec", CONTAINER, "sh", "-c", script])
         .status()
         .unwrap();
     assert!(status.success(), "{script}: {status}");

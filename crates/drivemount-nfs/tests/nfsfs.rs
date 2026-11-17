@@ -8,8 +8,9 @@
 //! cargo test -p drivemount-nfs --test nfsfs -- --ignored
 //! ```
 //!
-//! Set `DRIVEMOUNT_TEST_HOST` to the WSL VM's IP (`wsl hostname -I`). The tests use the
-//! `insecure` and `ro` exports, from any source port: binding a reserved one is M4-04's.
+//! On Windows, set `DRIVEMOUNT_TEST_HOST` to the WSL VM's IP (`wsl hostname -I`); on Linux (CI's
+//! `nfs` job) the default, `localhost`, is the server. The tests use the `insecure` and `ro`
+//! exports, from any source port: binding a reserved one is M4-04's.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
