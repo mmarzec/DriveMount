@@ -2,6 +2,21 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-17: M4-05 NFS profile, config and UI
+
+**Status: done. The owner confirmed the form at H-06 on 2026-11-17, after the note fix below.** `Protocol::Nfs(NfsProfile)` in `drivemount-core`, its rules, paste and config record; the factory makes a WinFsp drive over M4-04's `NfsConnector`; the Add/Edit page, connection page and list row show NFS. FR-NFS-01's criterion passes through the manager and the real factory against knfsd: `apps/drivemount/tests/nfs_drive.rs` (`#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP, 3 tests: fixed ports with `rpcbind` stopped and files owned 1234:5678 by `stat` on the server; *Test connection* good / E-NFS-ACCESS / E-HOST-UNREACHABLE with the port; a read-only drive). `fmt`, `clippy --workspace --all-targets -D warnings` and the core and app tests pass.
+
+- **Model:** `NfsProfile { server, export, uid, gid, nfs_port: Option<u16>, mount_port: Option<u16>, reserved_port, cache_ttl_secs }`, `NfsProfile::new` with UID/GID 1000, the portmapper and a reserved port. **No NFS version field** although FR-NFS-01 lists one: v3 is the only version, so it would be a box with one value. A later version adds a `version` key, which this version keeps as an unknown key. No keep-alive either: the drive probes with NFS `NULL`. `cache_ttl_secs` is in Advanced, as for SSH, and is also the handle TTL (spec §5.10).
+- **Config (§6.1):** `protocol = "nfs"` with `server`, `export` required; `uid`/`gid` default 1000, `nfs_port`/`mount_port` 0 = portmapper, `reserved_port` true. `schema_version` stays 1 (additive). A profile changing protocol to or from NFS keeps only its unknown keys. The test that used `protocol = "nfs"` as "a later milestone's" entry now uses `webdav`.
+- **Rules (§7.3):** Server is the Host rule with IPv6 allowed (message "Enter a server name or IP address"); Export absolute, ≤ 1024 bytes, no `.`/`..`/NUL; UID/GID 0–4294967295; ports empty/0 or 1–65535. Pasting `server:/export`, `[v6]:/export` or `nfs://server[:port]/export` into Server splits it (`profile::parse_pasted_export`).
+- **Secrets:** an NFS profile may keep none; Save deletes anything left under its id (as for *Ask each time*).
+- **Factory:** `backend::nfs_profile` turns the saved profile into the connector's; `create` gives `WinFspBackend<NfsConnector>` with 8 connections and `DM-NFS`; `test` connects with one connection and probes. A shared `volume_config` builds the WinFsp settings for SFTP and NFS.
+- **UI:** the NFS segment; Server (shared with SMB), Export, UID + GID with the AUTH_SYS note; Advanced: NFS port, Mount port ("Portmapper" placeholder), *Use reserved source port*, Reconnect, Read-only, Cache. The connection page lists UID / GID, Export, the ports and *Reserved port*, and no user, login or keep-alive. Row tag "NFS", address `server:/export`. NFS rows need WinFsp, as SSH rows do. The WinFsp banner and Settings line now say "SSH and NFS drives"; About, README and the user guide list NFS (v3).
+- **H-06 finding (owner, 2026-11-17):** the AUTH_SYS note wrapped to two lines, and the card, sized by its preferred height, counts wrapped text in a nested layout as one line, so Advanced sat across the card's bottom edge and Cache was cut off. The note is now short enough for one line, as spec §8.4 asks; `ui/tests/dialog.rs` `the_card_holds_its_last_row_for_each_protocol` checks each protocol, with Advanced closed and open, and failed with the old note (451 against 447).
+- **Test gotcha:** `wsl docker exec … sh -c '$(…)'` expands `$(…)` in the VM's shell, not the container's; `nfs_drive.rs` uses `wsl --exec`. The container has `pidof` but no `pgrep`/`pkill` (so the entrypoint's `stop` never kills `rpc.mountd`/`rpcbind`). `rpcbind -w` brings back the registrations after the test stops it.
+- **Not done:** Windows' own NFS client (Pro editions) is not looked at; a profile with a `secure` export and *Use reserved source port* off fails with E-NFS-ACCESS, which says to turn it on. `drivemount_exe` / `mount_one` example not tried with an NFS profile (the factory is the same path).
+- **Next:** M4-06 (Linux CI with an NFS container, `fsx` on an NFS mount, the owner's server matrix on Windows 10 Home).
+
 ## 2026-11-16: M4-04 `NfsConnector`
 
 **Status: done; committed on `main`.** `drivemount_nfs::NfsConnector` (`src/connector.rs`), with `NfsProfile` for what it needs from a profile. Against knfsd (`tests/connector.rs`, `#[ignore]`, `DRIVEMOUNT_TEST_HOST` = the WSL VM's IP, `--test-threads=1`): FR-NFS-03 (the `secure` export mounts from a reserved port, and refuses MOUNT without one), FR-NFS-04 (a 40 MiB copy across a 10 s knfsd restart, 22 s; bytes match), FR-NFS-05 (the `denied` export and a missing one are E-NFS-ACCESS), and fixed ports. 8 new connector unit tests (one Windows-only), 2 for kept writes, 2 new `SessionFs` tests. The M4-03 knfsd suite still passes. `fmt`, `clippy --workspace --all-targets -D warnings`, `cargo deny check` and the SPDX/secret checks pass.
@@ -14,7 +29,7 @@ Notes for the next session: decisions, open issues and anything half-done. Newes
 - **Flaky:** `app::engine::tests::each_change_is_saved_at_once_and_in_use_before` failed twice in a full `cargo test --workspace` run (its 10 s `PATIENCE` ran out under load) and passes alone and in `cargo test -p drivemount --lib`. It touches nothing M4-04 changed; not checked on the commit before.
 - **Found:** WSL forwards `localhost:111` to the knfsd container, so "nothing listens on 111 here" is not true on the dev machine.
 - **Open:** a file closed while the connection is down is not closed on the `NfsFs` (its entry stays until the drive goes). The `info!` lines of a reconnect run on another task and don't show in the restart test's log. Not tested: a silent outage (netem) and a stale root after the export is made again.
-- **Next:** M4-05 (profile, config, UI, and the backend factory making an `NfsConnector`).
+- **Next:** M4-05 (done, above).
 
 ## 2026-11-16: M4-03 `NfsFs`
 

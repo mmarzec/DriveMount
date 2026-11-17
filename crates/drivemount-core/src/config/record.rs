@@ -3,7 +3,7 @@
 //! A `[[profiles]]` entry as spec §6.1 has it. The file is flat and the model is enums, so the model
 //! knows nothing of serde and these types know nothing of its rules.
 //!
-//! Each protocol has its own keys, so each has its own record, chosen by `protocol`. Both write `id`,
+//! Each protocol has its own keys, so each has its own record, chosen by `protocol`. All write `id`,
 //! `name` and `protocol` first, and the flags after the protocol's own keys.
 
 use std::path::{Path, PathBuf};
@@ -14,8 +14,9 @@ use uuid::Uuid;
 
 use super::SaveError;
 use crate::profile::{
-    DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_PORT, DEFAULT_REMOTE_PATH, DriveChoice,
-    JumpAuth, JumpHost, Profile, Protocol, SftpAuth, SftpProfile, SmbAuth, SmbProfile, parse_drive,
+    DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_NFS_ID, DEFAULT_PORT,
+    DEFAULT_REMOTE_PATH, DriveChoice, JumpAuth, JumpHost, NfsProfile, Profile, Protocol, SftpAuth,
+    SftpProfile, SmbAuth, SmbProfile, parse_drive,
 };
 
 const AUTO: &str = "auto";
@@ -28,6 +29,8 @@ pub(super) enum ProfileRecord {
     Sftp(SftpRecord),
     /// `protocol = "smb"`.
     Smb(SmbRecord),
+    /// `protocol = "nfs"`.
+    Nfs(NfsRecord),
 }
 
 /// Only `protocol`, to know which record to read.
@@ -102,11 +105,44 @@ pub(super) struct SmbRecord {
     extra: Table,
 }
 
+/// The keys of spec §6.1's NFS example. A port of 0 asks the portmapper.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(super) struct NfsRecord {
+    id: Uuid,
+    name: String,
+    protocol: ProtocolRecord,
+    server: String,
+    export: String,
+    #[serde(default = "default_nfs_id")]
+    uid: u32,
+    #[serde(default = "default_nfs_id")]
+    gid: u32,
+    #[serde(default)]
+    nfs_port: u16,
+    #[serde(default)]
+    mount_port: u16,
+    #[serde(default = "default_true")]
+    reserved_port: bool,
+    #[serde(default = "default_drive")]
+    drive_letter: String,
+    #[serde(default)]
+    read_only: bool,
+    #[serde(default)]
+    mount_on_start: bool,
+    #[serde(default = "default_true")]
+    auto_reconnect: bool,
+    #[serde(default = "default_cache")]
+    cache_ttl_secs: u64,
+    #[serde(flatten)]
+    extra: Table,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ProtocolRecord {
     Sftp,
     Smb,
+    Nfs,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -173,6 +209,10 @@ const fn default_keepalive() -> u64 {
     DEFAULT_KEEPALIVE_SECS
 }
 
+const fn default_nfs_id() -> u32 {
+    DEFAULT_NFS_ID
+}
+
 /// Puts the values in `extra` back as they are in the table it was read from. `flatten` buffers them
 /// on the way, and a date does not survive that: it comes out as a table.
 fn restore_exact_values(extra: &mut Table, raw: &Table) {
@@ -194,6 +234,7 @@ impl ProfileRecord {
         Ok(match head.protocol {
             ProtocolRecord::Sftp => Self::Sftp(SftpRecord::read(raw)?),
             ProtocolRecord::Smb => Self::Smb(SmbRecord::read(raw)?),
+            ProtocolRecord::Nfs => Self::Nfs(NfsRecord::read(raw)?),
         })
     }
 
@@ -207,6 +248,16 @@ impl ProfileRecord {
         match self {
             Self::Sftp(record) => record.to_profile(),
             Self::Smb(record) => record.to_profile(),
+            Self::Nfs(record) => record.to_profile(),
+        }
+    }
+
+    /// The keys the model does not know.
+    fn extra(&self) -> &Table {
+        match self {
+            Self::Sftp(record) => &record.extra,
+            Self::Smb(record) => &record.extra,
+            Self::Nfs(record) => &record.extra,
         }
     }
 
@@ -222,17 +273,22 @@ impl ProfileRecord {
             Protocol::Sftp(sftp) => {
                 let previous = previous.map(|previous| match previous {
                     Self::Sftp(record) => record.clone(),
-                    Self::Smb(record) => SftpRecord::keeping(record.extra.clone()),
+                    other => SftpRecord::keeping(other.extra().clone()),
                 });
                 Self::Sftp(SftpRecord::from_profile(profile, sftp, previous.as_ref())?)
             }
             Protocol::Smb(smb) => {
                 let previous = previous.map(|previous| match previous {
                     Self::Smb(record) => record.clone(),
-                    Self::Sftp(record) => SmbRecord::keeping(record.extra.clone()),
+                    other => SmbRecord::keeping(other.extra().clone()),
                 });
                 Self::Smb(SmbRecord::from_profile(profile, smb, previous.as_ref()))
             }
+            Protocol::Nfs(nfs) => Self::Nfs(NfsRecord::from_profile(
+                profile,
+                nfs,
+                previous.map(Self::extra),
+            )),
         })
     }
 }
@@ -461,6 +517,60 @@ impl SmbRecord {
             extra: previous
                 .map(|record| record.extra.clone())
                 .unwrap_or_default(),
+        }
+    }
+}
+
+impl NfsRecord {
+    fn read(raw: &Table) -> Result<Self, toml::de::Error> {
+        let mut record: Self = toml::Value::Table(raw.clone()).try_into()?;
+        restore_exact_values(&mut record.extra, raw);
+        Ok(record)
+    }
+
+    fn to_profile(&self) -> Result<Profile, String> {
+        let drive = parse_drive(&self.drive_letter).map_err(|problem| problem.to_string())?;
+        let fixed = |port: u16| (port != 0).then_some(port);
+        Ok(Profile {
+            id: self.id,
+            name: self.name.clone(),
+            protocol: Protocol::Nfs(NfsProfile {
+                server: self.server.clone(),
+                export: self.export.clone(),
+                uid: self.uid,
+                gid: self.gid,
+                nfs_port: fixed(self.nfs_port),
+                mount_port: fixed(self.mount_port),
+                reserved_port: self.reserved_port,
+                cache_ttl_secs: self.cache_ttl_secs,
+            }),
+            drive,
+            read_only: self.read_only,
+            mount_on_start: self.mount_on_start,
+            auto_reconnect: self.auto_reconnect,
+        })
+    }
+
+    /// An NFS profile has no key that only some of its choices use, so only the unknown keys of
+    /// what was on file go along, whatever its protocol was.
+    fn from_profile(profile: &Profile, nfs: &NfsProfile, previous_extra: Option<&Table>) -> Self {
+        Self {
+            id: profile.id,
+            name: profile.name.clone(),
+            protocol: ProtocolRecord::Nfs,
+            server: nfs.server.clone(),
+            export: nfs.export.clone(),
+            uid: nfs.uid,
+            gid: nfs.gid,
+            nfs_port: nfs.nfs_port.unwrap_or(0),
+            mount_port: nfs.mount_port.unwrap_or(0),
+            reserved_port: nfs.reserved_port,
+            drive_letter: drive_text(profile.drive),
+            read_only: profile.read_only,
+            mount_on_start: profile.mount_on_start,
+            auto_reconnect: profile.auto_reconnect,
+            cache_ttl_secs: nfs.cache_ttl_secs,
+            extra: previous_extra.cloned().unwrap_or_default(),
         }
     }
 }

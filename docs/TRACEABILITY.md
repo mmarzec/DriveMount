@@ -139,7 +139,7 @@ One row per requirement in [SPECIFICATION.md](SPECIFICATION.md). Tasks are in [I
 
 | Requirement | Tasks | Test | Verified in |
 |---|---|---|---|
-| FR-NFS-01 | M4-01 … M4-06 | Files and folders owned by the configured UID/GID: `new_files_belong_to_the_configured_user` (`crates/drivemount-nfs/tests/nfsfs.rs`, needs S-03). Fixed ports without the portmapper: `fixed_ports_mount_too` (`crates/drivemount-nfs/tests/connector.rs`, needs S-03) | – |
+| FR-NFS-01 | M4-01 … M4-06 | Through the manager and the app's factory onto a drive: `fixed_ports_mount_without_the_portmapper_and_files_belong_to_the_profiles_ids` (`apps/drivemount/tests/nfs_drive.rs`, needs S-03 and WinFsp: stops `rpcbind`, checks `stat` on the server). Below the drive: `new_files_belong_to_the_configured_user` (`crates/drivemount-nfs/tests/nfsfs.rs`), `fixed_ports_mount_too` (`crates/drivemount-nfs/tests/connector.rs`). The fields: `profile::validate` NFS tests, `profile::nfs_paste::tests`, the NFS tests in `config/tests.rs`, `ui::form` and `ui/tests/dialog.rs` (`an_nfs_profile_opens_in_its_own_boxes_and_saves_as_it_was`, `a_new_nfs_profile_from_a_pasted_export`). On screen: H-06, confirmed 2026-11-17 | – |
 | FR-NFS-02 | M4-01 … M4-06 | – | – |
 | FR-NFS-03 | M4-01 … M4-06 | `a_secure_export_mounts_from_a_reserved_port`, `an_unreserved_port_on_a_secure_export_is_e_nfs_access` (`crates/drivemount-nfs/tests/connector.rs`, needs S-03); `connections_come_from_reserved_ports_each_its_own` (unit, Windows) | – |
 | FR-NFS-04 | M4-01 … M4-06 | `a_copy_runs_across_a_server_restart` (`crates/drivemount-nfs/tests/connector.rs`, needs S-03: stops knfsd for 10 s); `the_same_file_system_coming_back_keeps_its_handles` (`crates/drivemount-vfs/tests/session.rs`) | – |

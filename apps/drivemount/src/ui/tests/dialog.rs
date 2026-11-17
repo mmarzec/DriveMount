@@ -1697,6 +1697,136 @@ fn a_unc_path_pasted_into_server_fills_share_and_sub_path() {
     );
 }
 
+fn nfs_profile(name: &str) -> drivemount_core::profile::Profile {
+    use drivemount_core::profile::{NfsProfile, Profile};
+    let mut nfs = NfsProfile::new("nas", "/volume1/data");
+    nfs.uid = 1026;
+    nfs.gid = 100;
+    nfs.mount_port = Some(892);
+    nfs.reserved_port = false;
+    Profile::new(name, Protocol::Nfs(nfs))
+}
+
+/// FR-NFS-01: the boxes of a saved NFS profile, and only those.
+#[test]
+fn an_nfs_profile_opens_in_its_own_boxes_and_saves_as_it_was() {
+    let saved = nfs_profile("Data");
+    let fixture = Fixture::new(vec![saved.clone()]);
+    fixture.open_selected();
+    assert_eq!(fixture.box_holds("Server"), "nas");
+    assert_eq!(fixture.box_holds("Export"), "/volume1/data");
+    assert_eq!(fixture.box_holds("UID"), "1026");
+    assert_eq!(fixture.box_holds("GID"), "100");
+    for other in ["Host", "User", "Share", "Password"] {
+        assert!(fixture.labelled(other).is_none(), "{other}");
+    }
+    fixture.press("Advanced");
+    fixture.scroll_dialog_down();
+    assert_eq!(fixture.box_holds("NFS port"), "");
+    assert_eq!(fixture.box_holds("Mount port"), "892");
+    assert!(fixture.labelled("Jump host").is_none());
+    assert!(fixture.labelled("Keep-alive (s)").is_none());
+    assert!(fixture.can_save());
+
+    fixture.press("Save");
+    let (changed, secrets) = fixture.take_save();
+    assert_eq!(changed, saved);
+    assert!(secrets.0.is_empty());
+}
+
+/// FR-NFS-01 through the window: `server:/export` pasted into Server is split, UID and GID start at
+/// 1000, and the ports at the portmapper.
+#[test]
+fn a_new_nfs_profile_from_a_pasted_export() {
+    use drivemount_core::profile::NfsProfile;
+
+    let fixture = Fixture::new(Vec::new());
+    fixture.open_new();
+    fixture.choose_auth("NFS");
+    fixture.type_in("Name", "Data");
+    fixture.type_in("Server", "nas:/volume1/data");
+    assert_eq!(fixture.box_holds("Server"), "nas");
+    assert_eq!(fixture.box_holds("Export"), "/volume1/data");
+    assert_eq!(fixture.box_holds("UID"), "1000");
+    assert!(fixture.can_save());
+
+    fixture.type_in("GID", "-1");
+    assert!(!fixture.can_save());
+    assert_eq!(
+        fixture.ui.window().get_marks().gid,
+        "Use a number from 0 to 4294967295"
+    );
+    fixture.type_in("GID", "100");
+
+    fixture.press("Advanced");
+    fixture.scroll_dialog_down();
+    fixture.type_in("NFS port", "70000");
+    assert_eq!(
+        fixture.ui.window().get_marks().nfs_port,
+        "Leave empty to ask the portmapper, or use 1–65535"
+    );
+    fixture.type_in("NFS port", "2049");
+    fixture.press("Use reserved source port");
+    assert!(fixture.can_save());
+
+    fixture.press("Save");
+    let (saved, secrets) = fixture.take_save();
+    assert!(secrets.0.is_empty());
+    let Protocol::Nfs(nfs) = &saved.protocol else {
+        panic!("not NFS");
+    };
+    assert_eq!(
+        nfs,
+        &NfsProfile {
+            gid: 100,
+            nfs_port: Some(2049),
+            reserved_port: false,
+            ..NfsProfile::new("nas", "/volume1/data")
+        }
+    );
+}
+
+/// The card is sized by its preferred height, which counts wrapped text in a nested layout as one
+/// line: a note that wrapped put Advanced across the card's bottom edge (H-06, M4-05). So every note
+/// stays on one line, and the last row ends inside the card for each protocol.
+#[test]
+fn the_card_holds_its_last_row_for_each_protocol() {
+    let fixture = Fixture::new(Vec::new());
+    let bottom = |element: &ElementHandle| element.absolute_position().y + element.size().height;
+    for (protocol, advanced, last) in [
+        ("SSH", false, "Advanced"),
+        ("SSH", true, "Keep-alive (s)"),
+        ("SMB", false, "Mount when DriveMount starts"),
+        ("NFS", false, "Advanced"),
+        ("NFS", true, "Cache (s)"),
+    ] {
+        // Afresh each time: scrolled down, the selector is out of reach.
+        fixture.open_new();
+        fixture.choose_auth(protocol);
+        if advanced != fixture.ui.window().get_advanced_open() {
+            fixture.press("Advanced");
+        }
+        fixture.scroll_dialog_down();
+        let last = fixture.labelled(last).expect(protocol);
+        // The card's own id is hidden behind its base's, so it is the Card the row starts in. A row
+        // wholly below it finds none, which fails too.
+        let row_top = last.absolute_position().y;
+        let card = ElementHandle::find_by_element_type_name(fixture.ui.window(), "Card")
+            .find(|card| {
+                let top = card.absolute_position().y;
+                top <= row_top && row_top <= bottom(card)
+            })
+            .unwrap_or_else(|| panic!("{protocol}: the last row starts below the card"));
+        assert!(
+            bottom(&last) <= bottom(&card),
+            "{protocol}: the last row ends at {}, the card at {}",
+            bottom(&last),
+            bottom(&card)
+        );
+        fixture.press_front("Cancel");
+    }
+}
+
 /// A drive another program mapped, as Windows lists it (FR-SMB-09).
 fn mapped_outside(on: char, smb: bool) -> drivemount_smb::OtherDrive {
     drivemount_smb::OtherDrive {

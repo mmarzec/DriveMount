@@ -1,6 +1,6 @@
 # DriveMount user guide
 
-DriveMount lets you easily manage, mount and unmount remote network drives, and assign them drive letters. Supported protocols: SSH (SFTP) and SMB (Samba). You keep a list of connections, mount or unmount each with one click, and DriveMount restores them at start-up and after network drops. It lives in the system tray.
+DriveMount lets you easily manage, mount and unmount remote network drives, and assign them drive letters. Supported protocols: SSH (SFTP), SMB (Samba) and NFS (v3). You keep a list of connections, mount or unmount each with one click, and DriveMount restores them at start-up and after network drops. It lives in the system tray.
 
 **Contents**
 
@@ -55,13 +55,13 @@ The portable copy has no uninstaller. To remove it, quit DriveMount, delete its 
 
 ### If WinFsp is missing
 
-DriveMount still starts, and you can add and edit connections. A banner at the top of the window says *WinFsp 2.1 or later is required to mount SSH drives*, and **Mount** is disabled. Choose **Download WinFsp** to open the WinFsp download page, install it, then start DriveMount again.
+DriveMount still starts, and you can add and edit connections. A banner at the top of the window says *WinFsp 2.1 or later is required to mount SSH and NFS drives*, and **Mount** is disabled. Choose **Download WinFsp** to open the WinFsp download page, install it, then start DriveMount again.
 
 ---
 
 ## 2. Adding a connection
 
-Choose **Add** on the toolbar (or press Ctrl+N). The *Add connection* page takes the place of the list. **Type** at the top chooses **SSH** (a server you reach over SSH/SFTP, below) or **SMB** (a Windows or Samba share, see [Windows shares (SMB)](#windows-shares-smb)).
+Choose **Add** on the toolbar (or press Ctrl+N). The *Add connection* page takes the place of the list. **Type** at the top chooses **SSH** (a server you reach over SSH/SFTP, below), **SMB** (a Windows or Samba share, see [Windows shares (SMB)](#windows-shares-smb)) or **NFS** (an NFSv3 export, see [NFS exports](#nfs-exports)).
 
 | Field | What to enter |
 |---|---|
@@ -93,9 +93,29 @@ Drive and *Mount when DriveMount starts* are as for SSH. There is no **Advanced*
 
 **Unmount with files open.** If a program has a file open on the share, **Unmount** asks first. **Unmount anyway** removes the drive; programs using those files may lose unsaved changes.
 
+### NFS exports
+
+With **Type** set to **NFS**, DriveMount mounts an NFSv3 export through WinFsp, as it does an SSH drive. It works on Windows Home editions, which have no NFS client of their own.
+
+| Field | What to enter |
+|---|---|
+| **Server** | The server's name or IP address. Pasting `nas:/volume1/data` or `nfs://nas/volume1/data` fills Server and Export. |
+| **Export** | The exported folder's path on the server, as `showmount -e nas` lists it, such as `/volume1/data`. |
+| **UID**, **GID** | The user and group IDs to act as on the server, usually your own account's there (`id` on the server shows them). New files belong to them. Default 1000 and 1000. |
+
+NFSv3 has no password: the server believes the UID and GID this PC sends, and its export list, by IP address, is what keeps other computers out. So make sure the export lists only the addresses you mean, and use the IDs of an account that may see what is in the export.
+
+Drive and *Mount when DriveMount starts* are as for SSH. **Advanced** has:
+
+| Field | What it does | Default |
+|---|---|---|
+| **NFS port**, **Mount port** | Fixed ports, for a server whose portmapper (port 111) is off or blocked. Empty asks the portmapper. NFS is usually on 2049; the mount port depends on the server. | empty |
+| **Use reserved source port** | Connect from a port below 1024, which an export with the `secure` option (the default on Linux) asks for. Needs no administrator rights on Windows. | on |
+| **Reconnect automatically**, **Read-only**, **Cache (s)** | As for SSH, below. | on, off, 5 |
+
 ### Advanced
 
-Choose **Advanced** (SSH only) to see:
+Choose **Advanced** (SSH; NFS has [its own](#nfs-exports)) to see:
 
 | Field | What it does | Default |
 |---|---|---|
@@ -107,7 +127,7 @@ Choose **Advanced** (SSH only) to see:
 
 ### Test and save
 
-**Test connection** logs in and checks that the remote path (for SMB, the sub-path) is a folder, without mounting. It says *✓ Connected (12 ms)* or shows what went wrong (see [section 9](#9-troubleshooting)). Any edit stops a test under way.
+**Test connection** logs in and checks that the remote path (for SMB, the sub-path) is a folder, without mounting. For NFS it mounts the export without a drive, which is where a refused export shows. It says *✓ Connected (12 ms)* or shows what went wrong (see [section 9](#9-troubleshooting)). Any edit stops a test under way.
 
 Fields with a problem are marked in red, and **Save** stays disabled until they are corrected. **Cancel** or Esc leaves without saving.
 

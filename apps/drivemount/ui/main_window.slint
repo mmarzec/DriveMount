@@ -536,7 +536,7 @@ export component MainWindow inherits Window {
             }
 
             if root.winfsp-missing: Banner {
-                text: @tr("WinFsp 2.1 or later is required to mount SSH drives");
+                text: @tr("WinFsp 2.1 or later is required to mount SSH and NFS drives");
                 button-text: @tr("Download WinFsp");
                 interactive: root.interactive;
                 clicked => {

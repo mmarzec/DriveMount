@@ -264,8 +264,8 @@ export component SettingsPage {
 
                         SettingRow {
                             label: root.view.winfsp == WinFspState.ready ? @tr("WinFsp {} installed", root.view.winfsp-version)
-                                : root.view.winfsp == WinFspState.too-old ? @tr("WinFsp {} is installed, but 2.1 or later is required to mount SSH drives", root.view.winfsp-version)
-                                : @tr("WinFsp 2.1 or later is required to mount SSH drives");
+                                : root.view.winfsp == WinFspState.too-old ? @tr("WinFsp {} is installed, but 2.1 or later is required to mount SSH and NFS drives", root.view.winfsp-version)
+                                : @tr("WinFsp 2.1 or later is required to mount SSH and NFS drives");
                             last: true;
 
                             if root.view.winfsp != WinFspState.ready: VerticalLayout {

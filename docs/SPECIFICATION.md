@@ -185,7 +185,7 @@ States, transitions and events are defined in §5.5.
 | FR-APP-03 | M | **Start with Windows** (default off) writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\DriveMount = "<exe>" --tray`. `--tray` starts without showing the window. | After sign-in, the tray icon appears, no window is shown, and mount-on-start profiles are mounted. Turning the setting off removes the Run value. |
 | FR-APP-04 | M | **Quit** with mounts present asks "Unmount N drives and quit?". On confirm, it unmounts everything and exits. | After confirming, no DriveMount drive letters remain and the process has exited. Cancel keeps everything as it was. |
 | FR-APP-05 | M | **Windows sign-out or shutdown** (`WM_QUERYENDSESSION`/`WM_ENDSESSION`): flush and unmount everything without asking, within 5 s. | Signing out while a file is being written does not block sign-out. The written part of the file is intact on the server. |
-| FR-APP-06 | M | **WinFsp missing or too old**: the main window shows a banner "WinFsp 2.1 or later is required to mount SSH drives" with a *Download WinFsp* button that opens https://winfsp.dev/rel/. Mount actions for WinFsp-backed profiles are disabled. | With WinFsp uninstalled, the banner shows and Mount buttons are disabled; profiles can still be edited. |
+| FR-APP-06 | M | **WinFsp missing or too old**: the main window shows a banner "WinFsp 2.1 or later is required to mount SSH and NFS drives" with a *Download WinFsp* button that opens https://winfsp.dev/rel/. Mount actions for WinFsp-backed profiles are disabled. | With WinFsp uninstalled, the banner shows and Mount buttons are disabled; profiles can still be edited. |
 | FR-APP-07 | M | **Crash handling**: a panic hook writes `crash-<timestamp>.txt` to the logs folder. The next start shows a notice with *Open logs folder*. | A forced panic (debug build) produces the file, and the notice appears on the next start. |
 
 ### 3.8 Settings (FR-SET)
@@ -840,9 +840,21 @@ key_path = ""
 
 # M4 example
 # [[profiles]]
-# protocol = "nfs"
-# server = "nas"           export = "/volume1/data"   uid = 1000  gid = 1000
-# nfs_port = 0             mount_port = 0             reserved_port = true
+# id             = "22222222-3333-4444-8555-666666666666"
+# name           = "NAS data"
+# protocol       = "nfs"
+# server         = "nas"
+# export         = "/volume1/data"
+# uid            = 1000
+# gid            = 1000
+# nfs_port       = 0                # 0 = ask the portmapper on 111
+# mount_port     = 0                # the same
+# reserved_port  = true
+# drive_letter   = "N"
+# read_only      = false
+# mount_on_start = true
+# auto_reconnect = true
+# cache_ttl_secs = 5
 ```
 
 - **`ui-state.toml`,** beside this file, holds the window's size and position (§7.1). It is apart because moving a window should not rewrite and back up the profiles, and because it still works when this file is read-only. Anything wrong with it costs only what it held.
@@ -855,6 +867,7 @@ key_path = ""
   - A setting with a bad value or out of range takes its default and is reported, and the next save replaces it.
 - **Required in a profile:** `id`, `name`, `protocol`, `host`, `username`, `auth`, and `host` and `auth` in `jump`. The others take the defaults above: no `drive_letter` is Auto, no `key_path` is blank. No `username` in `jump`, or a blank one, is the profile's own (§7.3).
 - **Required in an SMB profile:** `id`, `name`, `protocol`, `server`, `share`, `auth`. No `sub_path`, `domain` or `username` is blank (*Current Windows user* needs no user; §7.3 asks for one with the other methods). An SMB profile has none of the SFTP keys, nor `cache_ttl_secs` and `keepalive_secs`; `auto_reconnect` is kept but Windows reconnects the drive whatever it says (§5.9).
+- **Required in an NFS profile (M4-05):** `id`, `name`, `protocol`, `server`, `export`. The others take the defaults above: UID and GID 1000, the portmapper for both ports, a reserved source port. There is no key for the NFS version, as v3 is the only one (FR-NFS-01); a later version adds one, and an older DriveMount keeps it as an unknown key. An NFS profile has no secret (AUTH_SYS has none, §8.4), so no `auth`, `username` or `remember`, and no `keepalive_secs`: the drive's own probe is an NFS `NULL` call (§5.10). `cache_ttl_secs` is also how long a path's file handle is trusted (§5.10).
 - `key_path` and `remember` stay in the file for an auth method with no use for them. When a profile changes protocol, only its unknown keys go along.
 - `show_other_drives` came with M3 and changes no existing key, so `schema_version` stays 1: an older file reads without a migration and gains the key at the next save.
 
@@ -862,7 +875,7 @@ key_path = ""
 
 Windows Credential Manager entries (NFR-SEC-01) are created only when "Remember" is ticked. They are deleted on profile delete, and when "Remember" is unticked.
 
-- **On Save,** a profile keeps only what it says it has: the password if it is *Password* with "Remember" (SSH or SMB), the passphrase if it is *Key file* with "Remember", and the jump password if the jump host uses one. *Ask each time* and *Current Windows user* keep none. Anything else is deleted. So is the passphrase when the key file changes, as it is of no use for another key, and a wrong one is E-AUTH with no second prompt. A change of host or user keeps them.
+- **On Save,** a profile keeps only what it says it has: the password if it is *Password* with "Remember" (SSH or SMB), the passphrase if it is *Key file* with "Remember", and the jump password if the jump host uses one. *Ask each time*, *Current Windows user* and NFS profiles keep none. Anything else is deleted. So is the passphrase when the key file changes, as it is of no use for another key, and a wrong one is E-AUTH with no second prompt. A change of host or user keeps them.
 - **Ticked in a prompt:** the secret is stored once the login has worked, before the row shows *Mounted*, and the profile's "Remember" is turned on, unless the file is read-only. A secret that cannot be stored costs a question at the next mount, not the drive.
 - **Order:** secrets go before the file changes. If the file then cannot be written, the worst that has happened is a question at the next mount, and the change can be tried again. The other way round, secrets could be left under a profile that no longer exists. A secret that cannot be deleted stops the Save or Delete. For an unreadable entry (§6.1), they go only if nothing else in the file uses that id.
 
@@ -976,7 +989,7 @@ This page replaces the list inside the main window, as the settings page does. A
 - **Header:** the state icon, the name, under it the state in words only while it is neither mounted nor unmounted ("Connecting…", "Reconnecting…", "Unmounting…", "Failed"; "Mapped outside DriveMount" for an external drive), as the icon already says that, then on the right the drive letter in full size, dimmed while it is not on it as on its row ("Auto" for a profile that asks for none), and the row's primary button. *Open in Explorer* is a button under the details, for a profile or an external drive, only while it is mounted (connected, for an external drive); Ctrl+Enter and the row's right-click menu do the same.
 - **Size:** the settings are at 14 px, one tight line each, and the buttons come right under them. Opening the page grows the window to at least 600 × 680 so that nothing scrolls, as §7.2 does.
 - **Problem:** what happened and what to do (§7.8). It is red for an error, and amber for a moved letter or a profile that needs correcting.
-- **Settings:** read-only. No secret is ever shown. An SMB profile shows Server, User (not with *Current Windows user*), Authentication, Share (the UNC path with the sub-path), Drive and *Mount at start*; its *Reconnecting* state reads "Disconnected (Windows will reconnect)" (§5.9).
+- **Settings:** read-only. No secret is ever shown. An SMB profile shows Server, User (not with *Current Windows user*), Authentication, Share (the UNC path with the sub-path), Drive and *Mount at start*; its *Reconnecting* state reads "Disconnected (Windows will reconnect)" (§5.9). An NFS profile shows Server, UID / GID, Export, Drive, *Mount at start*, Reconnect, Read-only, Cache, NFS port and Mount port ("Portmapper" when not fixed) and *Reserved port* (M4-05).
 - **Edit** opens the Add/Edit page (§7.2) in its place, and Cancel or Save returns to it. **Delete** asks first (FR-PROF-07), and the page closes when the profile is gone.
 - An entry of the file that cannot be read shows why it cannot be read, and offers only *Delete*.
 
@@ -992,7 +1005,8 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 - **Hint "Unmount to change"** shows at the top, and locked fields are disabled. If a mount starts with the page open, the locked fields go back to what is saved.
 
 - **v1:** shows SSH fields only.
-- **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it. NFS is hidden until M4. Switching keeps what was typed in the other protocol's boxes; Name, User, the password, Drive and *Mount when DriveMount starts* are shared.
+- **From M3:** a segmented control **SSH | SMB | NFS** appears at the top, and the fields below change with it. NFS was hidden until M4-05. Switching keeps what was typed in the other protocol's boxes; Name, User, the password, Drive and *Mount when DriveMount starts* are shared, and so are SMB's and NFS's Server box, and SSH's and NFS's *Advanced* flags and Cache.
+- **NFS fields (M4-05, FR-NFS-01):** Server (`server:/export` or an `nfs://` URL pasted into it is split, §7.3), Export, UID and GID on one line with the AUTH_SYS note under them (§8.4), short enough for one line, as the card counts a wrapped note as one line: "The server trusts these IDs; its export list (by IP) keeps others out.", then Drive and *Mount when DriveMount starts*. *Advanced* holds NFS port and Mount port (empty asks the portmapper, the placeholder says "Portmapper"), *Use reserved source port*, *Reconnect automatically*, *Read-only* and Cache (s). There is no NFS version: v3 is the only one. No user, password or *Remember*: AUTH_SYS has no secret. *Test connection* asks the portmapper (unless both ports are fixed), MOUNTs the export and sends FSINFO, so it meets E-NFS-ACCESS as a mount would.
 - **SMB fields (M3):** Server (a UNC path or `smb://` URL pasted into it is split, §7.3), Share, Sub-path with the note "Windows maps the whole share on the drive letter; Explorer opens at this folder.", Auth (*Password*, *Ask each time*, *Current Windows user*), then User and Domain (not with *Current Windows user*), the password and *Remember password* (with *Password*), Drive, and *Mount when DriveMount starts*. There is no *Advanced*: Windows reconnects a share whatever `auto_reconnect` says (§5.9), and maps it as the server allows, with no read-only mapping, so *Reconnect* and *Read-only* are not shown and keep what the file has. *Test connection* connects to the share without a drive letter, checks that the sub-path is a folder, and disconnects (§5.9).
 
 ```
@@ -1054,6 +1068,19 @@ A page in the list's place, built like the connection page (§7.1.1): a ← back
 - **UNC paste (FR-SMB-01):** `\\server\share[\sub\path]` pasted into the Server box fills server, share and sub-path. `//server/share/sub` and `smb://[[domain;]user[:password]@]server[:445]/share/sub` are understood too: a URL also fills Domain and User, with `%XX` decoded, and a password is dropped. A separator at the end is dropped, and the sub-path is stored with `\`. All or nothing, as for SSH: a share missing, a port other than 445, another scheme or any part that breaks its rule leaves the text in the Server box.
 - **`DOMAIN\user`** typed or pasted into the User box is split at the backslash into Domain and User, when both parts pass their rules. `user@corp.example` is not split: Windows takes it as it is.
 
+**NFS fields (FR-NFS-01, M4-05).**
+
+| Field | Rule | Message |
+|---|---|---|
+| Server | The Host rule: a DNS name, IPv4 or IPv6 address (nothing has to fit it into a UNC path) | "Enter a server name or IP address" |
+| Export | An absolute path, at most 1024 bytes (MOUNT's `MNTPATHLEN`), with no `.` or `..` and no NUL. Doubled separators and one at the end are left as typed | "Use the export's absolute path, such as /srv/nfs/data" |
+| UID, GID | Digits only, 0–4294967295 (AUTH_SYS's 32 bits). 0 is allowed; most servers map it to `nobody` (`root_squash`) | "Use a number from 0 to 4294967295" |
+| NFS port, Mount port | Empty (or 0) asks the portmapper; otherwise 1–65535 | "Leave empty to ask the portmapper, or use 1–65535" |
+| Cache (s) | As for SSH | As for SSH |
+
+- Drive, Name and the flags have the same rules as for SSH.
+- **Export paste:** `server:/export` pasted into the Server box (as `mount` and `showmount -e` write it, `[ipv6]:/export` too) fills Server and Export; `nfs://server[:port]/export` (RFC 2224) also fills NFS port, with `%XX` decoded. All or nothing, as for the other pastes: another scheme, a user, no export, or any part that breaks its rule leaves the text in the Server box.
+
 **Paste (FR-PROF-05).** Besides `[user@]host[:port][/path]` and `sftp://` before it, the form the main window shows is understood: `user@host:/path`, `user@host:~`, `user@host:C:/data`. So are `[::1]:22`, a bare `::1`, and a user with a domain (`me@corp.example@host`).
 - In a URL, `%XX` is decoded. `/~` and `/~/…` after a host mean home, in both forms.
 - A password (`user:secret@host`) is dropped, and goes in no field.
@@ -1104,7 +1131,7 @@ This page replaces the list area inside the main window; a ← back arrow return
 - **Start with Windows** writes or removes the Run value before the file is saved. If the registry refuses, the box goes back to off and a banner says why. If the file then cannot be saved, the Run value is put back. At start, with the setting on, the value is written again, as the exe may have moved. With it off, a value that starts this very exe (as the installer's *Start with Windows* writes it) turns the setting on, so the page shows what Windows will do; any other value is left alone.
 - **A failed save** shows a banner, and the page goes back to what is in use.
 - **Read-only file:** the controls are disabled; the banner above says why.
-- **WinFsp line** (FR-SET-07): "WinFsp 2.1.25156 installed"; too old: "WinFsp 2.0.x is installed, but 2.1 or later is required to mount SSH drives"; missing: the banner's text. The last two have *Download WinFsp*.
+- **WinFsp line** (FR-SET-07): "WinFsp 2.1.25156 installed"; too old: "WinFsp 2.0.x is installed, but 2.1 or later is required to mount SSH and NFS drives"; missing: the banner's text. The last two have *Download WinFsp*.
 
 ### 7.5.1 Information page
 

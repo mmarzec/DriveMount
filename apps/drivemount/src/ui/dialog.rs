@@ -25,11 +25,13 @@ use uuid::Uuid;
 
 use super::errors::{read_only_text, shown_connect_error};
 use super::form::{
-    Base, Checked, KeyChecks, TakeOver, check, fill_from_paste, fill_from_smb_user,
-    fill_from_unc_paste, form_of, form_taking_over, looks_pasted, new_form, typed_secrets,
+    Base, Checked, KeyChecks, TakeOver, check, fill_from_export_paste, fill_from_paste,
+    fill_from_smb_user, fill_from_unc_paste, form_of, form_taking_over, looks_pasted, new_form,
+    typed_secrets,
 };
 use super::generated::{
-    DialogForm, DialogMarks, DialogView, KeyFileBox, PromptInput, PromptKind, PromptView, Texts,
+    DialogForm, DialogMarks, DialogView, KeyFileBox, PromptInput, PromptKind, PromptView,
+    ProtocolChoice, Texts,
 };
 use super::list::ExternalDrive;
 use super::prompts::{Entry, Mailbox, Posted, Question, round_message};
@@ -234,7 +236,8 @@ impl Inner {
         self.form_edited();
     }
 
-    /// The SMB Server box, which also splits a UNC path or `smb://` URL pasted into it (FR-SMB-01).
+    /// The Server box, which also splits a UNC path or `smb://` URL pasted into it (FR-SMB-01), or for
+    /// NFS `server:/export` or an `nfs://` URL.
     pub(super) fn server_edited(&self, text: &str) {
         let Some(window) = self.window.upgrade() else {
             return;
@@ -250,7 +253,12 @@ impl Inner {
         };
         if was_pasted {
             let mut form = window.get_form();
-            if fill_from_unc_paste(&mut form, text) {
+            let split = if form.protocol == ProtocolChoice::Nfs {
+                fill_from_export_paste(&mut form, text)
+            } else {
+                fill_from_unc_paste(&mut form, text)
+            };
+            if split {
                 if let Some(dialog) = self.dialog.borrow_mut().as_mut() {
                     dialog.last_server = form.server.clone();
                 }
@@ -312,13 +320,14 @@ impl Inner {
             }
 
             let form = window.get_form();
-            let boxes: [(Field, &str); 6] = [
+            let boxes: [(Field, &str); 7] = [
                 (Field::Name, form.name.as_str()),
                 (Field::Host, form.host.as_str()),
                 (Field::User, form.user.as_str()),
                 (Field::KeyFile, form.key_file.as_str()),
                 (Field::Server, form.server.as_str()),
                 (Field::Share, form.share.as_str()),
+                (Field::Export, form.export.as_str()),
             ];
             for (field, text) in boxes {
                 if !text.is_empty() && !dialog.filled.contains(&field) {
@@ -1105,6 +1114,7 @@ fn remembers_password(profile: &Profile) -> bool {
     match &profile.protocol {
         Protocol::Sftp(sftp) => matches!(sftp.auth, SftpAuth::Password { remember: true }),
         Protocol::Smb(smb) => smb.auth == SmbAuth::Password { remember: true },
+        Protocol::Nfs(_) => false,
     }
 }
 
@@ -1177,6 +1187,11 @@ fn marks_of(
         share: text_of(Field::Share),
         sub_path: text_of(Field::SubPath),
         domain: text_of(Field::Domain),
+        export: text_of(Field::Export),
+        uid: text_of(Field::Uid),
+        gid: text_of(Field::Gid),
+        nfs_port: text_of(Field::NfsPort),
+        mount_port: text_of(Field::MountPort),
     }
 }
 

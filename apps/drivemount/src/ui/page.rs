@@ -27,11 +27,25 @@ pub(super) enum Login {
     WindowsUser,
 }
 
+/// What only an NFS profile has to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct NfsLines {
+    pub uid: u32,
+    pub gid: u32,
+    /// `None` asks the portmapper.
+    pub nfs_port: Option<u16>,
+    pub mount_port: Option<u16>,
+    pub reserved_port: bool,
+}
+
 /// A profile's settings, as the page lists them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Details {
     /// An SMB share: `host` is its server and `remote_path` its UNC path, with the sub-path.
     pub smb: bool,
+    /// An NFS export: `host` is its server and `remote_path` the export. It has no user, login or
+    /// keep-alive.
+    pub nfs: Option<NfsLines>,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -61,6 +75,7 @@ impl Details {
             Protocol::Smb(smb) => {
                 return Self {
                     smb: true,
+                    nfs: None,
                     host: smb.server.clone(),
                     port: SMB_PORT,
                     user: smb.account(),
@@ -79,9 +94,34 @@ impl Details {
                     keepalive_secs: 0,
                 };
             }
+            Protocol::Nfs(nfs) => {
+                return Self {
+                    smb: false,
+                    nfs: Some(NfsLines {
+                        uid: nfs.uid,
+                        gid: nfs.gid,
+                        nfs_port: nfs.nfs_port,
+                        mount_port: nfs.mount_port,
+                        reserved_port: nfs.reserved_port,
+                    }),
+                    host: nfs.server.clone(),
+                    port: nfs.nfs_port.unwrap_or(0),
+                    user: String::new(),
+                    login: Login::Ask,
+                    remote_path: nfs.export.clone(),
+                    drive,
+                    jump_host: String::new(),
+                    mount_on_start: profile.mount_on_start,
+                    auto_reconnect: profile.auto_reconnect,
+                    read_only: profile.read_only,
+                    cache_secs: nfs.cache_ttl_secs,
+                    keepalive_secs: 0,
+                };
+            }
         };
         Self {
             smb: false,
+            nfs: None,
             host: sftp.host.clone(),
             port: sftp.port,
             user: sftp.username.clone(),
@@ -169,5 +209,34 @@ mod tests {
         assert_eq!(details.login, Login::WindowsUser);
         assert_eq!(details.remote_path, r"\\nas\media\films");
         assert_eq!(details.jump_host, "");
+    }
+
+    #[test]
+    fn an_nfs_profile_shows_its_server_export_ids_and_ports() {
+        use drivemount_core::profile::NfsProfile;
+
+        let mut nfs = NfsProfile::new("nas", "/volume1/data");
+        nfs.uid = 1026;
+        nfs.mount_port = Some(892);
+        nfs.cache_ttl_secs = 0;
+        let mut profile = Profile::new("Data", Protocol::Nfs(nfs));
+        profile.read_only = true;
+
+        let details = Details::of(&profile);
+        assert!(!details.smb);
+        assert_eq!(details.host, "nas");
+        assert_eq!(details.remote_path, "/volume1/data");
+        assert_eq!(details.cache_secs, 0);
+        assert!(details.read_only);
+        assert_eq!(
+            details.nfs,
+            Some(NfsLines {
+                uid: 1026,
+                gid: 1000,
+                nfs_port: None,
+                mount_port: Some(892),
+                reserved_port: true,
+            })
+        );
     }
 }

@@ -21,8 +21,8 @@ use thiserror::Error;
 
 use super::paste::split_host;
 use super::{
-    DEFAULT_PORT, DriveChoice, JumpAuth, JumpHost, Profile, Protocol, SftpAuth, SftpProfile,
-    SmbAuth, SmbProfile,
+    DEFAULT_PORT, DriveChoice, JumpAuth, JumpHost, NfsProfile, Profile, Protocol, SftpAuth,
+    SftpProfile, SmbAuth, SmbProfile,
 };
 
 const MAX_NAME_CHARS: usize = 64;
@@ -46,6 +46,8 @@ const SMB_USER_FORBIDDEN: &[char] = &[
     '"', '/', '\\', '[', ']', ':', ';', '|', '=', ',', '+', '*', '?', '<', '>',
 ];
 const MAX_DOMAIN_CHARS: usize = 255;
+/// MOUNT's limit on a path (RFC 1813, `MNTPATHLEN`), in bytes.
+const MAX_EXPORT_BYTES: usize = 1024;
 const DOMAIN_FORBIDDEN: &[char] = &['\\', '/', ':', '*', '?', '"', '<', '>', '|', '@'];
 
 /// Enough for the headers OpenSSL can put in front of a key.
@@ -101,6 +103,16 @@ pub enum Field {
     SubPath,
     /// SMB: the user's domain.
     Domain,
+    /// NFS: the export's path.
+    Export,
+    /// NFS: the UID.
+    Uid,
+    /// NFS: the GID.
+    Gid,
+    /// NFS: the fixed NFS port.
+    NfsPort,
+    /// NFS: the fixed MOUNT port.
+    MountPort,
 }
 
 /// What is wrong with a value. `Display` is the text to show (spec §7.3), in English for now.
@@ -196,6 +208,15 @@ pub enum Problem {
     /// A domain in both boxes: `me@corp.example` in User and something in Domain.
     #[error("Leave Domain empty when the user name ends in @domain")]
     DomainTwice,
+    /// Not an absolute path MOUNT can take.
+    #[error("Use the export's absolute path, such as /srv/nfs/data")]
+    ExportInvalid,
+    /// Not a whole number that fits AUTH_SYS's 32 bits.
+    #[error("Use a number from 0 to 4294967295")]
+    IdOutOfRange,
+    /// Neither empty nor 1–65535.
+    #[error("Leave empty to ask the portmapper, or use 1–65535")]
+    NfsPortInvalid,
 }
 
 /// A [`Problem`] and the box to mark.
@@ -279,8 +300,18 @@ pub fn validate_profile(
     match &profile.protocol {
         Protocol::Sftp(sftp) => check_sftp(&mut result, sftp, read_key),
         Protocol::Smb(smb) => check_smb(&mut result, smb),
+        Protocol::Nfs(nfs) => check_nfs(&mut result, nfs),
     }
     result
+}
+
+/// The UID and GID cannot be wrong once they are numbers: the model's type is AUTH_SYS's.
+fn check_nfs(result: &mut Validation, nfs: &NfsProfile) {
+    result.check(Field::Server, check_nfs_server(&nfs.server));
+    result.check(Field::Export, check_export(&nfs.export));
+    result.check(Field::NfsPort, check_nfs_port(nfs.nfs_port));
+    result.check(Field::MountPort, check_nfs_port(nfs.mount_port));
+    result.check(Field::Cache, check_cache_secs(nfs.cache_ttl_secs));
 }
 
 /// The user and domain are only checked when they are sent: *Current Windows user* sends neither, and
@@ -408,6 +439,70 @@ pub fn check_server(server: &str) -> Result<(), Problem> {
         Err(_) if is_dns_name(server) => Ok(()),
         Err(_) => Err(Problem::ServerInvalid),
     }
+}
+
+/// NFS server: the Host rule, IPv6 addresses included, as nothing needs to fit it into a UNC path.
+///
+/// # Errors
+///
+/// [`Problem::ServerInvalid`].
+pub fn check_nfs_server(server: &str) -> Result<(), Problem> {
+    check_host(server).map_err(|_| Problem::ServerInvalid)
+}
+
+/// NFS export: an absolute path, as the server's `exports` lists it, of at most 1024 bytes, with no
+/// `.` or `..` in it and no NUL. Doubled separators and one at the end are allowed, as `mount` takes
+/// them.
+///
+/// # Errors
+///
+/// [`Problem::ExportInvalid`].
+pub fn check_export(export: &str) -> Result<(), Problem> {
+    let is_valid = export.starts_with('/')
+        && export.len() <= MAX_EXPORT_BYTES
+        && !export.contains('\0')
+        && export.split('/').all(|name| name != "." && name != "..");
+    if is_valid {
+        Ok(())
+    } else {
+        Err(Problem::ExportInvalid)
+    }
+}
+
+/// The UID and GID boxes: digits only, 0 to 4294967295.
+///
+/// # Errors
+///
+/// [`Problem::IdOutOfRange`].
+pub fn parse_id(text: &str) -> Result<u32, Problem> {
+    let text = text.trim();
+    if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Problem::IdOutOfRange);
+    }
+    text.parse().map_err(|_| Problem::IdOutOfRange)
+}
+
+/// A fixed NFS or MOUNT port: none, which asks the portmapper, or 1–65535.
+fn check_nfs_port(port: Option<u16>) -> Result<(), Problem> {
+    match port {
+        Some(0) => Err(Problem::NfsPortInvalid),
+        _ => Ok(()),
+    }
+}
+
+/// The NFS port and Mount port boxes: empty or 0 asks the portmapper, as 0 does in the file.
+///
+/// # Errors
+///
+/// [`Problem::NfsPortInvalid`].
+pub fn parse_nfs_port(text: &str) -> Result<Option<u16>, Problem> {
+    let text = text.trim();
+    if text.is_empty() || text == "0" {
+        return Ok(None);
+    }
+    port_from_digits(text)
+        .map(Some)
+        .map_err(|_| Problem::NfsPortInvalid)
 }
 
 /// SMB share: 1–80 characters, none of `\ / [ ] : | < > + = ; , ? * "` or control characters. `C$`
@@ -1779,5 +1874,123 @@ mod tests {
         fields.domain = "CORP".to_owned();
         assert_eq!(fields.unc_with_sub_path(), r"\\nas\media\films\2024");
         assert_eq!(fields.account(), r"CORP\marcin");
+    }
+
+    // NFS (M4-05)
+
+    fn export() -> Profile {
+        Profile::new(
+            "Data",
+            Protocol::Nfs(NfsProfile::new("nas", "/volume1/data")),
+        )
+    }
+
+    fn nfs(profile: &mut Profile) -> &mut NfsProfile {
+        let Protocol::Nfs(nfs) = &mut profile.protocol else {
+            panic!("not NFS");
+        };
+        nfs
+    }
+
+    #[test]
+    fn an_nfs_server_follows_the_host_rule_with_ipv6_allowed() {
+        for server in ["nas", "nas.local", "10.0.4.21", "fe80::1", "::1"] {
+            assert_eq!(check_nfs_server(server), Ok(()), "{server:?}");
+        }
+        for server in ["", "n as", "nas:/x", "10.0.4.256", "[::1]"] {
+            assert_eq!(
+                check_nfs_server(server),
+                Err(Problem::ServerInvalid),
+                "{server:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_export_is_an_absolute_path_mount_can_take() {
+        for export in ["/", "/srv", "/volume1/my data", "/srv/nfs/", "//srv"] {
+            assert_eq!(check_export(export), Ok(()), "{export:?}");
+        }
+        let too_long = format!("/{}", "a".repeat(1024));
+        for export in [
+            "",
+            "srv",
+            "~/data",
+            "/srv/../etc",
+            "/srv/./x",
+            "/a\0b",
+            too_long.as_str(),
+        ] {
+            assert_eq!(
+                check_export(export),
+                Err(Problem::ExportInvalid),
+                "{export:?}"
+            );
+        }
+        assert_eq!(check_export(&format!("/{}", "a".repeat(1023))), Ok(()));
+    }
+
+    #[test]
+    fn a_uid_or_gid_is_any_32_bit_number() {
+        assert_eq!(parse_id("0"), Ok(0));
+        assert_eq!(parse_id(" 1000 "), Ok(1000));
+        assert_eq!(parse_id("4294967295"), Ok(u32::MAX));
+        for text in ["", "-1", "+1", "4294967296", "1e3", "abc"] {
+            assert_eq!(parse_id(text), Err(Problem::IdOutOfRange), "{text:?}");
+        }
+    }
+
+    #[test]
+    fn an_empty_nfs_port_asks_the_portmapper() {
+        assert_eq!(parse_nfs_port(""), Ok(None));
+        assert_eq!(parse_nfs_port("  "), Ok(None));
+        assert_eq!(parse_nfs_port("0"), Ok(None));
+        assert_eq!(parse_nfs_port("2049"), Ok(Some(2049)));
+        for text in ["65536", "-1", "+2049", "nfs"] {
+            assert_eq!(
+                parse_nfs_port(text),
+                Err(Problem::NfsPortInvalid),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_whole_nfs_profile_is_checked_field_by_field() {
+        assert_eq!(
+            validate_profile(&export(), &[], &no_file),
+            Validation::default()
+        );
+
+        let mut profile = export();
+        let fields = nfs(&mut profile);
+        fields.server = "n as".to_owned();
+        fields.export = "data".to_owned();
+        fields.nfs_port = Some(0);
+        fields.mount_port = Some(0);
+        fields.cache_ttl_secs = 61;
+        let marked: Vec<_> = validate_profile(&profile, &[], &no_file)
+            .errors
+            .into_iter()
+            .map(|error| (error.field, error.problem))
+            .collect();
+        assert_eq!(
+            marked,
+            [
+                (Field::Server, Problem::ServerInvalid),
+                (Field::Export, Problem::ExportInvalid),
+                (Field::NfsPort, Problem::NfsPortInvalid),
+                (Field::MountPort, Problem::NfsPortInvalid),
+                (Field::Cache, Problem::CacheOutOfRange),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_nfs_address_is_written_as_mount_takes_it() {
+        let mut profile = export();
+        assert_eq!(nfs(&mut profile).address(), "nas:/volume1/data");
+        nfs(&mut profile).server = "fe80::1".to_owned();
+        assert_eq!(nfs(&mut profile).address(), "[fe80::1]:/volume1/data");
     }
 }

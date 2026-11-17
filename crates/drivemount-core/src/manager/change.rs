@@ -24,7 +24,8 @@ fn connection_changed(old: &Profile, new: &Profile) -> bool {
 }
 
 /// The secrets this profile says it has. Nothing else may stay in the store (spec §6.2), and *Ask
-/// each time* never has any (FR-SSH-05), nor has *Current Windows user* (FR-SMB-02).
+/// each time* never has any (FR-SSH-05), nor has *Current Windows user* (FR-SMB-02), nor NFS, whose
+/// AUTH_SYS has no secret.
 fn may_keep(profile: &Profile, slot: SecretSlot) -> bool {
     match (&profile.protocol, slot) {
         (Protocol::Sftp(sftp), SecretSlot::Password) => {
@@ -37,7 +38,7 @@ fn may_keep(profile: &Profile, slot: SecretSlot) -> bool {
             smb.auth == SmbAuth::Password { remember: true }
         }
         (_, SecretSlot::JumpPassword) => jump_uses_a_password(profile),
-        (Protocol::Smb(_), SecretSlot::Passphrase) => false,
+        (Protocol::Smb(_), SecretSlot::Passphrase) | (Protocol::Nfs(_), _) => false,
     }
 }
 
@@ -47,7 +48,7 @@ fn jump_uses_a_password(profile: &Profile) -> bool {
             sftp.jump.as_ref().map(|jump| &jump.auth),
             Some(JumpAuth::Password)
         ),
-        Protocol::Smb(_) => false,
+        Protocol::Smb(_) | Protocol::Nfs(_) => false,
     }
 }
 
@@ -200,7 +201,7 @@ fn has_use_for(profile: &Profile, slot: SecretSlot) -> bool {
         }
         (Protocol::Smb(smb), SecretSlot::Password) => matches!(smb.auth, SmbAuth::Password { .. }),
         (_, SecretSlot::JumpPassword) => jump_uses_a_password(profile),
-        (Protocol::Smb(_), SecretSlot::Passphrase) => false,
+        (Protocol::Smb(_), SecretSlot::Passphrase) | (Protocol::Nfs(_), _) => false,
     }
 }
 
@@ -220,5 +221,6 @@ const fn tick_remember(profile: &mut Profile, slot: SecretSlot) {
                 *remember = true;
             }
         }
+        Protocol::Nfs(_) => {}
     }
 }

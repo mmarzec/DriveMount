@@ -8,8 +8,7 @@ import { CheckBox, ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme, Icons, AppButton, Card } from "theme.slint";
 
 export enum AuthChoice { key-file, password, agent, ask }
-// NFS joins at M4 (spec 7.2).
-export enum ProtocolChoice { ssh, smb }
+export enum ProtocolChoice { ssh, smb, nfs }
 export enum SmbAuthChoice { password, ask, windows-user }
 export enum KeyFileBox { profile, jump, login }
 
@@ -43,6 +42,14 @@ export struct DialogForm {
     sub-path: string,
     domain: string,
     smb-auth: SmbAuthChoice,
+    // NFS (FR-NFS-01). Server is SMB's box; Cache, Reconnect and Read-only are SSH's.
+    export: string,
+    uid: string,
+    gid: string,
+    // Empty asks the portmapper.
+    nfs-port: string,
+    mount-port: string,
+    reserved-port: bool,
 }
 
 // What to say under each box. Empty means nothing.
@@ -65,6 +72,11 @@ export struct DialogMarks {
     share: string,
     sub-path: string,
     domain: string,
+    export: string,
+    uid: string,
+    gid: string,
+    nfs-port: string,
+    mount-port: string,
 }
 
 // Everything else Rust decides.
@@ -289,6 +301,7 @@ export component ProfileDialog {
     callback edited();
     callback host-edited(text: string);
     // SMB: a UNC path pasted into Server, and DOMAIN\user typed into User, are split (spec 7.3).
+    // NFS: server:/export pasted into Server is split.
     callback server-edited(text: string);
     callback user-edited(text: string);
     callback browse(which: KeyFileBox);
@@ -301,6 +314,7 @@ export component ProfileDialog {
     property <bool> jump-in-use: root.form.jump-host != "";
     property <bool> ssh: root.form.protocol == ProtocolChoice.ssh;
     property <bool> smb: root.form.protocol == ProtocolChoice.smb;
+    property <bool> nfs: root.form.protocol == ProtocolChoice.nfs;
     // SMB's *Current Windows user* sends neither user nor domain.
     property <bool> smb-login: root.smb && root.form.smb-auth != SmbAuthChoice.windows-user;
 
@@ -400,6 +414,16 @@ export component ProfileDialog {
                                 checked: root.smb;
                                 chosen => {
                                     root.form.protocol = ProtocolChoice.smb;
+                                    root.edited();
+                                }
+                            }
+
+                            Segment {
+                                text: "NFS";
+                                enabled: root.editable;
+                                checked: root.nfs;
+                                chosen => {
+                                    root.form.protocol = ProtocolChoice.nfs;
                                     root.edited();
                                 }
                             }
@@ -609,6 +633,69 @@ export component ProfileDialog {
                         }
                     }
 
+                    if root.nfs: FormRow {
+                        label: @tr("Server");
+                        problem: root.marks.server;
+
+                        LineEdit {
+                            text <=> root.form.server;
+                            placeholder-text: "nas, or nas:/volume1/data";
+                            enabled: root.editable;
+                            accessible-label: @tr("Server");
+                            edited(text) => {
+                                root.server-edited(text);
+                            }
+                        }
+                    }
+
+                    if root.nfs: FormRow {
+                        label: @tr("Export");
+                        problem: root.marks.export;
+
+                        LineEdit {
+                            text <=> root.form.export;
+                            placeholder-text: "/volume1/data";
+                            enabled: root.editable;
+                            accessible-label: @tr("Export");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
+                    // Spec 8.4: AUTH_SYS sends these as they are. The note stays on one line: the card's
+                    // height counts wrapped text in a nested layout as one line.
+                    if root.nfs: FormRow {
+                        label: @tr("UID");
+                        problem: root.marks.uid != "" ? root.marks.uid : root.marks.gid;
+                        note: @tr("The server trusts these IDs; its export list (by IP) keeps others out.");
+
+                        LineEdit {
+                            text <=> root.form.uid;
+                            enabled: root.editable;
+                            accessible-label: @tr("UID");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+
+                        Text {
+                            text: @tr("GID");
+                            vertical-alignment: center;
+                            horizontal-stretch: 0;
+                            accessible-role: none;
+                        }
+
+                        LineEdit {
+                            text <=> root.form.gid;
+                            enabled: root.editable;
+                            accessible-label: @tr("GID");
+                            edited => {
+                                root.edited();
+                            }
+                        }
+                    }
+
                     if root.ssh: FormRow {
                         label: @tr("Auth");
 
@@ -765,8 +852,8 @@ export component ProfileDialog {
                         }
                     }
 
-                    // SSH's only: Windows reconnects a share itself, and maps it as the server allows.
-                    if root.ssh: HorizontalLayout {
+                    // Not SMB's: Windows reconnects a share itself, and maps it as the server allows.
+                    if !root.smb: HorizontalLayout {
                         alignment: start;
 
                         AppButton {
@@ -780,10 +867,51 @@ export component ProfileDialog {
                         }
                     }
 
-                    if root.ssh && root.advanced-open: VerticalLayout {
+                    if !root.smb && root.advanced-open: VerticalLayout {
                         spacing: 6px;
 
-                        FormRow {
+                        if root.nfs: FormRow {
+                            label: @tr("NFS port");
+                            problem: root.marks.nfs-port;
+
+                            LineEdit {
+                                text <=> root.form.nfs-port;
+                                placeholder-text: @tr("Portmapper");
+                                enabled: root.editable;
+                                accessible-label: @tr("NFS port");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        if root.nfs: FormRow {
+                            label: @tr("Mount port");
+                            problem: root.marks.mount-port;
+
+                            LineEdit {
+                                text <=> root.form.mount-port;
+                                placeholder-text: @tr("Portmapper");
+                                enabled: root.editable;
+                                accessible-label: @tr("Mount port");
+                                edited => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        if root.nfs: FormRow {
+                            CheckBox {
+                                text: @tr("Use reserved source port");
+                                checked <=> root.form.reserved-port;
+                                enabled: root.editable;
+                                toggled => {
+                                    root.edited();
+                                }
+                            }
+                        }
+
+                        if root.ssh: FormRow {
                             label: @tr("Jump host");
                             problem: root.marks.jump-host;
 
@@ -810,7 +938,7 @@ export component ProfileDialog {
                             }
                         }
 
-                        if root.jump-in-use && root.form.jump-auth-index == 1: FormRow {
+                        if root.ssh && root.jump-in-use && root.form.jump-auth-index == 1: FormRow {
                             label: @tr("Its key file");
                             problem: root.marks.jump-key-file;
 
@@ -834,7 +962,7 @@ export component ProfileDialog {
                             }
                         }
 
-                        if root.jump-in-use && root.form.jump-auth-index == 2: FormRow {
+                        if root.ssh && root.jump-in-use && root.form.jump-auth-index == 2: FormRow {
                             label: @tr("Its password");
                             problem: root.marks.jump-password;
 
@@ -886,7 +1014,7 @@ export component ProfileDialog {
                             }
                         }
 
-                        FormRow {
+                        if root.ssh: FormRow {
                             label: @tr("Keep-alive (s)");
                             problem: root.marks.keep-alive;
 

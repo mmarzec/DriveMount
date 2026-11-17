@@ -1482,7 +1482,7 @@ fn list_entry(
                 kind: EntryKind::Profile,
                 name: (&row.name).into(),
                 address: (&row.address).into(),
-                protocol: if row.smb { "SMB" } else { "SSH" }.into(),
+                protocol: row.tag.into(),
                 letter: row
                     .letter
                     .map(|letter| letter.to_string())
@@ -1589,6 +1589,15 @@ fn page_view(texts: &Texts<'_>, list: &ListState, item: &Item) -> PageView {
             if let Some(profile) = list.profile(row.id) {
                 let details = Details::of(profile);
                 view.smb = details.smb;
+                if let Some(nfs) = &details.nfs {
+                    let port_text = |port: Option<u16>| port.map(|port| port.to_string());
+                    view.nfs = true;
+                    view.uid = nfs.uid.to_string().into();
+                    view.gid = nfs.gid.to_string().into();
+                    view.nfs_port = port_text(nfs.nfs_port).unwrap_or_default().into();
+                    view.mount_port = port_text(nfs.mount_port).unwrap_or_default().into();
+                    view.reserved_port = nfs.reserved_port;
+                }
                 view.host = details.host.into();
                 view.port = details.port.to_string().into();
                 view.user = details.user.into();

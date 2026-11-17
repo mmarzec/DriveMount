@@ -114,6 +114,16 @@ remember = true
 drive_letter = "M"
 
 [[profiles]]
+id = "00000000-0000-4000-8000-000000000009"
+name = "NAS data"
+protocol = "nfs"
+server = "nas"
+export = "/volume1/data"
+uid = 1026
+gid = 100
+drive_letter = "N"
+
+[[profiles]]
 id = "00000000-0000-4000-8000-000000000007"
 name = "Bad port"
 protocol = "sftp"

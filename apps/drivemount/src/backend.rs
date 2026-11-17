@@ -1,18 +1,40 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! From a saved profile to something the manager can mount: SFTP through WinFsp, SMB through Windows
-//! itself, and the system's drive letters. Turning one crate's `SftpProfile` into the other's is the only part that does not
-//! need Windows.
+//! From a saved profile to something the manager can mount: SFTP and NFS through WinFsp, SMB through
+//! Windows itself, and the system's drive letters. Turning a saved profile into what a connector takes
+//! is the only part that does not need Windows.
 
 use std::path::Path;
 use std::time::Duration;
 
-use drivemount_core::profile::{JumpAuth, SftpAuth, SftpProfile as SavedSftp};
+use drivemount_core::profile::{
+    JumpAuth, NfsProfile as SavedNfs, SftpAuth, SftpProfile as SavedSftp,
+};
+use drivemount_nfs::{Identity, NfsProfile};
 use drivemount_sftp::connector::{AgentSource, Auth, JumpHost, SftpProfile};
 use drivemount_vfs::{Secret, SecretSlot};
 
 /// The most dispatcher threads a drive gets (spec §6.1).
 const MOST_THREADS: u32 = 8;
+
+/// What an NFS connection needs, from what a profile says (FR-NFS-01). AUTH_SYS has no secret, and
+/// the profile's cache TTL is also how long a path's file handle is trusted (spec §5.10).
+#[must_use]
+pub fn nfs_profile(saved: &SavedNfs, timeout: Duration) -> NfsProfile {
+    NfsProfile {
+        host: saved.server.clone(),
+        export: saved.export.clone(),
+        identity: Identity {
+            uid: saved.uid,
+            gid: saved.gid,
+        },
+        mount_port: saved.mount_port,
+        nfs_port: saved.nfs_port,
+        reserved_port: saved.reserved_port,
+        timeout,
+        handle_ttl: Duration::from_secs(saved.cache_ttl_secs),
+    }
+}
 
 /// What a connection needs, from what a profile says. `secret` gives a stored or typed secret: a
 /// profile only says whether it should have one, and a slot it has no use for is not asked for.
@@ -99,6 +121,7 @@ mod windows {
     use drivemount_core::config::Settings;
     use drivemount_core::manager::{BackendFactory, DriveLetters};
     use drivemount_core::profile::{Profile, Protocol, SmbAuth as SavedSmbAuth, SmbProfile};
+    use drivemount_nfs::{NfsConnector, NfsOptions};
     use drivemount_sftp::connector::SftpConnector;
     use drivemount_smb::{SmbAuth, SmbBackend, SmbTarget};
     use drivemount_vfs::{
@@ -110,7 +133,28 @@ mod windows {
     use tokio::sync::watch;
     use uuid::Uuid;
 
-    use super::{dispatcher_threads, own_slot, sftp_profile};
+    use super::{dispatcher_threads, nfs_profile, own_slot, sftp_profile};
+
+    /// The drive WinFsp shows for a profile: its name, its file system's, and its cache.
+    fn volume_config(
+        profile: &Profile,
+        settings: &Settings,
+        file_system_name: &str,
+        cache_ttl_secs: u64,
+    ) -> VolumeConfig {
+        let cores = thread::available_parallelism()
+            .ok()
+            .and_then(|cores| u32::try_from(cores.get()).ok());
+        VolumeConfig {
+            slug: profile.slug(),
+            label: profile.name.clone(),
+            file_system_name: file_system_name.to_owned(),
+            op_timeout: Duration::from_secs(settings.op_timeout_secs),
+            cache_ttl: Duration::from_secs(cache_ttl_secs),
+            threads: dispatcher_threads(settings.winfsp_threads, cores),
+            read_only: profile.read_only,
+        }
+    }
 
     /// What Windows is to map for an SMB profile. `secret` gives a stored or typed password, and is
     /// only asked for with *Password*.
@@ -148,7 +192,7 @@ mod windows {
         }
     }
 
-    /// Makes SFTP drives through WinFsp and SMB drives through Windows. NFS joins it at M4.
+    /// Makes SFTP and NFS drives through WinFsp, and SMB drives through Windows.
     pub struct DriveFactory {
         secrets: Arc<dyn SecretStore>,
         known_hosts: PathBuf,
@@ -191,6 +235,17 @@ mod windows {
                     let target = smb_target(smb, |slot| self.stored(profile.id, slot));
                     return Ok(Box::new(SmbBackend::new(target)));
                 }
+                // One connector for the whole mount: a reconnect gives back the file system it
+                // handed out, so open files carry on (FR-NFS-04).
+                Protocol::Nfs(nfs) => {
+                    let timeout = Duration::from_secs(settings.op_timeout_secs);
+                    let connector = NfsConnector::new(
+                        nfs_profile(nfs, timeout),
+                        NfsOptions::DEFAULT_CONNECTIONS,
+                    );
+                    let config = volume_config(profile, settings, "DM-NFS", nfs.cache_ttl_secs);
+                    return Ok(Box::new(WinFspBackend::new(connector, config)));
+                }
             };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
             let connection = sftp_profile(sftp, &self.known_hosts, timeout, |slot| {
@@ -199,18 +254,7 @@ mod windows {
             // One connector for the whole mount: what it remembers is what makes a reconnect ask
             // nothing, and it goes when the backend does (NFR-SEC-03).
             let connector = Arc::new(SftpConnector::new(connection));
-            let cores = thread::available_parallelism()
-                .ok()
-                .and_then(|cores| u32::try_from(cores.get()).ok());
-            let config = VolumeConfig {
-                slug: profile.slug(),
-                label: profile.name.clone(),
-                file_system_name: "DM-SFTP".to_owned(),
-                op_timeout: timeout,
-                cache_ttl: Duration::from_secs(sftp.cache_ttl_secs),
-                threads: dispatcher_threads(settings.winfsp_threads, cores),
-                read_only: profile.read_only,
-            };
+            let config = volume_config(profile, settings, "DM-SFTP", sftp.cache_ttl_secs);
             Ok(Box::new(SftpDrive {
                 drive: WinFspBackend::new(SharedConnector(Arc::clone(&connector)), config),
                 connector,
@@ -237,6 +281,14 @@ mod windows {
                         }
                     });
                     return SmbBackend::new(target).test(&smb.sub_path, prompter).await;
+                }
+                // MOUNT gives the export's root, and FSINFO is the first call on it, so a
+                // connection that works has passed E-NFS-ACCESS's checks (FR-NFS-05).
+                Protocol::Nfs(nfs) => {
+                    let timeout = Duration::from_secs(settings.op_timeout_secs);
+                    let connector = NfsConnector::new(nfs_profile(nfs, timeout), 1);
+                    let _fs = connector.connect(prompter).await?;
+                    return connector.probe().await;
                 }
             };
             let timeout = Duration::from_secs(settings.op_timeout_secs);
@@ -486,6 +538,33 @@ mod tests {
         assert_eq!(dispatcher_threads(0, None), 8);
         assert_eq!(dispatcher_threads(2, Some(16)), 2);
         assert_eq!(dispatcher_threads(32, Some(16)), 8);
+    }
+
+    #[test]
+    fn an_nfs_profile_carries_over_with_its_cache_as_the_handle_ttl() {
+        let mut saved = SavedNfs::new("nas", "/volume1/data");
+        saved.uid = 1026;
+        saved.gid = 100;
+        saved.nfs_port = Some(2049);
+        saved.reserved_port = false;
+        saved.cache_ttl_secs = 10;
+
+        let profile = nfs_profile(&saved, Duration::from_secs(15));
+
+        assert_eq!(profile.host, "nas");
+        assert_eq!(profile.export, "/volume1/data");
+        assert_eq!(
+            profile.identity,
+            Identity {
+                uid: 1026,
+                gid: 100
+            }
+        );
+        assert_eq!(profile.nfs_port, Some(2049));
+        assert_eq!(profile.mount_port, None);
+        assert!(!profile.reserved_port);
+        assert_eq!(profile.timeout, Duration::from_secs(15));
+        assert_eq!(profile.handle_ttl, Duration::from_secs(10));
     }
 }
 

@@ -329,7 +329,7 @@ fn the_empty_state_offers_to_add() {
 #[test]
 fn without_winfsp_the_banner_shows_and_mounting_is_off_and_editing_is_not() {
     let fixture = Fixture::new(vec![profile("A")]);
-    let banner = "WinFsp 2.1 or later is required to mount SSH drives";
+    let banner = "WinFsp 2.1 or later is required to mount SSH and NFS drives";
     assert!(fixture.labelled(banner).is_none());
 
     fixture.ui.set_winfsp_ready(false);

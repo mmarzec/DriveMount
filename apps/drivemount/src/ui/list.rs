@@ -101,8 +101,8 @@ pub(super) struct ProfileItem {
     pub name: String,
     /// `user@host:path`.
     pub address: String,
-    /// Whether it is an SMB profile, else SSH. Shown as a tag on its row.
-    pub smb: bool,
+    /// "SSH", "SMB" or "NFS", as the dialog names them. Shown as a tag on its row.
+    pub tag: &'static str,
     /// The letter it is on, or the one it asks for.
     pub letter: Option<DriveLetter>,
     /// Whether it is on that letter now. Otherwise it is dimmed.
@@ -498,13 +498,17 @@ impl ListState {
             id: profile.id,
             name: profile.name.clone(),
             address: address_of(profile),
-            smb: matches!(profile.protocol, Protocol::Smb(_)),
+            tag: match profile.protocol {
+                Protocol::Sftp(_) => "SSH",
+                Protocol::Smb(_) => "SMB",
+                Protocol::Nfs(_) => "NFS",
+            },
             letter: live_letter.or(wanted),
             letter_is_live: live_letter.is_some(),
             can_open: matches!(state, MountState::Mounted) && live_letter.is_some(),
             folder: match &profile.protocol {
                 Protocol::Smb(smb) => smb.sub_path.clone(),
-                Protocol::Sftp(_) => String::new(),
+                Protocol::Sftp(_) | Protocol::Nfs(_) => String::new(),
             },
             state,
             line,
@@ -589,11 +593,12 @@ fn live_letter(state: &MountState, detail: Option<MountDetail>) -> Option<DriveL
 }
 
 /// `user@host:path`, as in the mock-up, with a port other than 22 after the host. For SMB, the UNC
-/// path with the sub-path, where Explorer opens.
+/// path with the sub-path, where Explorer opens; for NFS, `server:/export`.
 fn address_of(profile: &Profile) -> String {
     let sftp = match &profile.protocol {
         Protocol::Sftp(sftp) => sftp,
         Protocol::Smb(smb) => return smb.unc_with_sub_path(),
+        Protocol::Nfs(nfs) => return nfs.address(),
     };
     let host = if sftp.host.contains(':') {
         format!("[{}]", sftp.host)
@@ -790,6 +795,28 @@ mod tests {
         assert!(row(&state, share_id).primary_enabled);
         assert!(!row(&state, ssh_id).primary_enabled);
         assert_eq!(state.mountable(), [share_id]);
+    }
+
+    /// An NFS drive is a WinFsp drive, as an SSH one is (FR-APP-06), and its row says what it mounts.
+    #[test]
+    fn an_nfs_row_shows_its_export_and_needs_winfsp() {
+        use drivemount_core::profile::NfsProfile;
+
+        let export = Profile::new(
+            "data",
+            Protocol::Nfs(NfsProfile::new("nas", "/volume1/data")),
+        );
+        let id = export.id;
+        let mut state = state_with(vec![export, profile("ssh")]);
+        let item = row(&state, id);
+        assert_eq!(item.tag, "NFS");
+        assert_eq!(item.address, "nas:/volume1/data");
+        assert_eq!(item.folder, "");
+        assert_eq!(row(&state, state.profiles()[1].id).tag, "SSH");
+
+        state.set_can_mount(false);
+        assert!(!row(&state, id).primary_enabled);
+        assert!(state.mountable().is_empty());
     }
 
     #[test]

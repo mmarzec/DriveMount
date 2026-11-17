@@ -8,8 +8,8 @@ use tempfile::TempDir;
 
 use super::*;
 use crate::profile::{
-    DriveChoice, Field, JumpAuth, JumpHost, Problem, Protocol, SftpAuth, SftpProfile, SmbAuth,
-    SmbProfile,
+    DriveChoice, Field, JumpAuth, JumpHost, NfsProfile, Problem, Protocol, SftpAuth, SftpProfile,
+    SmbAuth, SmbProfile,
 };
 
 const ID_A: &str = "6f1c2c1e-4d0b-4c55-9a51-7d8a1c3b2e10";
@@ -76,6 +76,28 @@ drive_letter   = "M"
 read_only      = false
 mount_on_start = true
 auto_reconnect = true
+"#;
+
+/// Spec §6.1's NFS example, a key to a line.
+const NFS_EXAMPLE: &str = r#"
+schema_version = 1
+
+[[profiles]]
+id             = "11111111-2222-4333-8444-555555555555"
+name           = "NAS data"
+protocol       = "nfs"
+server         = "nas"
+export         = "/volume1/data"
+uid            = 1026
+gid            = 100
+nfs_port       = 2049
+mount_port     = 0
+reserved_port  = false
+drive_letter   = "N"
+read_only      = true
+mount_on_start = true
+auto_reconnect = true
+cache_ttl_secs = 10
 "#;
 
 /// A folder for one test, and the file in it.
@@ -164,6 +186,24 @@ fn smb(profile: &Profile) -> &SmbProfile {
         panic!("not SMB");
     };
     smb
+}
+
+fn an_export(name: &str) -> Profile {
+    Profile::new(name, Protocol::Nfs(NfsProfile::new("nas", "/volume1/data")))
+}
+
+fn nfs(profile: &Profile) -> &NfsProfile {
+    let Protocol::Nfs(nfs) = &profile.protocol else {
+        panic!("not NFS");
+    };
+    nfs
+}
+
+fn an_nfs_entry(id: &str, name: &str, more: &str) -> String {
+    format!(
+        "[[profiles]]\nid = \"{id}\"\nname = \"{name}\"\nprotocol = \"nfs\"\nserver = \"nas\"\n\
+         export = \"/srv\"\n{more}\n"
+    )
 }
 
 fn an_smb_entry(id: &str, name: &str, more: &str) -> String {
@@ -380,6 +420,34 @@ fn any_smb() -> impl Strategy<Value = SmbProfile> {
         )
 }
 
+fn any_nfs() -> impl Strategy<Value = NfsProfile> {
+    // The file writes no port as 0, so the model never holds `Some(0)` from it.
+    let port = prop_oneof![Just(None), (1..=u16::MAX).prop_map(Some)];
+    (
+        any::<String>(),
+        any::<String>(),
+        any::<[u32; 2]>(),
+        port.clone(),
+        port,
+        any::<bool>(),
+        0..=i64::MAX.cast_unsigned(),
+    )
+        .prop_map(
+            |(server, export, [uid, gid], nfs_port, mount_port, reserved_port, cache_ttl_secs)| {
+                NfsProfile {
+                    server,
+                    export,
+                    uid,
+                    gid,
+                    nfs_port,
+                    mount_port,
+                    reserved_port,
+                    cache_ttl_secs,
+                }
+            },
+        )
+}
+
 fn any_profile() -> impl Strategy<Value = Profile> {
     let values = 0..=i64::MAX.cast_unsigned();
     let drive = prop_oneof![
@@ -412,7 +480,11 @@ fn any_profile() -> impl Strategy<Value = Profile> {
                 })
             },
         );
-    let protocol = prop_oneof![sftp, any_smb().prop_map(Protocol::Smb)];
+    let protocol = prop_oneof![
+        sftp,
+        any_smb().prop_map(Protocol::Smb),
+        any_nfs().prop_map(Protocol::Nfs),
+    ];
     (
         any::<u128>(),
         any::<String>(),
@@ -782,9 +854,9 @@ fn a_profile_that_does_not_fit_leaves_the_rest_usable_and_is_written_back_as_it_
 }
 
 #[test]
-fn entries_of_a_later_milestone_or_with_parts_missing_are_kept() {
+fn entries_of_a_later_version_or_with_parts_missing_are_kept() {
     let nfs = "[[profiles]]\nid = \"11111111-2222-4333-8444-555555555555\"\nname = \"Nas\"\n\
-               protocol = \"nfs\"\nserver = \"nas\"\nexport = \"/volume1/data\"\n"
+               protocol = \"webdav\"\nserver = \"nas\"\nexport = \"/volume1/data\"\n"
         .to_owned();
     let unknown_login = a_profile_entry(ID_A, "Agent", "").replace("agent", "fido");
     let no_id = "[[profiles]]\nname = \"No id\"\n".to_owned();
@@ -807,6 +879,166 @@ fn entries_of_a_later_milestone_or_with_parts_missing_are_kept() {
     let entries = profile_tables(&folder.table());
     assert_eq!(entries.len(), 5);
     assert_eq!(entries[0]["export"].as_str(), Some("/volume1/data"));
+}
+
+// NFS profiles (M4-05)
+
+#[test]
+fn the_nfs_example_reads_as_it_says() {
+    let store = Folder::with(NFS_EXAMPLE).open();
+
+    assert_eq!(store.read_only(), None);
+    assert!(store.config().unreadable.is_empty());
+    assert!(store.config().invalid_profiles().is_empty());
+    let profile = &store.config().profiles[0];
+    assert_eq!(profile.name, "NAS data");
+    assert_eq!(
+        profile.drive,
+        DriveChoice::Letter(DriveLetter::new('N').unwrap())
+    );
+    assert!(profile.read_only && profile.mount_on_start && profile.auto_reconnect);
+    assert_eq!(
+        nfs(profile),
+        &NfsProfile {
+            server: "nas".to_owned(),
+            export: "/volume1/data".to_owned(),
+            uid: 1026,
+            gid: 100,
+            nfs_port: Some(2049),
+            mount_port: None,
+            reserved_port: false,
+            cache_ttl_secs: 10,
+        }
+    );
+}
+
+#[test]
+fn saving_the_nfs_example_keeps_every_value_in_the_order_of_the_spec() {
+    let folder = Folder::with(NFS_EXAMPLE);
+    let mut store = folder.open();
+    let config = store.config().clone();
+    save_with(&mut store, |config| config.settings.notifications = false);
+    store.save(&config).unwrap();
+
+    let before: Table = NFS_EXAMPLE.parse().unwrap();
+    assert_eq!(profile_tables(&folder.table()), profile_tables(&before));
+    let text = folder.text();
+    let keys: Vec<&str> = text
+        .split("[[profiles]]")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .filter_map(|line| line.split_once(" = ").map(|(key, _)| key))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "id",
+            "name",
+            "protocol",
+            "server",
+            "export",
+            "uid",
+            "gid",
+            "nfs_port",
+            "mount_port",
+            "reserved_port",
+            "drive_letter",
+            "read_only",
+            "mount_on_start",
+            "auto_reconnect",
+            "cache_ttl_secs",
+        ]
+    );
+}
+
+/// FR-NFS-01's defaults: UID and GID 1000, the portmapper, a reserved port.
+#[test]
+fn an_nfs_profile_needs_only_its_server_and_export() {
+    let store = Folder::with(a_file(&[an_nfs_entry(ID_A, "Bare", "")])).open();
+
+    assert!(store.config().unreadable.is_empty());
+    let profile = &store.config().profiles[0];
+    assert_eq!(profile.drive, DriveChoice::Auto);
+    assert!(!profile.read_only && !profile.mount_on_start && profile.auto_reconnect);
+    assert_eq!(nfs(profile), &NfsProfile::new("nas", "/srv"));
+    assert!(store.config().invalid_profiles().is_empty());
+}
+
+#[test]
+fn an_nfs_entry_the_model_cannot_hold_is_kept_as_it_was() {
+    let cases = [
+        an_nfs_entry(ID_A, "No export", "").replace("export = \"/srv\"\n", ""),
+        an_nfs_entry(ID_A, "No server", "").replace("server = \"nas\"\n", ""),
+        an_nfs_entry(ID_A, "Negative", "uid = -1"),
+        an_nfs_entry(ID_A, "Too big", "gid = 4294967296"),
+        an_nfs_entry(ID_A, "Text", "uid = \"1000\""),
+        an_nfs_entry(ID_A, "Port", "nfs_port = 70000"),
+        an_nfs_entry(ID_A, "Flag", "reserved_port = \"yes\""),
+    ];
+    for entry in cases {
+        let folder = Folder::with(a_file(std::slice::from_ref(&entry)));
+        let mut store = folder.open();
+        assert!(store.config().profiles.is_empty(), "{entry}");
+        assert_eq!(store.config().unreadable.len(), 1, "{entry}");
+
+        let before = profile_tables(&entry.parse().unwrap());
+        save_with(&mut store, |config| config.settings.notifications = false);
+        assert_eq!(profile_tables(&folder.table()), before, "{entry}");
+    }
+}
+
+#[test]
+fn a_profile_that_becomes_nfs_keeps_only_its_unknown_keys() {
+    let entry = an_smb_entry(ID_A, "Was SMB", "remember = true\nfuture = 1");
+    let folder = Folder::with(a_file(&[entry]));
+    let mut store = folder.open();
+
+    save_with(&mut store, |config| {
+        config.profiles[0].protocol = an_export("x").protocol;
+    });
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["protocol"].as_str(), Some("nfs"));
+    assert_eq!(entry["future"].as_integer(), Some(1));
+    for gone in [
+        "share", "sub_path", "domain", "username", "auth", "remember",
+    ] {
+        assert!(!entry.contains_key(gone), "{gone}");
+    }
+
+    save_with(&mut store, |config| {
+        config.profiles[0].protocol = a_profile("x").protocol;
+    });
+    let entry = &profile_tables(&folder.table())[0];
+    assert_eq!(entry["future"].as_integer(), Some(1));
+    for gone in ["server", "export", "uid", "gid", "reserved_port"] {
+        assert!(!entry.contains_key(gone), "{gone}");
+    }
+}
+
+#[test]
+fn an_nfs_profile_that_breaks_a_rule_is_loaded_and_marked() {
+    let entry = an_nfs_entry(ID_A, "N", "cache_ttl_secs = 99")
+        .replace("\"/srv\"", "\"srv/data\"")
+        .replace("server = \"nas\"", "server = \"n as\"");
+    let store = Folder::with(a_file(&[entry])).open();
+
+    let invalid = store.config().invalid_profiles();
+    let [(_, errors)] = invalid.as_slice() else {
+        panic!("{invalid:?}");
+    };
+    let marked: Vec<_> = errors
+        .iter()
+        .map(|error| (error.field, error.problem))
+        .collect();
+    assert_eq!(
+        marked,
+        [
+            (Field::Server, Problem::ServerInvalid),
+            (Field::Export, Problem::ExportInvalid),
+            (Field::Cache, Problem::CacheOutOfRange),
+        ]
+    );
 }
 
 // SMB profiles (M3-03)

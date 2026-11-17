@@ -14,6 +14,14 @@ export struct PageView {
     kind: EntryKind,
     // An SMB share (FR-SMB): Windows maps it and reconnects it, and it has no SSH lines.
     smb: bool,
+    // An NFS export (FR-NFS): no user, login or keep-alive, but its UID, GID and ports.
+    nfs: bool,
+    uid: string,
+    gid: string,
+    // Empty asks the portmapper.
+    nfs-port: string,
+    mount-port: string,
+    reserved-port: bool,
     name: string,
     status: RowStatus,
     letter: string,
@@ -223,17 +231,22 @@ export component ConnectionPage {
                         value: root.view.host;
                     }
 
-                    if !root.view.smb: Field {
+                    if !root.view.smb && !root.view.nfs: Field {
                         label: @tr("Port");
                         value: root.view.port;
                     }
 
-                    if !root.view.smb || root.view.login != LoginKind.windows-user: Field {
+                    if !root.view.nfs && (!root.view.smb || root.view.login != LoginKind.windows-user): Field {
                         label: @tr("User");
                         value: root.view.user;
                     }
 
-                    Field {
+                    if root.view.nfs: Field {
+                        label: @tr("UID / GID");
+                        value: root.view.uid + " / " + root.view.gid;
+                    }
+
+                    if !root.view.nfs: Field {
                         label: @tr("Authentication");
                         value: root.view.login == LoginKind.password ? @tr("Password")
                             : root.view.login == LoginKind.key-file ? @tr("Key file: {}", root.view.key-file)
@@ -243,7 +256,7 @@ export component ConnectionPage {
                     }
 
                     Field {
-                        label: root.view.smb ? @tr("Share") : @tr("Remote path");
+                        label: root.view.smb ? @tr("Share") : root.view.nfs ? @tr("Export") : @tr("Remote path");
                         value: root.view.remote-path;
                     }
 
@@ -279,7 +292,23 @@ export component ConnectionPage {
                         value: @tr("{} s", root.view.cache);
                     }
 
-                    if !root.view.smb: Field {
+                    if root.view.nfs: Field {
+                        label: @tr("NFS port");
+                        value: root.view.nfs-port != "" ? root.view.nfs-port : @tr("Portmapper");
+                    }
+
+                    if root.view.nfs: Field {
+                        label: @tr("Mount port");
+                        value: root.view.mount-port != "" ? root.view.mount-port : @tr("Portmapper");
+                    }
+
+                    if root.view.nfs: Field {
+                        label: @tr("Reserved port");
+                        value: root.view.reserved-port ? root.yes : root.no;
+                        last: true;
+                    }
+
+                    if !root.view.smb && !root.view.nfs: Field {
                         label: @tr("Keep-alive");
                         value: root.view.keep-alive == "0" ? @tr("Off") : @tr("{} s", root.view.keep-alive);
                         last: true;

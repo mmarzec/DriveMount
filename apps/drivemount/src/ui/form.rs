@@ -9,10 +9,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use drivemount_core::profile::{
-    DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_PORT, DEFAULT_REMOTE_PATH, DriveChoice,
-    DriveWarning, Field, FieldError, JumpAuth, JumpHost, Problem, Profile, Protocol, SftpAuth,
-    SftpProfile, SmbAuth, SmbProfile, parse_cache_secs, parse_jump_host, parse_keepalive_secs,
-    parse_pasted_host, parse_pasted_unc, parse_port, split_smb_user, validate_profile,
+    DEFAULT_CACHE_TTL_SECS, DEFAULT_KEEPALIVE_SECS, DEFAULT_NFS_ID, DEFAULT_PORT,
+    DEFAULT_REMOTE_PATH, DriveChoice, DriveWarning, Field, FieldError, JumpAuth, JumpHost,
+    NfsProfile, Problem, Profile, Protocol, SftpAuth, SftpProfile, SmbAuth, SmbProfile,
+    parse_cache_secs, parse_id, parse_jump_host, parse_keepalive_secs, parse_nfs_port,
+    parse_pasted_export, parse_pasted_host, parse_pasted_unc, parse_port, split_smb_user,
+    validate_profile,
 };
 use drivemount_vfs::{DriveLetter, Secret, SecretSlot};
 use drivemount_win::credentials::MAX_SECRET_UNITS;
@@ -168,6 +170,9 @@ pub(super) fn new_form() -> DialogForm {
         auto_reconnect: true,
         cache: DEFAULT_CACHE_TTL_SECS.to_string().into(),
         keep_alive: DEFAULT_KEEPALIVE_SECS.to_string().into(),
+        uid: DEFAULT_NFS_ID.to_string().into(),
+        gid: DEFAULT_NFS_ID.to_string().into(),
+        reserved_port: true,
         ..DialogForm::default()
     }
 }
@@ -190,6 +195,7 @@ pub(super) fn form_of(profile: &Profile, drives: &[DriveChoice]) -> DialogForm {
     let sftp = match &profile.protocol {
         Protocol::Sftp(sftp) => sftp,
         Protocol::Smb(smb) => return smb_form(smb, common),
+        Protocol::Nfs(nfs) => return nfs_form(nfs, common),
     };
     let mut form = DialogForm {
         protocol: ProtocolChoice::Ssh,
@@ -247,6 +253,23 @@ fn smb_form(smb: &SmbProfile, common: DialogForm) -> DialogForm {
     }
 }
 
+/// No port is an empty box, which asks the portmapper.
+fn nfs_form(nfs: &NfsProfile, common: DialogForm) -> DialogForm {
+    let port_text = |port: Option<u16>| port.map(|port| port.to_string()).unwrap_or_default();
+    DialogForm {
+        protocol: ProtocolChoice::Nfs,
+        server: (&nfs.server).into(),
+        export: (&nfs.export).into(),
+        uid: nfs.uid.to_string().into(),
+        gid: nfs.gid.to_string().into(),
+        nfs_port: port_text(nfs.nfs_port).into(),
+        mount_port: port_text(nfs.mount_port).into(),
+        reserved_port: nfs.reserved_port,
+        cache: nfs.cache_ttl_secs.to_string().into(),
+        ..common
+    }
+}
+
 /// `[user@]host[:port]`, as the Jump host box takes it, with no port if it is the usual one.
 pub(super) fn jump_text(jump: &JumpHost) -> String {
     let user = jump
@@ -300,7 +323,12 @@ impl Checked {
             || self.errors.iter().any(|error| {
                 matches!(
                     error.field,
-                    Field::Cache | Field::KeepAlive | Field::JumpHost | Field::JumpKeyFile
+                    Field::Cache
+                        | Field::KeepAlive
+                        | Field::JumpHost
+                        | Field::JumpKeyFile
+                        | Field::NfsPort
+                        | Field::MountPort
                 )
             })
     }
@@ -348,6 +376,7 @@ pub(super) fn check(
             smb.auth == SmbAuth::Password { remember: true } && too_long(&form.password),
             false,
         ),
+        Protocol::Nfs(_) => (false, false),
     };
 
     Checked {
@@ -418,6 +447,17 @@ fn build(form: &DialogForm, base: &Base, errors: &mut Vec<FieldError>) -> Profil
                 username: form.user.trim().to_owned(),
                 auth,
             }),
+            drive,
+            read_only: form.read_only,
+            mount_on_start: form.mount_on_start,
+            auto_reconnect: form.auto_reconnect,
+        };
+    }
+    if form.protocol == ProtocolChoice::Nfs {
+        return Profile {
+            id: base.id,
+            name,
+            protocol: Protocol::Nfs(nfs_of(form, errors)),
             drive,
             read_only: form.read_only,
             mount_on_start: form.mount_on_start,
@@ -496,6 +536,43 @@ fn build(form: &DialogForm, base: &Base, errors: &mut Vec<FieldError>) -> Profil
         read_only: form.read_only,
         mount_on_start: form.mount_on_start,
         auto_reconnect: form.auto_reconnect,
+    }
+}
+
+/// The NFS boxes, with the default in place of a number that makes no sense.
+fn nfs_of(form: &DialogForm, errors: &mut Vec<FieldError>) -> NfsProfile {
+    let mut marked = |field, problem| errors.push(FieldError { field, problem });
+    let mut id = |field, text: &str| {
+        parse_id(text).unwrap_or_else(|problem| {
+            marked(field, problem);
+            DEFAULT_NFS_ID
+        })
+    };
+    let (uid, gid) = (id(Field::Uid, &form.uid), id(Field::Gid, &form.gid));
+    let mut port = |field, text: &str| {
+        parse_nfs_port(text).unwrap_or_else(|problem| {
+            errors.push(FieldError { field, problem });
+            None
+        })
+    };
+    let nfs_port = port(Field::NfsPort, &form.nfs_port);
+    let mount_port = port(Field::MountPort, &form.mount_port);
+    let cache_ttl_secs = parse_cache_secs(&form.cache).unwrap_or_else(|problem| {
+        errors.push(FieldError {
+            field: Field::Cache,
+            problem,
+        });
+        DEFAULT_CACHE_TTL_SECS
+    });
+    NfsProfile {
+        server: form.server.trim().to_owned(),
+        export: form.export.trim().to_owned(),
+        uid,
+        gid,
+        nfs_port,
+        mount_port,
+        reserved_port: form.reserved_port,
+        cache_ttl_secs,
     }
 }
 
@@ -593,6 +670,20 @@ pub(super) fn fill_from_unc_paste(form: &mut DialogForm, text: &str) -> bool {
     }
     if let Some(user) = pasted.user {
         form.user = user.into();
+    }
+    true
+}
+
+/// Splits `server:/export` or an `nfs://` URL pasted into the NFS Server box. All or nothing, as for
+/// the other pastes. Returns whether anything changed.
+pub(super) fn fill_from_export_paste(form: &mut DialogForm, text: &str) -> bool {
+    let Some(pasted) = parse_pasted_export(text) else {
+        return false;
+    };
+    form.server = pasted.server.into();
+    form.export = pasted.export.into();
+    if let Some(port) = pasted.nfs_port {
+        form.nfs_port = port.to_string().into();
     }
     true
 }
@@ -1335,6 +1426,145 @@ mod tests {
         assert!(fill_from_smb_user(&mut form, r"CORP\anna"));
         assert_eq!((form.domain.as_str(), form.user.as_str()), ("CORP", "anna"));
         assert!(!fill_from_smb_user(&mut form, "anna@corp.example"));
+    }
+
+    fn valid_nfs_form() -> DialogForm {
+        DialogForm {
+            protocol: ProtocolChoice::Nfs,
+            name: "Data".into(),
+            server: "nas".into(),
+            export: "/volume1/data".into(),
+            ..new_form()
+        }
+    }
+
+    #[test]
+    fn every_kind_of_nfs_profile_comes_back_from_the_boxes_as_it_was() {
+        let plain = Profile::new("A", Protocol::Nfs(NfsProfile::new("nas", "/srv")));
+        let mut fixed = Profile::new(
+            "B",
+            Protocol::Nfs(NfsProfile {
+                server: "fe80::1".to_owned(),
+                export: "/volume1/my data".to_owned(),
+                uid: 0,
+                gid: u32::MAX,
+                nfs_port: Some(2049),
+                mount_port: Some(892),
+                reserved_port: false,
+                cache_ttl_secs: 0,
+            }),
+        );
+        fixed.read_only = true;
+        fixed.auto_reconnect = false;
+        fixed.drive = DriveChoice::Letter(DriveLetter::new('N').unwrap());
+        for profile in [plain, fixed] {
+            let checked = round_trip(&profile);
+            assert_eq!(checked.errors, [], "{}", profile.name);
+            assert_eq!(checked.profile, profile);
+        }
+    }
+
+    /// FR-NFS-01's defaults, and AUTH_SYS has nothing to remember.
+    #[test]
+    fn a_new_nfs_form_makes_a_profile_as_1000_through_the_portmapper() {
+        let form = valid_nfs_form();
+        let checked = check(&form, &Base::new(None, false), &[], &KeyChecks::default());
+        assert_eq!(checked.errors, []);
+        assert_eq!(
+            checked.profile.protocol,
+            Protocol::Nfs(NfsProfile::new("nas", "/volume1/data"))
+        );
+        assert!(checked.can_save() && checked.can_test());
+        let with_password = DialogForm {
+            password: "x".into(),
+            ..form
+        };
+        assert!(typed_secrets(&with_password, &checked.profile, false).is_empty());
+    }
+
+    #[test]
+    fn the_nfs_boxes_are_marked_by_their_rules() {
+        let cases = [
+            (
+                DialogForm {
+                    server: "a b".into(),
+                    ..valid_nfs_form()
+                },
+                Field::Server,
+                Problem::ServerInvalid,
+            ),
+            (
+                DialogForm {
+                    export: "volume1".into(),
+                    ..valid_nfs_form()
+                },
+                Field::Export,
+                Problem::ExportInvalid,
+            ),
+            (
+                DialogForm {
+                    uid: "".into(),
+                    ..valid_nfs_form()
+                },
+                Field::Uid,
+                Problem::IdOutOfRange,
+            ),
+            (
+                DialogForm {
+                    gid: "4294967296".into(),
+                    ..valid_nfs_form()
+                },
+                Field::Gid,
+                Problem::IdOutOfRange,
+            ),
+            (
+                DialogForm {
+                    nfs_port: "x".into(),
+                    ..valid_nfs_form()
+                },
+                Field::NfsPort,
+                Problem::NfsPortInvalid,
+            ),
+            (
+                DialogForm {
+                    mount_port: "65536".into(),
+                    ..valid_nfs_form()
+                },
+                Field::MountPort,
+                Problem::NfsPortInvalid,
+            ),
+            (
+                DialogForm {
+                    cache: "61".into(),
+                    ..valid_nfs_form()
+                },
+                Field::Cache,
+                Problem::CacheOutOfRange,
+            ),
+        ];
+        for (form, field, problem) in cases {
+            let checked = check(&form, &Base::new(None, false), &[], &KeyChecks::default());
+            assert_eq!(problem_of(&checked, field), Some(problem), "{field:?}");
+            assert_eq!(checked.errors.len(), 1, "{field:?}: {:?}", checked.errors);
+            let in_advanced = matches!(field, Field::NfsPort | Field::MountPort | Field::Cache);
+            assert_eq!(checked.advanced_needs_a_look(), in_advanced, "{field:?}");
+        }
+    }
+
+    #[test]
+    fn pasting_an_export_fills_server_export_and_a_urls_port() {
+        let mut form = valid_nfs_form();
+        assert!(fill_from_export_paste(
+            &mut form,
+            "nfs://10.0.4.21:2050/srv/nfs"
+        ));
+        assert_eq!(form.server, "10.0.4.21");
+        assert_eq!(form.export, "/srv/nfs");
+        assert_eq!(form.nfs_port, "2050");
+
+        assert!(!fill_from_export_paste(&mut form, "nas"));
+        assert!(!fill_from_export_paste(&mut form, r"\\nas\media"));
+        assert_eq!(form.server, "10.0.4.21");
     }
 
     fn choices() -> Vec<DriveChoice> {
