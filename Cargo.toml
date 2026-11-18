@@ -68,6 +68,8 @@ slint = { version = "=1.18.1", default-features = false, features = [
     "unstable-winit-030",
 ] }
 slint-build = "=1.18.1"
+# Build only: the exe's version resource (product name and version, which SignPath checks).
+winresource = { version = "=0.1.34", default-features = false }
 i-slint-backend-testing = "=1.18.1"
 # Tests only: to turn the system colour scheme dark, which the testing back-end cannot.
 i-slint-core = "=1.18.1"

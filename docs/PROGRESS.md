@@ -2,6 +2,16 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-18: H-10 prerequisite: version resource in `drivemount.exe`
+
+**Status: done locally, not committed. The rest of H-10 (the SignPath Foundation application, project setup, the repository's secret and variables) is the owner's.**
+
+- **Why:** SignPath Foundation asks that the product name and version are set and the same in every build (the M2-11 note below); the exe had no version resource.
+- **Added:** build dependency `winresource` 0.1.34 (MIT, default features off, so it pulls in only `version_check`). `apps/drivemount/build.rs` writes a `VERSIONINFO` with ProductName and FileDescription *DriveMount*, FileVersion and ProductVersion from Cargo (now 0.2.0 / 0.2.0.0), OriginalFilename `drivemount.exe`, InternalName, CompanyName *DriveMount*, LegalCopyright `GPL-3.0-or-later` and the repository URL in Comments. `compile_for("drivemount")`, so only the shipped binary gets it, not tests or examples. Needs `rc.exe` from the Windows SDK (on `windows-latest` and here). cargo-about skips build dependencies, so THIRD-PARTY-LICENSES does not change.
+- **Checked:** the release exe's `VersionInfo` shows every field; `fmt`, `clippy --workspace --all-targets -D warnings`, `cargo deny check` and `cargo test -p drivemount` (291 passed) pass.
+- **Not checked:** the MSI and setup exe built with it, and the upgrade from 0.2.0, where `drivemount.exe` was unversioned (MSI's rules replace an unversioned file with a versioned one, so it should be fine). The exe still has no icon of its own; the shortcut uses `DriveMount.ico`.
+- **Next:** the owner's SignPath steps (application, project, `test-signing` and `release-signing` policies, CI user, artifact configuration, GitHub secret and variables); then a run of the release workflow by hand.
+
 ## 2026-11-18: H-11 done on 0.2.0
 
 **Status: done.** The owner installed, upgraded and uninstalled 0.2.0 on a clean Windows 11 Pro machine and reported no issues (no per-item notes kept). TRACEABILITY's PLAT-01, PLAT-02 and NFR-LIC-03 no longer say "H-11 skipped". For v1.0.0 the §9.4 installer item still has to be run on the signed build, including the upgrade from 0.2.0. Remaining before M4-07: H-10 (SignPath), M2-11's test signing, and the rest of §9.4.

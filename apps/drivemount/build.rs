@@ -20,8 +20,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .with_style("fluent".into())
             .with_debug_info(for_tests);
         slint_build::compile_with_config("ui/main_window.slint", config)?;
+
+        version_resource()?;
     }
     Ok(())
+}
+
+/// The exe's version resource: Explorer's Details tab shows it, and SignPath Foundation checks that the
+/// product name and version are set and the same in every build (H-10). The version is Cargo's, so it
+/// matches the MSI's. Only the `drivemount` binary gets it, not the tests or examples.
+#[cfg(windows)]
+fn version_resource() -> std::io::Result<()> {
+    let mut resource = winresource::WindowsResource::new();
+    resource
+        .set("ProductName", "DriveMount")
+        .set("FileDescription", "DriveMount")
+        .set("InternalName", "drivemount")
+        .set("OriginalFilename", "drivemount.exe")
+        .set("CompanyName", "DriveMount")
+        .set("LegalCopyright", "GPL-3.0-or-later")
+        .set("Comments", "https://github.com/mmarzec/DriveMount");
+    resource.compile_for("drivemount")
 }
 
 /// Today in UTC as `YYYY-MM-DD`, or the day of `SOURCE_DATE_EPOCH`.

@@ -76,7 +76,7 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | H-07 | M1-19 | Manual items of the M1 exit checklist (§9.2) | ~45 min |
 | H-08 | M2-02/03/04/06 | Sleep/resume, Wi-Fi switch, sign-out with mounts, tray and toast behaviour | ~45 min. Done 2026-11-13: two fixes (tray clicks after the first were dropped; the Drive list called another profile's letter free) |
 | H-09 | M2-09 | Start the 4 h soak (shortened from 72 h by the owner, 2026-11-13); keep the PC on, and don't use it for anything else during the run | 4 h of wall clock. Done 2026-11-13 (failed, fixed; not repeated by the owner's decision) |
-| H-10 | M2-11 (before M4-07) | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup. OD-3 decided 2026-11-14: SignPath; the SignPath Foundation application and project setup are still to do. Needed only for v1.0.0 (end of M4); v0.2.0 ships unsigned |
+| H-10 | M2-11 (before M4-07) | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup. OD-3 decided 2026-11-14: SignPath; `drivemount.exe` has a version resource (2026-11-18); the SignPath Foundation application and project setup are still to do. Needed only for v1.0.0 (end of M4); v0.2.0 ships unsigned |
 | H-11 | M2-10 (before M4-07) | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min. Skipped for v0.2.0 (owner, 2026-11-16). **Done 2026-11-18:** the owner tested 0.2.0 on Windows 11 Pro, no issues |
 | H-12 | M3-05 | SMB tests against your real servers (NAS, Windows share) | ~30 min |
 | H-13 | M4-06 | NFS tests against your real servers (NAS) | ~30 min |
@@ -489,4 +489,4 @@ Versions are pinned in M1-01 to the latest stable releases at that time. Any cha
 | Logging | `tracing`, `tracing-subscriber` (fmt, with `reload` at M2-05), `tracing-appender` |
 | Errors | `thiserror`, `anyhow` (app only), `async-trait` (ADR-0001) |
 | Dev and test | `proptest`, `criterion`, `tokio` test-util, `russh` server side (in-process SFTP test server), `sha2` for integrity checks |
-| Tooling | `cargo-deny`, `cargo-audit`, `cargo-about`, `cargo-wix` |
+| Tooling | `cargo-deny`, `cargo-audit`, `cargo-about`, `cargo-wix`; `winresource` (build only: the exe's version resource, H-10) |

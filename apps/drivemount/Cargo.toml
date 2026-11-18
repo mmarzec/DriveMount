@@ -42,6 +42,7 @@ uuid = { workspace = true }
 [target.'cfg(windows)'.build-dependencies]
 slint-build = { workspace = true }
 winfsp = { workspace = true }
+winresource = { workspace = true }
 
 [dev-dependencies]
 drivemount-vfs = { workspace = true, features = ["testing"] }
