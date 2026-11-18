@@ -148,11 +148,11 @@ drive_letter = "W"
 [[profiles]]
 id = "00000000-0000-4000-8000-000000000002"
 name = "Home NAS"
-protocol = "sftp"
-host = "nas.local"
-username = "alex"
-auth = "agent"
-remote_path = "/volume1/share"
+protocol = "nfs"
+server = "nas.local"
+export = "/volume1/share"
+uid = 1000
+gid = 100
 drive_letter = "N"
 
 [[profiles]]
@@ -178,21 +178,23 @@ remote_path = "~"
 [[profiles]]
 id = "00000000-0000-4000-8000-000000000005"
 name = "Backups"
-protocol = "sftp"
-host = "backup.example.com"
+protocol = "smb"
+server = "backup.example.com"
+share = "backups"
 username = "alex"
 auth = "password"
-remote_path = "/backups"
+remember = true
 drive_letter = "K"
 
 [[profiles]]
 id = "00000000-0000-4000-8000-000000000006"
 name = "Media library"
-protocol = "sftp"
-host = "media.local"
+protocol = "smb"
+server = "media.local"
+share = "library"
 username = "alex"
-auth = "agent"
-remote_path = "/mnt/media"
+auth = "password"
+remember = true
 drive_letter = "M"
 "#;
 
