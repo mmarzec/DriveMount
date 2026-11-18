@@ -498,4 +498,4 @@ DriveMount is built on these components, among others. The full list, with every
 | [Slint](https://slint.dev), the user interface toolkit | GPL v3 (used under that option) |
 | [Inter](https://rsms.me/inter/), the typeface, by Rasmus Andersson | SIL Open Font License 1.1 |
 | [Lucide](https://lucide.dev), the icons, by Lucide Contributors and Feather | ISC, and MIT |
-| russh, tokio, windows-rs, serde, tracing and the other Rust crates | MIT, Apache-2.0 and others |
+| russh, nfs3_client, tokio, windows-rs, serde, tracing and the other Rust crates | MIT, Apache-2.0 and others |
