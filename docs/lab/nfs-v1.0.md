@@ -4,8 +4,8 @@
 |---|---|
 | Requirements | [SPECIFICATION.md](../SPECIFICATION.md) FR-NFS-01 to 05, §5.10, §10.4 |
 | Plan | M4-06, owner's checkpoint H-13 |
-| Date | 2026-11-17 (automated rows); H-13 rows to be filled in by the owner |
-| Result | **Automated: every NFS suite passes against knfsd on the dev machine (Windows 10 Home 22H2) and in a Linux container run as CI's `nfs` job runs them; `fsx` 100,000 operations on an NFS drive lose nothing. CI's `nfs` job has not run on GitHub yet.** H-13 (§2) is the owner's. |
+| Date | 2026-11-17 (automated rows); H-13 run by the owner 2026-11-18 (knfsd only) |
+| Result | **Automated: every NFS suite passes against knfsd on the dev machine (Windows 10 Home 22H2) and in a Linux container run as CI's `nfs` job runs them; `fsx` 100,000 operations on an NFS drive lose nothing. CI's `nfs` job has not run on GitHub yet.** H-13 (§2): passed on knfsd (Ubuntu 26.04); Synology and TrueNAS not tested. |
 
 ## 1. Automated
 
@@ -43,30 +43,30 @@ Before you start: the export must list this PC's IP (`/etc/exports`; on Synology
 
 | # | Scenario | Requirement | knfsd | Synology | TrueNAS | Notes |
 |---|---|---|---|---|---|---|
-| 1 | Paste `server:/export` into *Server*: Server and Export are filled | FR-NFS-01 | | | | |
-| 2 | *Test connection* reports OK | FR-PROF-06 | | | | |
-| 3 | Mount with the defaults (portmapper, reserved port): the letter shows in Explorer, the folders list, a file opens | FR-NFS-02 | | | | |
-| 4 | Make a file and a folder in Explorer: on the server (`ls -ln`) they belong to the profile's UID and GID | FR-NFS-01 | | | | |
-| 5 | A folder with a few thousand files lists completely, and again after the cache time | §5.10 (large replies) | | | | |
-| 6 | Copy a 1 GiB file to the drive and back: `Get-FileHash` matches the original. Note the time each way | FR-NFS-02, NFR-PERF-06 | | | | |
-| 7 | Save a Word or Excel file on the drive, close it, open it again | FR-MNT | | | | |
-| 8 | NFS port 2049 and the server's MOUNT port (`rpcinfo -p server`) set under *Advanced*: mounts | FR-NFS-01 | | | | |
-| 9 | An export with `secure` (the Linux and Synology default): mounts with *Use reserved source port* on; with it off, E-NFS-ACCESS | FR-NFS-03 | | | | |
-| 10 | Remove this PC's IP from the export (or use an export that does not list it): *Test connection* and Mount show E-NFS-ACCESS with its hints | FR-NFS-05 | | | | |
-| 11 | Restart the NFS service on the server (or the server itself) during a 1 GiB copy: the copy finishes, the hash matches, the drive comes back without being mounted again | FR-NFS-04 | | | | |
-| 12 | Pull the cable or turn off Wi-Fi for a minute with the drive mounted: *Reconnecting*, then *Mounted*; an open Notepad file saves afterwards | FR-REC | | | | |
-| 13 | A *Read-only* profile: writing is refused at once. A read-only export (`ro`): files read, writing is refused | FR-MNT-07 | | | | |
-| 14 | Sleep and wake the PC with the drive mounted: the drive works afterwards | §10.4 | | | | |
-| 15 | *Quit* with the drive mounted: the letter is gone from Explorer | FR-APP | | | | |
+| 1 | Paste `server:/export` into *Server*: Server and Export are filled | FR-NFS-01 | ✓ | – | – | |
+| 2 | *Test connection* reports OK | FR-PROF-06 | ✓ | – | – | |
+| 3 | Mount with the defaults (portmapper, reserved port): the letter shows in Explorer, the folders list, a file opens | FR-NFS-02 | ✓ | – | – | |
+| 4 | Make a file and a folder in Explorer: on the server (`ls -ln`) they belong to the profile's UID and GID | FR-NFS-01 | ✓ | – | – | |
+| 5 | A folder with a few thousand files lists completely, and again after the cache time | §5.10 (large replies) | ✓ | – | – | |
+| 6 | Copy a 1 GiB file to the drive and back: `Get-FileHash` matches the original. Note the time each way | FR-NFS-02, NFR-PERF-06 | ✓ | – | – | |
+| 7 | Save a Word or Excel file on the drive, close it, open it again | FR-MNT | ✓ | – | – | |
+| 8 | NFS port 2049 and the server's MOUNT port (`rpcinfo -p server`) set under *Advanced*: mounts | FR-NFS-01 | ✓ | – | – | |
+| 9 | An export with `secure` (the Linux and Synology default): mounts with *Use reserved source port* on; with it off, E-NFS-ACCESS | FR-NFS-03 | ✓ | – | – | |
+| 10 | Remove this PC's IP from the export (or use an export that does not list it): *Test connection* and Mount show E-NFS-ACCESS with its hints | FR-NFS-05 | ✓ | – | – | |
+| 11 | Restart the NFS service on the server (or the server itself) during a 1 GiB copy: the copy finishes, the hash matches, the drive comes back without being mounted again | FR-NFS-04 | ✓ | – | – | |
+| 12 | Pull the cable or turn off Wi-Fi for a minute with the drive mounted: *Reconnecting*, then *Mounted*; an open Notepad file saves afterwards | FR-REC | ✓ | – | – | |
+| 13 | A *Read-only* profile: writing is refused at once. A read-only export (`ro`): files read, writing is refused | FR-MNT-07 | ✓ | – | – | |
+| 14 | Sleep and wake the PC with the drive mounted: the drive works afterwards | §10.4 | ✓ | – | – | |
+| 15 | *Quit* with the drive mounted: the letter is gone from Explorer | FR-APP | ✓ | – | – | |
 
 **If a drive keeps going to *Reconnecting* on one folder or one large read** while the server is fine, the server may be splitting a reply into several RPC record fragments, which `nfs3_client` refuses (spike M4-01 §6; knfsd never does). The Debug log then shows `NFS connection failed` with "Fragmented replies are not supported". Note the row and keep the log: the fix is a loop in the crate's reply reader.
 
 Server details (product and version, kernel or OS, NFS options of the export):
 
-- knfsd:
-- Synology:
-- TrueNAS (CORE runs FreeBSD's server, SCALE runs knfsd):
+- knfsd: Ubuntu 26.04, `nfs-kernel-server` from the distribution's package (exact package and kernel versions not noted).
+- Synology: not tested.
+- TrueNAS (CORE runs FreeBSD's server, SCALE runs knfsd): not tested.
 
 Notes on ✗ cells:
 
--
+- None. The owner ran the matrix on 2026-11-18 and reported no issues (all 15 rows ✓ for knfsd, as reported in chat; no per-row notes or timings kept). Synology and TrueNAS were not available, so their columns stay open.

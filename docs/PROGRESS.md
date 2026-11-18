@@ -2,6 +2,10 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-18: H-13 done, M4-06 closed
+
+**Status: done.** The owner ran the `docs/lab/nfs-v1.0.md` §2 matrix on Windows 10 Home against Ubuntu 26.04 with `nfs-kernel-server` and reported no issues (all 15 rows ✓; no per-row notes). Synology and TrueNAS were not tested, so fragmented RPC replies (the §2 warning) are untested against them. CI's `nfs` job still has not run on a real runner (S-05). **Next:** M4-07, needing H-10 (SignPath), H-11 (clean Windows 11 install) and the §9.4 checklist.
+
 ## 2026-11-17: M4-06 NFS tests
 
 **Status: automated part done on branch `feat/m4-06-nfs-tests`; H-13 (the owner's real-server matrix) is still to do, so M4-06 is not ticked.** CI job `nfs` runs `drivemount-nfs`'s ignored suites on Linux; `fsx` runs on an NFS drive; the owner's matrix is [lab/nfs-v1.0.md](lab/nfs-v1.0.md). `fmt`, `clippy --workspace --all-targets -D warnings` and the SPDX check pass.
