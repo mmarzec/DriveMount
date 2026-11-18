@@ -2,6 +2,10 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-18: v0.3.0 unsigned pre-release
+
+**Status: workspace bumped to 0.3.0 (`Cargo.toml` and the workspace's own entries in `Cargo.lock`), committed and tagged `v0.3.0`; the release workflow drafts an unsigned pre-release for the owner to check and publish.** Adds NFS (M4) and the version resource in `drivemount.exe` since 0.2.0. `cargo check --workspace` passes; the full test suite, the installer and the signed build were not re-run for this tag.
+
 ## 2026-11-18: H-10 prerequisite: version resource in `drivemount.exe`
 
 **Status: done locally, not committed. The rest of H-10 (the SignPath Foundation application, project setup, the repository's secret and variables) is the owner's.**

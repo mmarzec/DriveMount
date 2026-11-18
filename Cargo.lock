@@ -1353,7 +1353,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "drivemount"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "drivemount-core",
@@ -1385,7 +1385,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "drivemount-vfs",
  "proptest",
@@ -1402,7 +1402,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-nfs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1417,7 +1417,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-sftp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1439,7 +1439,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-smb"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "drivemount-vfs",
  "drivemount-win",
@@ -1449,7 +1449,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-vfs"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1464,7 +1464,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-win"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "drivemount-vfs",
  "tempfile",
@@ -1476,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "drivemount-winfsp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "drivemount-sftp",
  "drivemount-vfs",
