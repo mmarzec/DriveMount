@@ -2,6 +2,10 @@
 
 Notes for the next session: decisions, open issues and anything half-done. Newest first.
 
+## 2026-11-18: H-11 done on 0.2.0
+
+**Status: done.** The owner installed, upgraded and uninstalled 0.2.0 on a clean Windows 11 Pro machine and reported no issues (no per-item notes kept). TRACEABILITY's PLAT-01, PLAT-02 and NFR-LIC-03 no longer say "H-11 skipped". For v1.0.0 the §9.4 installer item still has to be run on the signed build, including the upgrade from 0.2.0. Remaining before M4-07: H-10 (SignPath), M2-11's test signing, and the rest of §9.4.
+
 ## 2026-11-18: H-13 done, M4-06 closed
 
 **Status: done.** The owner ran the `docs/lab/nfs-v1.0.md` §2 matrix on Windows 10 Home against Ubuntu 26.04 with `nfs-kernel-server` and reported no issues (all 15 rows ✓; no per-row notes). Synology and TrueNAS were not tested, so fragmented RPC replies (the §2 warning) are untested against them. CI's `nfs` job still has not run on a real runner (S-05). **Next:** M4-07, needing H-10 (SignPath), H-11 (clean Windows 11 install) and the §9.4 checklist.

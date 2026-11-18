@@ -77,7 +77,7 @@ Tasks are sized to fit in one session, or a few. Large items are split (`a`/`b`/
 | H-08 | M2-02/03/04/06 | Sleep/resume, Wi-Fi switch, sign-out with mounts, tray and toast behaviour | ~45 min. Done 2026-11-13: two fixes (tray clicks after the first were dropped; the Drive list called another profile's letter free) |
 | H-09 | M2-09 | Start the 4 h soak (shortened from 72 h by the owner, 2026-11-13); keep the PC on, and don't use it for anything else during the run | 4 h of wall clock. Done 2026-11-13 (failed, fixed; not repeated by the owner's decision) |
 | H-10 | M2-11 (before M4-07) | **Decide OD-3** and obtain the code-signing certificate / Azure Trusted Signing account | account setup. OD-3 decided 2026-11-14: SignPath; the SignPath Foundation application and project setup are still to do. Needed only for v1.0.0 (end of M4); v0.2.0 ships unsigned |
-| H-11 | M2-10 (before M4-07) | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min. **Skipped for v0.2.0** (owner, 2026-11-16); due before v1.0.0 |
+| H-11 | M2-10 (before M4-07) | Install, upgrade and uninstall the MSI on a clean Windows 11 Pro machine (or VM) | ~30 min. Skipped for v0.2.0 (owner, 2026-11-16). **Done 2026-11-18:** the owner tested 0.2.0 on Windows 11 Pro, no issues |
 | H-12 | M3-05 | SMB tests against your real servers (NAS, Windows share) | ~30 min |
 | H-13 | M4-06 | NFS tests against your real servers (NAS) | ~30 min |
 
@@ -388,7 +388,7 @@ M2 makes the SSH feature set complete. It ends without a release (owner, 2026-11
 - [x] All FR-PROF, FR-SSH, FR-MNT, FR-REC, FR-TRAY, FR-NOT, FR-APP, FR-SET and FR-SMB acceptance criteria verified and ticked in `docs/TRACEABILITY.md` (*Verified in* 0.2.0, 2026-11-16; FR-SMB rests on H-12 declared without a recorded matrix).
 - [x] All NFR-PERF budgets met (`docs/perf/v1.md`, measured 2026-11-10/11, before M3).
 - [x] Soak (NFR-REL-06): accepted by the owner, 2026-11-13 (see §9.4).
-- [ ] MSI and setup exe install, upgrade and uninstall cleanly on a clean Windows 11 Pro machine (H-11). **Skipped for v0.2.0 by the owner, 2026-11-16**; `scripts/test-installer.ps1` passed on the dev machine (Windows 10 Home) at M2-10, not run again at 0.2.0. Not signed: SmartScreen's warning is expected and the release notes say so.
+- [ ] MSI and setup exe install, upgrade and uninstall cleanly on a clean Windows 11 Pro machine (H-11). Skipped before the v0.2.0 release (owner, 2026-11-16); **done afterwards, 2026-11-18**, on 0.2.0 on Windows 11 Pro, no issues. Not repeated for the v1.0.0 build, which also has to upgrade from 0.2.0 (§9.4); `scripts/test-installer.ps1` passed on the dev machine (Windows 10 Home) at M2-10, not run again at 0.2.0. Not signed: SmartScreen's warning is expected and the release notes say so.
 - [x] Licence obligations met (NFR-LIC-01 to NFR-LIC-06), as in §9.4; the release notes link to the tag's source (NFR-LIC-06).
 - [x] User guide complete, and says the 0.x builds are unsigned.
 - [x] GitHub release marked as a pre-release (the workflow drafts a 0.x tag with `--prerelease`).
