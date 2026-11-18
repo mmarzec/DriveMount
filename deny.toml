@@ -14,6 +14,7 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant, unmaintained, no known flaw; through AccessKit's Linux support, not in a Windows build" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names, unmaintained, no known flaw; through AccessKit's Linux support, not in a Windows build" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive, unmaintained, no known flaw; through AccessKit's Linux support, not in a Windows build" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono, unmaintained, no known flaw; Slint's i-slint-core uses it, so it is in the shipped exe, not ours to replace. Recheck when Slint is updated" },
 ]
 
 [licenses]
